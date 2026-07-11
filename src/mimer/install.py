@@ -17,6 +17,7 @@ from pathlib import Path
 import sqlite_vec
 
 from mimer.embedding import MODEL_NAME, embed
+from mimer.index import reindex
 from mimer.paths import store_root
 from mimer.store import ensure_store
 
@@ -72,7 +73,12 @@ def run_install(root: Path | None = None) -> InstallReport:
         return InstallReport(False, [problem])
 
     prefetch_embedding_model()
-    messages.append(f"Store ready at {root}; embedding model '{MODEL_NAME}' fetched.")
+
+    # Create the index up front so capture, digest, git and bootstrap writes are
+    # indexed incrementally from the first session — no manual reindex needed.
+    reindex(root)
+
+    messages.append(f"Store ready at {root}; embedding model '{MODEL_NAME}' fetched; index built.")
     return InstallReport(True, messages)
 
 

@@ -65,6 +65,27 @@ def test_run_install_creates_store_and_reports_ok(store_root: Path) -> None:
     assert (store_root / "mimer.log").exists()
 
 
+def test_run_install_creates_the_index_so_writes_are_indexed(store_root: Path) -> None:
+    """Install creates the index up front, so later capture/import writes are
+    searchable without a manual reindex."""
+
+    from mimer.capture import capture_from_payload
+    from mimer.index import index_db_path, search
+    from tests.transcript_fixture import write_transcript
+
+    run_install(store_root)
+    assert index_db_path(store_root).exists()
+
+    project = store_root.parent / "proj"
+    project.mkdir(exist_ok=True)
+    transcript = write_transcript(
+        project / "t.jsonl", [("q", "we chose ripgrep for fast search", "2026-07-11T10:00:00Z")]
+    )
+    capture_from_payload({"cwd": str(project), "transcript_path": str(transcript)}, root=store_root)
+
+    assert search("what search tool did we pick", root=store_root)
+
+
 def test_fresh_failures_are_recent_only(store_root: Path) -> None:
     """Only recently-logged failures count as fresh."""
 

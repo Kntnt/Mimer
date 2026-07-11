@@ -45,6 +45,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Fixed
 
 - Bootstrap's finishing distillation no longer fails silently, a defect found in end-to-end verification: the distiller prompt is now a strict output contract (so the real Haiku call returns a bullet list rather than conversational prose even under an ambient session context), the parser tolerates surrounding prose, and a finishing pass that yields no concepts over a non-empty record is logged and retried on a later run over the already-imported record rather than being stranded by the completed transcript import. The Concept-headline manifest no longer duplicates a title as its own detail.
+- `mimer-install` now builds the search index up front, so captured, digested, git-folded and imported content is searchable from the first session without a manual `mimer-reindex` (also found in end-to-end verification).
 
 ## [0.1.0] – 2026-07-11
 
