@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from mimer.bundle import concept_headlines, render_profile
 from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
@@ -41,8 +42,8 @@ def handle(payload: Mapping[str, Any]) -> None:
         )
         return
 
-    # Ensure the short-term file exists, then inject its framed, aged snapshot
-    # plus the long-term coverage manifest.
+    # Ensure the short-term file exists, then inject its framed, aged snapshot,
+    # the pinned profile, and the manifest (long-term coverage + Concept headlines).
     ensure_short_term(resolution.project_id, root)
     short_term_text = read_short_term(resolution.project_id, root)
     snapshot = build_snapshot(
@@ -50,9 +51,21 @@ def handle(payload: Mapping[str, Any]) -> None:
         short_term_text,
         today=date.today(),
         source=source,
-        manifest=long_term_manifest(resolution.project_id, root),
+        manifest=_manifest(resolution.project_id, root),
+        profile=render_profile(root),
     )
     _emit(snapshot)
+
+
+def _manifest(project_id: str, root: Path) -> str:
+    """The memory manifest: long-term coverage plus visible Concept headlines."""
+
+    manifest = long_term_manifest(project_id, root)
+    headlines = concept_headlines(root, project_id=project_id)
+    if headlines:
+        joined = "; ".join(headlines)
+        manifest += f"\nPermanent memory: {len(headlines)} concept(s) — {joined}"
+    return manifest
 
 
 def _emit(additional_context: str) -> None:

@@ -9,6 +9,7 @@ authors = [{ name = "Thomas Barregren", email = "thomas@kntnt.com" }]
 keywords = ["memory", "knowledge", "claude-code", "okf", "second-brain"]
 dependencies = [
     "model2vec>=0.6",
+    "pyyaml>=6.0.3",
     "sqlite-vec>=0.1.6",
 ]
 
@@ -35,7 +36,12 @@ build-backend = "hatchling.build"
 packages = ["src/mimer"]
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.14", "mypy>=1.14"]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.14",
+    "mypy>=1.14",
+    "types-pyyaml>=6.0.12.20260518",
+]
 
 [tool.ruff]
 line-length = 100

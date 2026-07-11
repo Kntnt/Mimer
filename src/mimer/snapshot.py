@@ -51,7 +51,13 @@ def count_dated_items(text: str) -> int:
 
 
 def build_snapshot(
-    project_id: str, short_term_text: str, *, today: date, source: str, manifest: str = ""
+    project_id: str,
+    short_term_text: str,
+    *,
+    today: date,
+    source: str,
+    manifest: str = "",
+    profile: str = "",
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -61,6 +67,8 @@ def build_snapshot(
         today: The reference date for age labels.
         source: The SessionStart source (``startup``/``compact``/…), named in the
             announcement so a re-injection is visible.
+        manifest: A compact statement of what memory holds beyond the snapshot.
+        profile: The pinned profile Concepts, injected on every session.
     """
 
     count = count_dated_items(short_term_text)
@@ -81,4 +89,8 @@ def build_snapshot(
     preamble = f"{announcement}\n{manifest}" if manifest else announcement
 
     body = annotate_ages(short_term_text, today)
-    return f"{DATA_FRAME_HEADER}\n\n{preamble}\n\n{body}"
+    sections = [f"{DATA_FRAME_HEADER}\n\n{preamble}"]
+    if profile:
+        sections.append(profile)
+    sections.append(body)
+    return "\n\n".join(sections)

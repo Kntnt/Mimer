@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
 from pathlib import Path
+from typing import Protocol
 
 import sqlite_vec
 
@@ -93,6 +94,17 @@ _STOPWORDS = frozenset(
 )
 
 
+class ConceptLike(Protocol):
+    """The fields of a permanent-memory Concept the index needs (no import cycle)."""
+
+    origin: str
+    scope: str
+    slug: str
+    title: str
+    body: str
+    timestamp: str
+
+
 @dataclass(frozen=True)
 class Citation:
     """A cited recall result: where it came from and a checkable excerpt."""
@@ -114,6 +126,7 @@ class _Chunk:
     date: str
     heading: str
     text: str
+    scope: str = "project"
 
 
 def index_db_path(root: Path | None = None) -> Path:
@@ -137,7 +150,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE IF NOT EXISTS chunks ("
         "id INTEGER PRIMARY KEY, chunk_key TEXT UNIQUE, project_id TEXT NOT NULL, "
-        "source TEXT NOT NULL, date TEXT NOT NULL, heading TEXT NOT NULL, text TEXT NOT NULL)"
+        "source TEXT NOT NULL, date TEXT NOT NULL, heading TEXT NOT NULL, text TEXT NOT NULL, "
+        "scope TEXT NOT NULL DEFAULT 'project')"
     )
     connection.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text)")
     connection.execute(
@@ -172,15 +186,9 @@ def _chunk_log(text: str, project_id: str, source: str, day: str) -> list[_Chunk
     return chunks
 
 
-def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
-    """Index (idempotently) a project's daily log; return the count of new chunks."""
+def _insert_chunks(root: Path, chunks: list[_Chunk]) -> int:
+    """Embed and idempotently insert chunks; return the count of new chunks."""
 
-    root = root or store_root()
-    path = daily_log_path(project_id, day, root)
-    if not path.exists():
-        return 0
-
-    chunks = _chunk_log(path.read_text(encoding="utf-8"), project_id, f"long-term/{day}.md", day)
     if not chunks:
         return 0
 
@@ -191,7 +199,8 @@ def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO chunks "
-                "(chunk_key, project_id, source, date, heading, text) VALUES (?, ?, ?, ?, ?, ?)",
+                "(chunk_key, project_id, source, date, heading, text, scope) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     chunk.chunk_key,
                     chunk.project_id,
@@ -199,6 +208,7 @@ def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
                     chunk.date,
                     chunk.heading,
                     chunk.text,
+                    chunk.scope,
                 ),
             )
             if cursor.rowcount == 0:
@@ -214,6 +224,45 @@ def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
             added += 1
     connection.close()
     return added
+
+
+def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
+    """Index (idempotently) a project's daily log; return the count of new chunks."""
+
+    root = root or store_root()
+    path = daily_log_path(project_id, day, root)
+    if not path.exists():
+        return 0
+
+    chunks = _chunk_log(path.read_text(encoding="utf-8"), project_id, f"long-term/{day}.md", day)
+    return _insert_chunks(root, chunks)
+
+
+def concept_chunk(
+    *, origin: str, scope: str, slug: str, title: str, body: str, timestamp: str
+) -> _Chunk:
+    """Build an index chunk from a permanent-memory Concept's fields."""
+
+    source = f"permanent/{slug}.md"
+    text = f"{title}\n{body}".strip()
+    key = sha256(f"{origin}\x00{source}\x00{text}".encode()).hexdigest()[:16]
+    return _Chunk(key, origin, source, (timestamp or "")[:10], title, text, scope)
+
+
+def index_concept_if_present(concept: ConceptLike, root: Path | None = None) -> None:
+    """Index a Concept into the search index only if the index already exists."""
+
+    if not index_db_path(root).exists():
+        return
+    chunk = concept_chunk(
+        origin=concept.origin,
+        scope=concept.scope,
+        slug=concept.slug,
+        title=concept.title,
+        body=concept.body,
+        timestamp=concept.timestamp,
+    )
+    _insert_chunks(root or store_root(), [chunk])
 
 
 def index_if_present(project_id: str, day: str, root: Path | None = None) -> None:
@@ -242,6 +291,22 @@ def reindex(root: Path | None = None) -> int:
             if long_term.is_dir():
                 for log in sorted(long_term.glob("*.md")):
                     total += index_daily_log(project_dir.name, log.stem, root)
+
+    # Index the permanent-memory Concepts too (late import avoids a cycle).
+    from mimer.bundle import list_concepts
+
+    concept_chunks = [
+        concept_chunk(
+            origin=concept.origin,
+            scope=concept.scope,
+            slug=concept.slug,
+            title=concept.title,
+            body=concept.body,
+            timestamp=concept.timestamp,
+        )
+        for concept in list_concepts(root)
+    ]
+    total += _insert_chunks(root, concept_chunks)
     return total
 
 
@@ -283,11 +348,19 @@ def search(
     results = [
         _cite(row, candidates[row["id"]], query_date=date.today())
         for row in rows
-        if (allowed is None or row["project_id"] in allowed)
-        and not _suppressed(row["text"], row["project_id"], tombstones)
+        if _in_scope(row, allowed) and not _suppressed(row["text"], row["project_id"], tombstones)
     ]
     results.sort(key=lambda citation: citation.score, reverse=True)
     return results[:limit]
+
+
+def _in_scope(row: sqlite3.Row, allowed: frozenset[str] | None) -> bool:
+    """Whether a chunk is visible: a global Concept is visible everywhere; every
+    other chunk only within an allowed project (ADR 0013)."""
+
+    if row["scope"] == "global":
+        return True
+    return allowed is None or row["project_id"] in allowed
 
 
 def _fuse(connection: sqlite3.Connection, query: str) -> dict[int, float]:
@@ -326,7 +399,7 @@ def _fetch(connection: sqlite3.Connection, rowids: list[int]) -> list[sqlite3.Ro
     connection.row_factory = sqlite3.Row
     placeholders = ",".join("?" for _ in rowids)
     return connection.execute(
-        "SELECT id, project_id, source, date, heading, text "
+        "SELECT id, project_id, source, date, heading, text, scope "
         f"FROM chunks WHERE id IN ({placeholders})",
         rowids,
     ).fetchall()
