@@ -20,6 +20,7 @@ Repository = "https://github.com/Kntnt/Mimer"
 mimer-session-start = "mimer.hooks.session_start:main"
 mimer-stop = "mimer.hooks.stop:main"
 mimer-session-end = "mimer.hooks.session_end:main"
+mimer-memory = "mimer.curate:main"
 
 [build-system]
 requires = ["hatchling"]
