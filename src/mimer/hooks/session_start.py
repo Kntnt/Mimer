@@ -18,6 +18,7 @@ from typing import Any
 
 from mimer.bundle import concept_headlines, render_profile
 from mimer.distill import drain_distilled
+from mimer.failure_log import fresh_failures
 from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
@@ -55,8 +56,18 @@ def handle(payload: Mapping[str, Any]) -> None:
         manifest=_manifest(resolution.project_id, root),
         profile=render_profile(root),
         distilled=drain_distilled(resolution.project_id, root),
+        health=_health_notice(root),
     )
     _emit(snapshot)
+
+
+def _health_notice(root: Path) -> str:
+    """A one-line notice when the failure log has fresh entries (ADR 0011)."""
+
+    failures = fresh_failures(root)
+    if not failures:
+        return ""
+    return f"⚠ Mimer health: {len(failures)} recent failure(s) logged — see mimer.log."
 
 
 def _manifest(project_id: str, root: Path) -> str:

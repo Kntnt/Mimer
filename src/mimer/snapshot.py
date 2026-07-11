@@ -59,6 +59,7 @@ def build_snapshot(
     manifest: str = "",
     profile: str = "",
     distilled: list[str] | None = None,
+    health: str = "",
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -88,7 +89,10 @@ def build_snapshot(
     # The manifest tells the agent what memory holds beyond the snapshot, so it
     # knows when recall is worth invoking; the distilled line announces what was
     # promoted since the last session (ADR 0014).
-    lines = [announcement]
+    lines = []
+    if health:
+        lines.append(health)
+    lines.append(announcement)
     if manifest:
         lines.append(manifest)
     if distilled:

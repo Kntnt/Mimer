@@ -104,7 +104,27 @@ Claude Cowork is not yet supported: Cowork runs sessions in a sandboxed VM that 
 
 ## Installation
 
-Mimer is in early development and is not yet published for general installation. When it is released, it will install as a Claude Code plugin, and the steps will be documented here.
+Mimer is a Claude Code plugin. It needs [uv](https://docs.astral.sh/uv/) (which provisions its Python environment) and a Python that can load SQLite extensions — the uv-managed CPython qualifies; some system Pythons have extension loading compiled out.
+
+1. **Add the plugin.** Point Claude Code at this repository as a plugin — for local development, `claude --plugin-dir /path/to/Mimer`; once published, install it from its marketplace. This registers the `SessionStart`, `Stop` and `SessionEnd` hooks and the memory skill.
+2. **Provision and check.** Run the first-run install once, from the plugin directory:
+
+   ```bash
+   uv run --project /path/to/Mimer mimer-install
+   ```
+
+   This creates the `~/.mimer/` store (owner-only), verifies the interpreter can load SQLite extensions — failing loudly with an actionable message if it cannot — and pre-fetches the local embedding model so no session ever stalls on a download.
+3. **Start working.** Open a session in any project; Mimer injects the snapshot at the start and records as you go. If the failure log has recent entries, the snapshot carries a one-line health notice so problems are visible, never silent.
+
+To import history that predates Mimer, run `mimer-bootstrap` in a project once (opt-in and resumable). Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`).
+
+### Coexistence with Claude Code's native auto memory
+
+Claude Code ships its own auto memory (on by default). Mimer works alongside it, but to avoid two systems remembering the same things divergently, the recommendation — never a requirement — is to disable native auto memory in Mimer-managed projects by setting `autoMemoryEnabled: false` in that project's Claude Code settings. Mimer builds what native memory does not attempt: retrieval by meaning with citations, a curated cross-project knowledge layer, full-history capture, git provenance, real forgetting, and bootstrap from prior history.
+
+### Uninstalling
+
+Remove the Mimer plugin in Claude Code to unregister its hooks. Running `mimer-uninstall` leaves your `~/.mimer/` store in place — nothing is deleted — and writes a short pointer note there explaining how to resume or how to remove your memory entirely.
 
 ## Usage
 
