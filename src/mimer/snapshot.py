@@ -58,6 +58,7 @@ def build_snapshot(
     source: str,
     manifest: str = "",
     profile: str = "",
+    distilled: list[str] | None = None,
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -85,8 +86,14 @@ def build_snapshot(
         )
 
     # The manifest tells the agent what memory holds beyond the snapshot, so it
-    # knows when recall is worth invoking.
-    preamble = f"{announcement}\n{manifest}" if manifest else announcement
+    # knows when recall is worth invoking; the distilled line announces what was
+    # promoted since the last session (ADR 0014).
+    lines = [announcement]
+    if manifest:
+        lines.append(manifest)
+    if distilled:
+        lines.append(f"Distilled since last session: {'; '.join(distilled)}.")
+    preamble = "\n".join(lines)
 
     body = annotate_ages(short_term_text, today)
     sections = [f"{DATA_FRAME_HEADER}\n\n{preamble}"]

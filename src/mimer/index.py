@@ -252,7 +252,7 @@ def concept_chunk(
 def index_concept_if_present(concept: ConceptLike, root: Path | None = None) -> None:
     """Index a Concept into the search index only if the index already exists."""
 
-    if not index_db_path(root).exists():
+    if not index_db_path(root).exists() or getattr(concept, "status", "active") == "superseded":
         return
     chunk = concept_chunk(
         origin=concept.origin,
@@ -305,6 +305,7 @@ def reindex(root: Path | None = None) -> int:
             timestamp=concept.timestamp,
         )
         for concept in list_concepts(root)
+        if concept.status != "superseded"
     ]
     total += _insert_chunks(root, concept_chunks)
     return total

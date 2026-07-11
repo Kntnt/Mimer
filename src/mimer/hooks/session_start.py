@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mimer.bundle import concept_headlines, render_profile
+from mimer.distill import drain_distilled
 from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
@@ -53,6 +54,7 @@ def handle(payload: Mapping[str, Any]) -> None:
         source=source,
         manifest=_manifest(resolution.project_id, root),
         profile=render_profile(root),
+        distilled=drain_distilled(resolution.project_id, root),
     )
     _emit(snapshot)
 

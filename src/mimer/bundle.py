@@ -116,6 +116,7 @@ def create_concept(
     pinned: bool = False,
     confirmed: bool = False,
     citations: list[Source] | None = None,
+    supersedes: str | None = None,
     timestamp: str | None = None,
     root: Path | None = None,
 ) -> Concept:
@@ -143,6 +144,7 @@ def create_concept(
             pinned=pinned,
             origin=origin,
             scope=scope,
+            supersedes=supersedes,
             citations=list(citations or []),
         )
         _write(concept, root)
@@ -230,6 +232,19 @@ def rename_concept(old_slug: str, new_slug: str, root: Path | None = None) -> Co
 
     _reindex_if_present(root)
     return read_concept(new_slug, root)
+
+
+def mark_superseded(slug: str, superseded_by: str, root: Path | None = None) -> None:
+    """Mark a Concept superseded by another; recall then drops it (ADR 0015)."""
+
+    with project_lock(_BUNDLE_LOCK, root=root):
+        concept = read_concept(slug, root)
+        concept.status = "superseded"
+        concept.superseded_by = superseded_by
+        _write(concept, root)
+        regenerate_index(root)
+
+    _reindex_if_present(root)
 
 
 def regenerate_index(root: Path | None = None) -> None:
