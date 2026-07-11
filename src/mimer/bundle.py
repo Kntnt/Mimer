@@ -24,6 +24,7 @@ from mimer.paths import store_root
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
 from mimer.store import FILE_MODE, ensure_store
 from mimer.storeio import project_lock
+from mimer.tombstones import write_tombstone
 
 BUNDLE_DIRNAME = "permanent"
 INDEX_FILENAME = "index.md"
@@ -232,6 +233,20 @@ def rename_concept(old_slug: str, new_slug: str, root: Path | None = None) -> Co
 
     _reindex_if_present(root)
     return read_concept(new_slug, root)
+
+
+def retract_concept(slug: str, root: Path | None = None) -> Concept:
+    """Retract a Concept on request: remove it and tombstone it so it stops
+    surfacing in recall and injection and is never re-distilled (ADR 0012)."""
+
+    with project_lock(_BUNDLE_LOCK, root=root):
+        concept = read_concept(slug, root)
+        concept_path(slug, root).unlink()
+        regenerate_index(root)
+
+    write_tombstone(concept.body, project_id=concept.origin, root=root)
+    _reindex_if_present(root)
+    return concept
 
 
 def mark_superseded(slug: str, superseded_by: str, root: Path | None = None) -> None:
