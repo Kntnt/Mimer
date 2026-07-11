@@ -36,13 +36,22 @@ SHORT_TERM_CAP = 30
 # A date-stamped bullet entry: ``- [YYYY-MM-DD] text``.
 _ENTRY_RE = re.compile(r"^-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$")
 
+# A trailing marker flagging an entry as durable, so the cap keeps it (ADR 0017).
+_DURABLE_MARKER = "[durable]"
+
 
 @dataclass(frozen=True)
 class Entry:
-    """One date-stamped short-term memory entry."""
+    """One date-stamped short-term memory entry.
+
+    ``durable`` marks knowledge worth promoting to permanent memory; the cap ages
+    out transient entries first and keeps durable ones until distillation
+    promotes them (ADR 0017).
+    """
 
     date: str
     text: str
+    durable: bool = False
 
 
 def parse_short_term(content: str) -> dict[str, list[Entry]]:
@@ -63,9 +72,18 @@ def parse_short_term(content: str) -> dict[str, list[Entry]]:
         elif current is not None:
             match = _ENTRY_RE.match(line.strip())
             if match:
-                sections[current].append(Entry(match.group(1), match.group(2).strip()))
+                sections[current].append(_entry_from_text(match.group(1), match.group(2).strip()))
 
     return sections
+
+
+def _entry_from_text(date_stamp: str, text: str) -> Entry:
+    """Build an entry, splitting off the trailing durable marker if present."""
+
+    durable = text.endswith(_DURABLE_MARKER)
+    if durable:
+        text = text[: -len(_DURABLE_MARKER)].strip()
+    return Entry(date_stamp, text, durable)
 
 
 def render_short_term(project_id: str, sections: dict[str, list[Entry]]) -> str:
@@ -75,11 +93,18 @@ def render_short_term(project_id: str, sections: dict[str, list[Entry]]) -> str:
     for name in SECTIONS:
         parts.append(f"## {name}")
         parts.append("")
-        parts.extend(f"- [{entry.date}] {entry.text}" for entry in sections[name])
+        parts.extend(_render_entry(entry) for entry in sections[name])
         if sections[name]:
             parts.append("")
 
     return "\n".join(parts).rstrip("\n") + "\n"
+
+
+def _render_entry(entry: Entry) -> str:
+    """Render one entry, appending the durable marker when set."""
+
+    suffix = f" {_DURABLE_MARKER}" if entry.durable else ""
+    return f"- [{entry.date}] {entry.text}{suffix}"
 
 
 def short_term_path(project_id: str, root: Path | None = None) -> Path:

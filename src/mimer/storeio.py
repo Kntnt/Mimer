@@ -79,6 +79,20 @@ def append_text(path: Path, text: str) -> None:
         os.close(fd)
 
 
+def write_atomic(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically (temp file then ``os.replace``).
+
+    A reader never sees a half-written file. Callers that need mutual exclusion
+    must already hold the relevant :func:`project_lock`.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.chmod(FILE_MODE)
+    os.replace(tmp, path)
+
+
 def update_file(
     path: Path,
     transform: Callable[[str], str],
@@ -88,9 +102,8 @@ def update_file(
 ) -> str:
     """Read-modify-write ``path`` under the project lock, returning new content.
 
-    The file is re-read inside the lock and rewritten atomically (temp file then
-    ``os.replace``), so a concurrent writer cannot lose an update. A missing file
-    is treated as empty. Returns the content written.
+    The file is re-read inside the lock and rewritten atomically, so a concurrent
+    writer cannot lose an update. A missing file is treated as empty.
     """
 
     root = root or store_root()
@@ -98,12 +111,6 @@ def update_file(
     with project_lock(project_id, root=root):
         current = path.read_text(encoding="utf-8") if path.exists() else ""
         updated = transform(current)
-
-        # Write atomically so a reader never sees a half-written file.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(updated, encoding="utf-8")
-        tmp.chmod(FILE_MODE)
-        os.replace(tmp, path)
+        write_atomic(path, updated)
 
     return updated

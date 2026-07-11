@@ -53,17 +53,23 @@ def test_remember_duplicate_updates_not_duplicates(store_root: Path, project_dir
     assert notes[0].date == "2026-07-11"
 
 
-def test_over_cap_write_warns_and_evicts_nothing(store_root: Path, project_dir: Path) -> None:
-    """An over-cap write warns but keeps every entry (eviction is Stage 3)."""
+def test_over_cap_durable_write_warns_and_evicts_nothing(
+    store_root: Path, project_dir: Path
+) -> None:
+    """When only durable entries remain, an over-cap write warns and keeps all
+    (durable entries are promoted by distillation, not aged out — ADR 0017)."""
 
     pid = _project(store_root, project_dir)
     for i in range(3):
-        remember(f"fact {i}", project_id=pid, root=store_root, cap=3, today=TODAY)
+        remember(f"fact {i}", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY)
 
-    result = remember("one too many", project_id=pid, root=store_root, cap=3, today=TODAY)
+    result = remember(
+        "one too many", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY
+    )
 
     assert result.warning is not None
     assert "cap" in result.warning.lower()
+    assert not result.aged_out
     notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
     assert len(notes) == 4
 
