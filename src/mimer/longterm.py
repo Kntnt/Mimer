@@ -16,7 +16,9 @@ from mimer.registry import project_dir
 from mimer.storeio import append_text
 
 LONG_TERM_DIRNAME = "long-term"
+TRANSCRIPTS_DIRNAME = "transcripts"
 CAPTURE_LEDGER_FILENAME = ".capture-ledger"
+DIGEST_LEDGER_FILENAME = ".digest-ledger"
 
 
 def long_term_dir(project_id: str, root: Path | None = None) -> Path:
@@ -54,3 +56,28 @@ def record_captured(project_id: str, turn_id: str, root: Path | None = None) -> 
     """Record that a turn has been captured (append-only ledger)."""
 
     append_text(_ledger_path(project_id, root), turn_id)
+
+
+def transcripts_dir(project_id: str, root: Path | None = None) -> Path:
+    """The directory holding a project's archived (redacted) transcripts."""
+
+    return project_dir(project_id, root or store_root()) / TRANSCRIPTS_DIRNAME
+
+
+def _digest_ledger_path(project_id: str, root: Path | None = None) -> Path:
+    return long_term_dir(project_id, root) / DIGEST_LEDGER_FILENAME
+
+
+def is_digested(project_id: str, session_id: str, root: Path | None = None) -> bool:
+    """Whether a session has already been digested for this project."""
+
+    path = _digest_ledger_path(project_id, root)
+    if not path.exists():
+        return False
+    return session_id in path.read_text(encoding="utf-8").split()
+
+
+def record_digested(project_id: str, session_id: str, root: Path | None = None) -> None:
+    """Record that a session has been digested (append-only ledger)."""
+
+    append_text(_digest_ledger_path(project_id, root), session_id)

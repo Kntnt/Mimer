@@ -74,6 +74,18 @@ def last_exchange(transcript_path: Path) -> Exchange | None:
     return Exchange(user_text, assistant_text, timestamp, turn_id)
 
 
+def conversation_text(transcript_path: Path) -> str:
+    """Return the whole session as readable ``User:``/``Assistant:`` prose.
+
+    Used by the session digest, which needs the full conversation rather than
+    just the last exchange. Raises if the transcript cannot be read.
+    """
+
+    messages = _parse_messages(transcript_path.read_text(encoding="utf-8"))
+    labels = {"user": "User", "assistant": "Assistant"}
+    return "\n\n".join(f"{labels[role]}: {text}" for role, text, _ in messages if text)
+
+
 def _parse_messages(raw: str) -> list[tuple[str, str, str]]:
     """Parse a transcript into ``(role, text, timestamp)`` tuples, skipping junk."""
 
