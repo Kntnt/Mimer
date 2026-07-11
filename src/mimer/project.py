@@ -19,10 +19,14 @@ from pathlib import Path
 from mimer.paths import store_root
 from mimer.registry import Registry
 from mimer.store import ensure_store
+from mimer.storeio import project_lock
 from mimer.vcs import git_remotes, git_toplevel
 
 # The opt-in marker file at a project root carrying its project id.
 MARKER_FILENAME = ".mimer"
+
+# Reserved lock id serialising registry read-modify-write across sessions.
+REGISTRY_LOCK = "__registry__"
 
 # URL schemes stripped during remote normalisation.
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -179,14 +183,21 @@ def resolve(cwd: Path, *, root: Path | None = None) -> Resolution:
 
     root = root or store_root()
     ensure_store(root)
-    registry = Registry.load(root)
+
+    # Gathering signals reads git and the filesystem, not the store, so it can
+    # happen before the lock.
     signals = gather_signals(cwd)
 
-    if signals.marker_id is not None:
-        return _resolve_marker(registry, signals)
-    if signals.remotes:
-        return _resolve_with_remote(registry, signals)
-    return _resolve_path_only(registry, signals)
+    # The whole registry read-modify-write runs under a store-level lock, so two
+    # concurrent sessions cannot lose each other's binding or race the atomic
+    # write (ADR 0011).
+    with project_lock(REGISTRY_LOCK, root=root):
+        registry = Registry.load(root)
+        if signals.marker_id is not None:
+            return _resolve_marker(registry, signals)
+        if signals.remotes:
+            return _resolve_with_remote(registry, signals)
+        return _resolve_path_only(registry, signals)
 
 
 def _resolve_marker(registry: Registry, signals: Signals) -> Resolution:
@@ -284,11 +295,13 @@ def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> R
 
     root = root or store_root()
     ensure_store(root)
-    registry = Registry.load(root)
-    if registry.find_by_id(candidate_id) is None:
-        raise ValueError(f"unknown project id: {candidate_id}")
-
     signals = gather_signals(cwd)
-    registry.add_aliases(candidate_id, remotes=signals.remotes, paths=[signals.path])
-    registry.save()
+
+    with project_lock(REGISTRY_LOCK, root=root):
+        registry = Registry.load(root)
+        if registry.find_by_id(candidate_id) is None:
+            raise ValueError(f"unknown project id: {candidate_id}")
+
+        registry.add_aliases(candidate_id, remotes=signals.remotes, paths=[signals.path])
+        registry.save()
     return Resolution(ResolutionStatus.RECOGNISED, candidate_id)

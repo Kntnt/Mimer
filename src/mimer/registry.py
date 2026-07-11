@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -89,13 +90,15 @@ class Registry:
         payload = {"projects": [asdict(record) for record in self._records.values()]}
         serialised = json.dumps(payload, indent=2, ensure_ascii=False)
 
-        # Write to a sibling temp file then atomically replace, so a reader never
-        # sees a partial registry.
+        # Write to a uniquely-named temp file then atomically replace, so a
+        # reader never sees a partial registry and two concurrent writers never
+        # collide on a shared temp path.
         target = registry_path(self._root)
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(serialised + "\n", encoding="utf-8")
-        tmp.chmod(FILE_MODE)
-        os.replace(tmp, target)
+        handle, tmp_name = tempfile.mkstemp(dir=self._root, prefix="registry.", suffix=".tmp")
+        with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(serialised + "\n")
+        os.chmod(tmp_name, FILE_MODE)
+        os.replace(tmp_name, target)
 
     def find_by_id(self, project_id: str) -> ProjectRecord | None:
         """Return the record with this id, or None."""

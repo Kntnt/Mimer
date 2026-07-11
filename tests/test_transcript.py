@@ -1,0 +1,49 @@
+"""Unit tests for the transcript adapter: extract the last exchange from a
+Claude Code transcript, tolerant of string or block content.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from mimer.transcript import last_exchange
+from tests.transcript_fixture import write_transcript
+
+
+def test_last_exchange_is_extracted(tmp_path: Path) -> None:
+    """The adapter returns the final user/assistant pair with its date."""
+
+    path = write_transcript(
+        tmp_path / "t.jsonl",
+        [
+            ("first question", "first answer", "2026-07-10T09:00:00Z"),
+            ("second question", "second answer", "2026-07-11T14:30:00Z"),
+        ],
+    )
+
+    exchange = last_exchange(path)
+
+    assert exchange is not None
+    assert exchange.user_text == "second question"
+    assert exchange.assistant_text == "second answer"
+    assert exchange.date == "2026-07-11"
+
+
+def test_turn_identity_is_stable_and_content_derived(tmp_path: Path) -> None:
+    """The same exchange yields the same turn id across parses (for idempotency)."""
+
+    turns = [("q", "a", "2026-07-11T10:00:00Z")]
+    first = last_exchange(write_transcript(tmp_path / "a.jsonl", turns))
+    second = last_exchange(write_transcript(tmp_path / "b.jsonl", turns))
+
+    assert first is not None and second is not None
+    assert first.turn_id == second.turn_id
+
+
+def test_empty_transcript_returns_none(tmp_path: Path) -> None:
+    """A transcript with no exchanges yields nothing to capture."""
+
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+
+    assert last_exchange(path) is None
