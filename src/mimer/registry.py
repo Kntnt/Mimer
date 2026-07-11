@@ -135,6 +135,17 @@ class Registry:
 
         self._records[project_id].settings["exclude_from_widening"] = not participate
 
+    def import_state(self, project_id: str) -> dict[str, object]:
+        """Return a project's bootstrap import state (empty if none)."""
+
+        record = self._records.get(project_id)
+        return dict(record.import_state) if record is not None else {}
+
+    def set_import_state(self, project_id: str, state: dict[str, object]) -> None:
+        """Replace a project's bootstrap import state."""
+
+        self._records[project_id].import_state = dict(state)
+
     def create(
         self,
         project_id: str,
