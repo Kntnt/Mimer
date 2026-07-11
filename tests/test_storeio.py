@@ -1,0 +1,166 @@
+"""Concurrency tests for the store I/O layer (ADR 0011): per-project locked
+read-modify-write serialises without lost updates, O_APPEND daily-log writes
+interleave without loss, and a crashed lock holder never deadlocks the store.
+"""
+
+from __future__ import annotations
+
+import multiprocessing
+import threading
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+from mimer.store import ensure_store
+from mimer.storeio import append_text, project_lock, update_file
+
+
+def _append_marker(marker: str) -> Callable[[str], str]:
+    """Return a transform that appends ``marker`` after a brief pause.
+
+    The pause widens the read-modify-write window so an unlocked implementation
+    would reliably lose updates — proving the lock is what protects them.
+    """
+
+    def transform(content: str) -> str:
+        time.sleep(0.01)
+        return content + marker + "\n"
+
+    return transform
+
+
+def test_locked_rmw_has_no_lost_updates(store_root: Path, tmp_path: Path) -> None:
+    """Many concurrent locked read-modify-writes to one file all survive."""
+
+    ensure_store(store_root)
+    target = tmp_path / "short-term.md"
+    target.write_text("", encoding="utf-8")
+
+    writers = [f"line-{i}" for i in range(15)]
+
+    def write(marker: str) -> None:
+        update_file(target, _append_marker(marker), project_id="proj", root=store_root)
+
+    threads = [threading.Thread(target=write, args=(m,)) for m in writers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    lines = set(target.read_text().splitlines())
+    assert lines == set(writers)
+
+
+def test_concurrent_appends_lose_nothing(store_root: Path, tmp_path: Path) -> None:
+    """Concurrent O_APPEND writers to one daily log interleave without loss or
+    corruption — the timing-based stress case."""
+
+    ensure_store(store_root)
+    log = tmp_path / "2026-07-11.md"
+
+    threads_count = 20
+    per_thread = 50
+
+    def append_many(worker: int) -> None:
+        for n in range(per_thread):
+            append_text(log, f"w{worker}-n{n}")
+
+    threads = [threading.Thread(target=append_many, args=(w,)) for w in range(threads_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    lines = log.read_text().splitlines()
+    assert len(lines) == threads_count * per_thread
+    # Every line is intact (no torn writes) and unique.
+    assert len(set(lines)) == threads_count * per_thread
+    assert all(line.startswith("w") for line in lines)
+
+
+def test_lock_release_allows_reacquire(store_root: Path) -> None:
+    """A released lock can be acquired again; a held one is exclusive."""
+
+    ensure_store(store_root)
+
+    with project_lock("proj", root=store_root):
+        pass
+    # Re-acquisition after clean release must not block.
+    with project_lock("proj", root=store_root):
+        pass
+
+
+def test_held_lock_serialises_a_waiter(store_root: Path) -> None:
+    """A second acquirer waits until the first releases (contention is real)."""
+
+    ensure_store(store_root)
+    events: list[str] = []
+
+    holder_has_lock = threading.Event()
+    release_holder = threading.Event()
+
+    def holder() -> None:
+        with project_lock("proj", root=store_root):
+            events.append("holder-acquired")
+            holder_has_lock.set()
+            release_holder.wait(2)
+            events.append("holder-releasing")
+
+    def waiter() -> None:
+        holder_has_lock.wait(2)
+        with project_lock("proj", root=store_root):
+            events.append("waiter-acquired")
+
+    threads = [threading.Thread(target=holder), threading.Thread(target=waiter)]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.1)
+    release_holder.set()
+    for thread in threads:
+        thread.join(3)
+
+    # The waiter only got in after the holder released.
+    assert events == ["holder-acquired", "holder-releasing", "waiter-acquired"]
+
+
+def _hold_then_hang(project_id: str, root: str, ready: str) -> None:
+    """Child process: grab the lock, announce it, then hang until killed."""
+
+    from pathlib import Path
+
+    from mimer.storeio import project_lock
+
+    with project_lock(project_id, root=Path(root)):
+        Path(ready).write_text("ready", encoding="utf-8")
+        time.sleep(120)
+
+
+def test_crashed_holder_does_not_deadlock(store_root: Path, tmp_path: Path) -> None:
+    """A lock holder killed with SIGKILL leaves the lock recoverable."""
+
+    ensure_store(store_root)
+    ready = tmp_path / "ready"
+
+    ctx = multiprocessing.get_context("spawn")
+    child = ctx.Process(target=_hold_then_hang, args=("proj", str(store_root), str(ready)))
+    child.start()
+
+    # Wait until the child actually holds the lock, then hard-kill it.
+    deadline = time.time() + 15
+    while not ready.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert ready.exists(), "child never acquired the lock"
+    child.kill()
+    child.join(10)
+
+    # The parent must be able to acquire the lock the crashed child abandoned.
+    acquired = threading.Event()
+
+    def acquire() -> None:
+        with project_lock("proj", root=store_root):
+            acquired.set()
+
+    grabber = threading.Thread(target=acquire)
+    grabber.start()
+    grabber.join(5)
+    assert acquired.is_set(), "the lock deadlocked after a crash"

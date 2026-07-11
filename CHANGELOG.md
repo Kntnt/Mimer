@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The re-entrancy guard, so a Claude session Mimer spawns can never trigger Mimer's own hooks and capture itself.
 - A pytest harness that drives each hook as a JSON-in/JSON-out subprocess, and a GitHub Actions workflow running ruff, mypy and pytest on every push.
 - Project identity: a stable project id resolved from an opt-in `.mimer` marker, the normalised git remote, or the path, backed by a registry that records each project's known remotes and paths. SSH and HTTPS remotes, git worktrees and moved repositories resolve to one id; a marker or remote that would attach a new directory to existing memory is surfaced for confirmation instead of bound silently; adding a remote to a path-keyed project reconciles onto it; and a link/merge action repairs an orphaned project's memory into its recognised identity.
+- Concurrency-safe store I/O: a per-project advisory lock guarding read-modify-write of the store's Markdown artefacts — re-reading inside the lock so two concurrent writers never lose an update — plus atomic `O_APPEND` daily-log writes that interleave without corruption, and WAL-mode SQLite connection conventions for the derived index. A lock holder that crashes never deadlocks the store.
 
 ### Changed
 
