@@ -18,12 +18,13 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from mimer.bundle import create_concept
+from mimer.bundle import create_concept, list_concepts
 from mimer.curate import remember
 from mimer.distill import _title, distill_fact
 from mimer.failure_log import log_failure
 from mimer.index import index_if_present
-from mimer.longterm import append_entry
+from mimer.llm import run_haiku
+from mimer.longterm import append_entry, long_term_dir
 from mimer.paths import store_root
 from mimer.redaction import redact
 from mimer.registry import Registry
@@ -71,7 +72,6 @@ def bootstrap_project(
 
     imported_turns = 0
     imported_transcripts = 0
-    conversation_parts: list[str] = []
     for transcript in transcripts:
         if transcript.name in imported:
             continue
@@ -79,12 +79,18 @@ def bootstrap_project(
         if turns:
             imported_turns += len(turns)
             imported_transcripts += 1
-            conversation_parts.extend(f"{e.user_text}\n{e.assistant_text}" for e in turns)
         # Record progress per transcript so a crash resumes here, not at the start.
         imported.add(transcript.name)
         _save_state(project_id, {"imported": sorted(imported), "complete": False}, root)
 
-    concept_count = _finish(project_id, "\n".join(conversation_parts), distiller, root)
+    # Run the finishing pass when there is new history, or when a prior run
+    # produced no Concepts yet — so a distillation that failed silently retries
+    # over the already-imported record rather than being stranded.
+    have_concepts = any(concept.origin == project_id for concept in list_concepts(root))
+    concept_count = 0
+    if imported_turns > 0 or not have_concepts:
+        concept_count = _finish(project_id, distiller, root)
+
     _save_state(project_id, {"imported": sorted(imported), "complete": True}, root)
     return BootstrapResult(imported_transcripts, imported_turns, concept_count)
 
@@ -112,10 +118,22 @@ def _import_transcript(transcript: Path, project_id: str, root: Path) -> list[Ex
     return exchanges
 
 
-def _finish(project_id: str, conversation: str, distiller: Distiller | None, root: Path) -> int:
-    """The finishing pass: distil Concepts, a starter profile and short-term."""
+def _finish(project_id: str, distiller: Distiller | None, root: Path) -> int:
+    """The finishing pass: distil Concepts, a starter profile and short-term.
 
+    Reads the already-imported long-term record (not just this run's transcripts),
+    so a distillation that yielded nothing can be retried on a later run. A
+    non-empty record that yields no facts is logged, never silently dropped.
+    """
+
+    conversation = _imported_record(project_id, root)
     facts = distiller(conversation) if distiller and conversation.strip() else []
+    if distiller is not None and conversation.strip() and not facts:
+        log_failure(
+            "distill: the bootstrap finishing pass produced no concepts; the model reply "
+            "contained no facts — re-run mimer-bootstrap to retry",
+            root=root,
+        )
 
     concept_count = 0
     for index, fact in enumerate(facts):
@@ -145,6 +163,15 @@ def _finish(project_id: str, conversation: str, distiller: Distiller | None, roo
             today=date.today(),
         )
     return concept_count
+
+
+def _imported_record(project_id: str, root: Path) -> str:
+    """Concatenate a project's imported long-term logs as distillation input."""
+
+    directory = long_term_dir(project_id, root)
+    if not directory.exists():
+        return ""
+    return "\n".join(log.read_text(encoding="utf-8") for log in sorted(directory.glob("*.md")))
 
 
 def _render(exchange: Exchange) -> str:
@@ -196,23 +223,35 @@ def _default_transcripts_dir(cwd: Path) -> Path:
 
 
 def _haiku_distiller(conversation: str) -> list[str]:
-    """Extract durable facts from imported history via one Haiku call."""
+    """Extract durable facts from imported history via one Haiku call.
 
-    from mimer.llm import run_haiku
+    The prompt is deliberately forceful (a strict output contract with a
+    ``- none`` fallback) so the reply is a bullet list even when the ambient
+    session context would otherwise make the model conversational; parsing then
+    ignores any surrounding prose.
+    """
 
     prompt = (
-        "Extract the durable, reusable facts, decisions and preferences worth "
-        "remembering from this history — one per line as '- fact'. Skip "
-        "instructions to the assistant, secrets, and trivia.\n\n" + conversation[:20000]
+        "You extract durable memory for a knowledge base. From the session history "
+        "below, list the durable, reusable facts, decisions and preferences worth "
+        "remembering long-term. Reply with ONLY a Markdown bullet list — one item "
+        "per line beginning with '- ' — and NOTHING else: no preamble, no "
+        "questions, no commentary. Skip instructions addressed to the assistant, "
+        "secrets, and trivia. If there is nothing durable, reply with exactly "
+        "'- none'.\n\nSession history:\n\n" + conversation[:20000]
     )
     reply = run_haiku(prompt)
     if reply is None:
         return []
-    return [
-        line.strip()[2:].strip()
-        for line in reply.splitlines()
-        if line.strip().startswith("- ") and len(line.strip()) > 3
-    ]
+
+    facts = []
+    for line in reply.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            fact = stripped[2:].strip()
+            if fact and fact.lower() != "none":
+                facts.append(fact)
+    return facts
 
 
 def main(argv: list[str] | None = None) -> int:

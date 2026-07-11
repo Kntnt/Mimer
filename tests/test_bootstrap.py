@@ -159,6 +159,71 @@ def test_mimer_spawned_transcripts_are_excluded(store_root: Path, project_dir: P
     assert "a digest reply" not in _all_logs(store_root, pid)
 
 
+def test_finishing_distillation_zero_concepts_is_logged(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A finishing pass that yields no concepts is logged, not silent."""
+
+    pid = _project(store_root, project_dir)
+    source = project_dir / "history"
+    write_transcript(source / "a.jsonl", [("q", "some durable content", "2026-06-01T10:00:00Z")])
+
+    result = bootstrap_project(
+        pid, transcripts_dir=source, root=store_root, distiller=lambda _t: []
+    )
+
+    assert result.concept_count == 0
+    log = (store_root / "mimer.log").read_text().lower()
+    assert "distill" in log and "no concept" in log
+
+
+def test_finishing_distillation_is_retryable(store_root: Path, project_dir: Path) -> None:
+    """A finishing pass that yielded nothing retries on a later run over the
+    already-imported record (not blocked by the completed transcript import)."""
+
+    pid = _project(store_root, project_dir)
+    source = project_dir / "history"
+    write_transcript(
+        source / "a.jsonl", [("q", "durable content about uv", "2026-06-01T10:00:00Z")]
+    )
+
+    bootstrap_project(pid, transcripts_dir=source, root=store_root, distiller=lambda _t: [])
+    assert not list_concepts(store_root)
+
+    bootstrap_project(
+        pid, transcripts_dir=source, root=store_root, distiller=lambda _t: ["The project uses uv."]
+    )
+    assert any("uv" in c.body for c in list_concepts(store_root))
+
+
+def test_haiku_distiller_extracts_bullets_despite_preamble(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distiller extracts the bullet list even when the model adds prose."""
+
+    from mimer.bootstrap import _haiku_distiller
+
+    reply = (
+        "Sure! Here are the facts:\n"
+        "- The user prefers uv.\n"
+        "- Deploys happen on Fridays.\n"
+        "Hope that helps."
+    )
+    monkeypatch.setattr("mimer.bootstrap.run_haiku", lambda _p: reply)
+
+    assert _haiku_distiller("history") == ["The user prefers uv.", "Deploys happen on Fridays."]
+
+
+def test_haiku_distiller_handles_none_and_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A '- none' reply or an unavailable model yields no facts."""
+
+    from mimer.bootstrap import _haiku_distiller
+
+    monkeypatch.setattr("mimer.bootstrap.run_haiku", lambda _p: "- none")
+    assert _haiku_distiller("history") == []
+
+    monkeypatch.setattr("mimer.bootstrap.run_haiku", lambda _p: None)
+    assert _haiku_distiller("history") == []
+
+
 def test_unknown_transcript_format_degrades_gracefully(store_root: Path, project_dir: Path) -> None:
     """An unrecognised transcript format degrades with a logged, actionable message."""
 

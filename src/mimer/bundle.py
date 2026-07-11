@@ -189,11 +189,18 @@ def concept_headlines(root: Path | None = None, *, project_id: str | None = None
     origin (ADR 0013). Without a project id, all Concepts are listed.
     """
 
-    return [
-        f"{c.title} — {c.description or _first_line(c.body)}"
+    visible = [
+        c
         for c in list_concepts(root)
         if project_id is None or c.scope == "global" or c.origin == project_id
     ]
+    headlines = []
+    for concept in visible:
+        detail = concept.description or _first_line(concept.body)
+        headlines.append(
+            f"{concept.title} — {detail}" if detail and detail != concept.title else concept.title
+        )
+    return headlines
 
 
 def render_profile(root: Path | None = None) -> str:
