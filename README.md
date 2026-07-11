@@ -40,18 +40,37 @@ A few deliberate choices set Mimer apart, and each has a reason you can weigh.
 
 ### How Mimer differs — and the trade-offs
 
-Set beside the well-known tools, Mimer trades polish for reach and ownership.
+The market holds four kinds of tool, and only one of them is really Mimer's peer. Naming the other three clears the ground.
 
-| Approach | Who curates it | The agent uses it directly | Format and where it lives | Finds by meaning, with sources |
-|---|---|---|---|---|
-| **Mimer** | the agent, automatically | yes — it is the agent's own memory | open plain-text (OKF), on your machine | yes |
-| **Obsidian** (human PKM) | you, by hand | no | local Markdown files | search; by meaning only with plugins |
-| **Notion, Mem, Tana** (cloud / AI PKM) | you, or AI-assisted | no — a separate app to paste into | proprietary, in the cloud | yes, in the AI ones |
-| **A plain notes file, or Hermes** (agent memory) | you or the agent | yes | plain text, on your machine | no |
+| Kind of tool | What it is for | Examples | How the agent-memory kind differs |
+|---|---|---|---|
+| **Libraries / components** | Building blocks you wire into an AI app you build yourself. | mem0, cognee, Letta | You do not build with Mimer; it is a finished plugin for the agent you already use. |
+| **App back-ends** | The engine beneath a user-facing knowledge app that has its own interface. | khoj | Mimer has no app or interface of its own; it lives inside the agent. |
+| **Traditional PKM** | Note apps and wikis for people to fill and organise by hand. | Obsidian, Notion, Evernote | Human-driven and out of the agent's reach; Mimer is agent-driven and agent-facing. |
+| **Agent memory** *(Mimer's kind)* | Giving the agent you already use a memory of what you did before. | claude-obsidian, basic-memory, Mimer | — |
 
-**Where Mimer is strong.** The agent can use it without you copying anything across. It curates itself, so there is nothing to maintain. Answers are cited and honest about gaps, which matters most when the memory is not your own — a client's stated preference, a decision a colleague made. And because the store is open and local, you are not tied to anyone's app or cloud.
+Mimer complements the first three rather than replacing them: you can still build with a library, run khoj, or keep Obsidian for your own notes. The comparison that matters is inside the fourth kind.
 
-**Where the trade-offs bite.** Mimer is built for the agent, not for you to browse: there is no polished editor, no graph view, no mobile app — if you want to read and arrange notes by hand, a tool like Obsidian does that far better. Running locally means search is "good enough" rather than the best a large hosted model could give. There is no built-in sync or team collaboration; the store is yours to back up or sync as you like. And curation rests on the agent's judgment — softened by the full raw history always being kept and every answer being cited, but it is not a human librarian. Finally, and plainly: Mimer is in early development and not yet ready to install.
+**Inside the agent-memory category.** Here are five of the most-starred open-source projects that give a coding agent a memory, feature by feature against Mimer: [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian), [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (which targets the OpenClaw/Hermes agent rather than Claude Code), [basic-memory](https://github.com/basicmachines-co/basic-memory), [claude-memory-compiler](https://github.com/coleam00/claude-memory-compiler) and [swarmvault](https://github.com/swarmclawai/swarmvault). Mimer's column reflects the design in this document — it is not built yet.
+
+| Feature | Mimer | claude-obsidian | TencentDB | basic-memory | memory-compiler | swarmvault |
+|---|---|---|---|---|---|---|
+| Runs locally, your own files | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ |
+| Open, tool-neutral format (OKF) | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Semantic (vector) search | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Cited recall / provenance | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ |
+| Automatic session capture | ✓ | ✓ | ✓ | ~ | ✓ | ✓ |
+| Auto-distillation into curated knowledge | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| Distinct memory layers | ✓ | ✓ | ✓ | ✗ | ~ | ✓ |
+| Knowledge global, memory scoped per project | ✓ | ~ | ✗ | ✗ | ✗ | ~ |
+| Git history as a capture source | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Installable today | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+*✓ yes · ~ partial · ✗ not offered. basic-memory can optionally sync to its own cloud; the rest are local-only.*
+
+**What Mimer has that the others do not.** Two rows are Mimer's alone. It is the only one that stores curated knowledge in an open, tool-neutral format rather than plain Markdown or a proprietary store, so the knowledge is not tied to Mimer at all; and it is the only one that reads git history as a capture source, citing the commit behind a decision. Its scope model is cleaner than the field's, too — durable knowledge global, raw memory scoped per project — where the others either share one vault or stay session- or project-bound. And it targets Claude Cowork as well as Claude Code.
+
+**Where the others are ahead.** They ship today; Mimer does not yet. basic-memory and swarmvault reach far more tools — MCP clients, Obsidian, Cursor, VS Code — where Mimer is Claude Code and Cowork only. swarmvault and claude-obsidian build typed knowledge graphs, and TencentDB auto-generates a user persona, richer structures than Mimer's linked concepts. swarmvault stages changes in a review queue before they land; Mimer curates automatically instead, trusting citations over a gate — faster, but less controlled. By riding on Obsidian, claude-obsidian and basic-memory give you a real editor and graph view for free, which Mimer has no answer to. And running locally, Mimer's search is "good enough" rather than the best a hosted model could give. Plainly: Mimer is in early development — use it at your own risk.
 
 ### How you use it
 
