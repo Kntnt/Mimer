@@ -1,0 +1,15 @@
+{
+  "name": "mimer",
+  "version": "0.1.0",
+  "description": "An AI-native memory and knowledge system for Claude Code agents: three-layer memory, cited recall and automatic distillation into an OKF second brain.",
+  "author": {
+    "name": "Thomas Barregren",
+    "email": "thomas@kntnt.com",
+    "url": "https://github.com/Kntnt"
+  },
+  "homepage": "https://github.com/Kntnt/Mimer",
+  "repository": "https://github.com/Kntnt/Mimer",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "knowledge", "claude-code", "okf", "second-brain"],
+  "hooks": "./hooks/hooks.json"
+}

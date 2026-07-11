@@ -1,0 +1,48 @@
+[project]
+name = "mimer"
+version = "0.1.0"
+description = "An AI-native memory and knowledge system for Claude Code agents."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Thomas Barregren", email = "thomas@kntnt.com" }]
+keywords = ["memory", "knowledge", "claude-code", "okf", "second-brain"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Kntnt/Mimer"
+Repository = "https://github.com/Kntnt/Mimer"
+
+# Console entry points invoked by the plugin's hooks (see hooks/hooks.json).
+# Each is the target of one Claude Code hook event and reads its JSON payload
+# from stdin.
+[project.scripts]
+mimer-session-start = "mimer.hooks.session_start:main"
+mimer-stop = "mimer.hooks.stop:main"
+mimer-session-end = "mimer.hooks.session_end:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mimer"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.14", "mypy>=1.14"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

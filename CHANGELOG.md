@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Eight architecture decision records under `docs/adr/`: the store's scope, the three-layer memory model with OKF for curated knowledge, git as a capture source, automated distillation, agent-invoked recall, the model stack, the vector store, and project identity.
 - Eleven further architecture decision records (0009–0019), from a multi-lens critical design review: Claude access from hooks, Claude Code first with Cowork deferred, concurrency and the derived index, forgetting across layers, scoped permanent memory, the memory-is-data trust boundary, Concept identity and supersession, the snapshot lifecycle, cap mechanics with no silent loss, editable judgment rules, and coexistence with Claude Code's native auto memory.
 - Mimer's OKF profile (`docs/okf-profile.md`): the pinned spec version, the constructs relied on, Mimer's frontmatter extensions, and the fallback stance.
+- Foundations (Stage 0): a uv-managed Python project and an installable Claude Code plugin manifest that registers the SessionStart, Stop and SessionEnd hooks.
+- Store bootstrap: the `~/.mimer/` store is created on first hook invocation with owner-only permissions (`0700` directories, `0600` files), a `config.toml` and an empty `mimer.log` failure log; the location is overridable via `MIMER_HOME` for isolated testing.
+- The re-entrancy guard, so a Claude session Mimer spawns can never trigger Mimer's own hooks and capture itself.
+- A pytest harness that drives each hook as a JSON-in/JSON-out subprocess, and a GitHub Actions workflow running ruff, mypy and pytest on every push.
 
 ### Changed
 
