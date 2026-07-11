@@ -50,7 +50,9 @@ def count_dated_items(text: str) -> int:
     return len(_DATE_TOKEN_RE.findall(text))
 
 
-def build_snapshot(project_id: str, short_term_text: str, *, today: date, source: str) -> str:
+def build_snapshot(
+    project_id: str, short_term_text: str, *, today: date, source: str, manifest: str = ""
+) -> str:
     """Render the full injection payload for a project's short-term memory.
 
     Args:
@@ -74,5 +76,9 @@ def build_snapshot(project_id: str, short_term_text: str, *, today: date, source
             f"({count} dated item(s); source: {source})."
         )
 
+    # The manifest tells the agent what memory holds beyond the snapshot, so it
+    # knows when recall is worth invoking.
+    preamble = f"{announcement}\n{manifest}" if manifest else announcement
+
     body = annotate_ages(short_term_text, today)
-    return f"{DATA_FRAME_HEADER}\n\n{announcement}\n\n{body}"
+    return f"{DATA_FRAME_HEADER}\n\n{preamble}\n\n{body}"

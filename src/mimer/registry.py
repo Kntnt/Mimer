@@ -115,6 +115,26 @@ class Registry:
 
         return next((r for r in self._records.values() if path in r.paths), None)
 
+    def project_ids(self) -> list[str]:
+        """Return every registered project id."""
+
+        return list(self._records)
+
+    def is_widenable(self, project_id: str) -> bool:
+        """Whether a project participates in widened recall (ADR 0013).
+
+        Projects participate by default; only an explicit per-project setting
+        excludes one. An unregistered project participates.
+        """
+
+        record = self._records.get(project_id)
+        return not (record is not None and record.settings.get("exclude_from_widening") is True)
+
+    def set_widening(self, project_id: str, *, participate: bool) -> None:
+        """Set whether a project participates in widened recall."""
+
+        self._records[project_id].settings["exclude_from_widening"] = not participate
+
     def create(
         self,
         project_id: str,

@@ -25,7 +25,7 @@ mimer-stop = "mimer.hooks.stop:main"
 mimer-session-end = "mimer.hooks.session_end:main"
 mimer-memory = "mimer.curate:main"
 mimer-reindex = "mimer.index:reindex_main"
-mimer-recall = "mimer.index:recall_main"
+mimer-recall = "mimer.recall:main"
 
 [build-system]
 requires = ["hatchling"]

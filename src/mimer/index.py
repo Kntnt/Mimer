@@ -411,22 +411,3 @@ def reindex_main() -> int:
     count = reindex(store_root())
     print(f"Mimer: reindexed {count} chunk(s) into {index_db_path(store_root())}.")
     return 0
-
-
-def recall_main(argv: list[str] | None = None) -> int:
-    """``mimer-recall`` entry point: a plain terminal search over long-term memory."""
-
-    import sys
-
-    args = argv if argv is not None else sys.argv[1:]
-    if not args:
-        print("usage: mimer-recall <query>")
-        return 1
-
-    results = search(" ".join(args), root=store_root())
-    if not results:
-        print("Mimer: nothing relevant found.")
-        return 0
-    for citation in results:
-        print(f"[{citation.source} · {citation.date} · {citation.heading}] {citation.excerpt}")
-    return 0

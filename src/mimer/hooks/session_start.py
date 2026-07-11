@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mimer.hooks.runner import run_hook
+from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
 from mimer.project import resolve
 from mimer.shortterm import ensure_short_term, read_short_term
@@ -40,11 +41,16 @@ def handle(payload: Mapping[str, Any]) -> None:
         )
         return
 
-    # Ensure the short-term file exists, then inject its framed, aged snapshot.
+    # Ensure the short-term file exists, then inject its framed, aged snapshot
+    # plus the long-term coverage manifest.
     ensure_short_term(resolution.project_id, root)
     short_term_text = read_short_term(resolution.project_id, root)
     snapshot = build_snapshot(
-        resolution.project_id, short_term_text, today=date.today(), source=source
+        resolution.project_id,
+        short_term_text,
+        today=date.today(),
+        source=source,
+        manifest=long_term_manifest(resolution.project_id, root),
     )
     _emit(snapshot)
 
