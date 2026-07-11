@@ -6,4 +6,4 @@ Long-term memory is stored in Mimer's own store, not in the project's git histor
 
 - **The project's git repository as the long-term store** — rejected for the reasons above; it would also pollute the project's history and force `git init` on non-git projects.
 - **Git as a capture source and citation provenance** (chosen).
-- A separate, later option: versioning and syncing Mimer's *own* store with git — transport and backup, not the memory model.
+- A separate, later option: versioning and syncing Mimer's *own* store with git — transport and backup, not the memory model. Note that this option is security-sensitive: the store aggregates every project's material (see ADR 0013), so any sync would require encryption and per-scope export, never a plain push.

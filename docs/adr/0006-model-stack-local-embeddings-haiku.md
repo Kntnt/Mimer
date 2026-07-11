@@ -11,4 +11,5 @@ Embeddings for semantic search run on a local, lightweight model (an ONNX-based 
 ## Consequences
 
 - Embedding quality is "good enough, locally", not best-in-class; acceptable under "start simple".
-- Switching the embedding model forces a full re-embed (already a constraint).
+- Switching the embedding model forces a full re-embed — routine rather than disastrous, because the index is derived and rebuildable (ADR 0011).
+- "The agent's existing Claude access" is not directly reachable from a detached hook process; ADR 0009 settles the concrete invocation mechanism (LLM-free capture, one guarded batched call per session, no API key).

@@ -11,4 +11,6 @@ Mimer keeps everything in one physical store on the machine, not scattered into 
 ## Consequences
 
 - Injection = the current project's short-term memory plus the pinned global profile.
-- Recall = the current project's long-term memory plus all permanent memory; cross-project value travels through distillation into permanent memory, not through raw logs.
+- Recall = the current project's long-term memory plus the permanent memory visible to it; cross-project value travels through distillation into permanent memory, not through raw logs.
+- Explicit, opt-in widening of recall across other projects' long-term memory is sanctioned as a deliberate user action — never the default — and projects can exclude themselves from it (see ADR 0013).
+- "Global" is refined by ADR 0013: permanent memory remains the one cross-project layer, but a Concept carries an origin and a scope, and only client-neutral knowledge travels globally.
