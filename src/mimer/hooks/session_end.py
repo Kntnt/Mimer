@@ -15,21 +15,25 @@ from typing import Any
 
 from mimer.digest import digest_session
 from mimer.distill import distill_session
+from mimer.gitreader import fold_git_log
 from mimer.hooks.runner import run_hook
 from mimer.paths import store_root
 from mimer.project import resolve
 
 
 def handle(payload: Mapping[str, Any]) -> None:
-    """Run the batched session digest, then distil durable memory opportunistically."""
+    """Run the digest, fold in git, then distil durable memory opportunistically."""
 
     digest_session(payload)
 
-    # Opportunistic session-boundary distillation of durable short-term entries;
-    # deterministic, so it runs even when the digest deferred (ADR 0004).
+    # Opportunistic session-boundary work: fold git commits into the record and
+    # distil durable entries. Both are deterministic, so they run even when the
+    # digest deferred (ADRs 0003, 0004).
     root = store_root()
-    resolution = resolve(Path(payload.get("cwd") or "."), root=root)
+    cwd = Path(payload.get("cwd") or ".")
+    resolution = resolve(cwd, root=root)
     if resolution.project_id is not None:
+        fold_git_log(resolution.project_id, cwd, root)
         distill_session(resolution.project_id, root)
 
 
