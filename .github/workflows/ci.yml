@@ -18,6 +18,12 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-potion-base-8M
+
       - name: Lint (ruff)
         run: uv run ruff check .
 

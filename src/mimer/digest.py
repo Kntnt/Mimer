@@ -18,6 +18,7 @@ from typing import Any
 
 from mimer import llm
 from mimer.failure_log import log_failure
+from mimer.index import index_if_present
 from mimer.longterm import append_entry, is_digested, record_digested, transcripts_dir
 from mimer.paths import store_root
 from mimer.project import resolve
@@ -94,6 +95,9 @@ def digest_session(
         _refresh_short_term(project_id, active, pending, today, root)
         archive_path = _archive_transcript(project_id, session_id, transcript, root)
         record_digested(project_id, session_id, root)
+
+        # Keep the derived index in step, when one exists (ADR 0011).
+        index_if_present(project_id, today.isoformat(), root)
         return DigestResult("digested", archive_path)
 
     except Exception as exc:  # noqa: BLE001 - the digest must never crash the session

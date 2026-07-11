@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from mimer.failure_log import log_failure
+from mimer.index import index_if_present
 from mimer.longterm import append_entry, is_captured, record_captured
 from mimer.paths import store_root
 from mimer.project import resolve
@@ -73,6 +74,9 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
                 return CaptureResult("duplicate", exchange.turn_id, exchange.date)
             append_entry(project_id, exchange.date, _render_entry(exchange), root)
             record_captured(project_id, exchange.turn_id, root)
+
+        # Keep the derived index in step, when one exists (ADR 0011).
+        index_if_present(project_id, exchange.date, root)
         return CaptureResult("captured", exchange.turn_id, exchange.date)
 
     except Exception as exc:  # noqa: BLE001 - capture must never raise to the session

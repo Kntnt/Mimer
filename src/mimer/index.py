@@ -1,0 +1,432 @@
+"""The hybrid recall index (ADRs 0007, 0011): a single SQLite database combining
+sqlite-vec vector search and FTS5 keyword search over long-term memory.
+
+The index is derived state — rebuildable from the Markdown files at any time via
+:func:`reindex`, never the source of truth. Chunks are one per Markdown heading
+block of the daily logs; each carries its project, source, date and heading as
+columns, so scoping, citations and reranking are plain SQL. Transcripts are not
+indexed. Search merges vector and keyword hits (reciprocal-rank fusion), reranks
+by recency, source weight and project, suppresses tombstoned facts, and admits
+ignorance by returning nothing when nothing is relevant.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date
+from hashlib import sha256
+from pathlib import Path
+
+import sqlite_vec
+
+from mimer import db
+from mimer.embedding import EMBEDDING_DIMENSIONS, embed
+from mimer.longterm import daily_log_path
+from mimer.paths import store_root
+from mimer.registry import PROJECTS_DIRNAME
+from mimer.store import ensure_store
+from mimer.tombstones import load_tombstones
+
+INDEX_FILENAME = "index.db"
+
+# Retrieval breadth and fusion/rerank tuning — the simplest values that work.
+_CANDIDATES = 20
+_RRF_K = 60
+_MIN_SIMILARITY = 0.12
+_RECENCY_WEIGHT = 0.3
+_EXCERPT_CHARS = 240
+
+# Heading of a Markdown block; each block becomes one chunk.
+_HEADING_RE = re.compile(r"^(#{2,6})\s+(.*)$")
+
+# Common words dropped from keyword queries so FTS matches on content, not glue.
+_STOPWORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "do",
+        "does",
+        "for",
+        "from",
+        "how",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "our",
+        "so",
+        "that",
+        "the",
+        "their",
+        "them",
+        "they",
+        "this",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+    ]
+)
+
+
+@dataclass(frozen=True)
+class Citation:
+    """A cited recall result: where it came from and a checkable excerpt."""
+
+    project_id: str
+    source: str
+    date: str
+    heading: str
+    excerpt: str
+    text: str
+    score: float
+
+
+@dataclass(frozen=True)
+class _Chunk:
+    chunk_key: str
+    project_id: str
+    source: str
+    date: str
+    heading: str
+    text: str
+
+
+def index_db_path(root: Path | None = None) -> Path:
+    """Path to the derived index database."""
+
+    return (root or store_root()) / INDEX_FILENAME
+
+
+def _connect(root: Path) -> sqlite3.Connection:
+    """Open the index with sqlite-vec loaded and the schema ensured."""
+
+    connection = db.connect(index_db_path(root))
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
+    _ensure_schema(connection)
+    return connection
+
+
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS chunks ("
+        "id INTEGER PRIMARY KEY, chunk_key TEXT UNIQUE, project_id TEXT NOT NULL, "
+        "source TEXT NOT NULL, date TEXT NOT NULL, heading TEXT NOT NULL, text TEXT NOT NULL)"
+    )
+    connection.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text)")
+    connection.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks "
+        f"USING vec0(embedding float[{EMBEDDING_DIMENSIONS}])"
+    )
+
+
+def _chunk_log(text: str, project_id: str, source: str, day: str) -> list[_Chunk]:
+    """Split a daily log into one chunk per heading block."""
+
+    chunks: list[_Chunk] = []
+    heading: str | None = None
+    body: list[str] = []
+
+    def flush() -> None:
+        if heading is None:
+            return
+        block = f"{heading}\n{'\n'.join(body)}".strip()
+        key = sha256(f"{project_id}\x00{source}\x00{block}".encode()).hexdigest()[:16]
+        chunks.append(_Chunk(key, project_id, source, day, heading, block))
+
+    for line in text.splitlines():
+        match = _HEADING_RE.match(line)
+        if match:
+            flush()
+            heading = match.group(2).strip()
+            body = []
+        elif heading is not None:
+            body.append(line)
+    flush()
+    return chunks
+
+
+def index_daily_log(project_id: str, day: str, root: Path | None = None) -> int:
+    """Index (idempotently) a project's daily log; return the count of new chunks."""
+
+    root = root or store_root()
+    path = daily_log_path(project_id, day, root)
+    if not path.exists():
+        return 0
+
+    chunks = _chunk_log(path.read_text(encoding="utf-8"), project_id, f"long-term/{day}.md", day)
+    if not chunks:
+        return 0
+
+    embeddings = embed([chunk.text for chunk in chunks])
+    connection = _connect(root)
+    added = 0
+    with connection:
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO chunks "
+                "(chunk_key, project_id, source, date, heading, text) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    chunk.chunk_key,
+                    chunk.project_id,
+                    chunk.source,
+                    chunk.date,
+                    chunk.heading,
+                    chunk.text,
+                ),
+            )
+            if cursor.rowcount == 0:
+                continue
+            rowid = cursor.lastrowid
+            connection.execute(
+                "INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)", (rowid, chunk.text)
+            )
+            connection.execute(
+                "INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)",
+                (rowid, sqlite_vec.serialize_float32(embedding)),
+            )
+            added += 1
+    connection.close()
+    return added
+
+
+def index_if_present(project_id: str, day: str, root: Path | None = None) -> None:
+    """Index a day's log only if the index already exists (kept in step with writes)."""
+
+    if index_db_path(root).exists():
+        index_daily_log(project_id, day, root)
+
+
+def reindex(root: Path | None = None) -> int:
+    """Rebuild the whole index from the Markdown files; return the chunk count."""
+
+    root = root or store_root()
+    ensure_store(root)
+
+    # The index is disposable: drop it (and its WAL sidecars) and rebuild.
+    for path in (index_db_path(root), *(_sidecar(root, suffix) for suffix in ("-wal", "-shm"))):
+        path.unlink(missing_ok=True)
+    _connect(root).close()
+
+    total = 0
+    projects_root = root / PROJECTS_DIRNAME
+    if projects_root.exists():
+        for project_dir in sorted(projects_root.iterdir()):
+            long_term = project_dir / "long-term"
+            if long_term.is_dir():
+                for log in sorted(long_term.glob("*.md")):
+                    total += index_daily_log(project_dir.name, log.stem, root)
+    return total
+
+
+def _sidecar(root: Path, suffix: str) -> Path:
+    path = index_db_path(root)
+    return path.with_name(path.name + suffix)
+
+
+def search(
+    query: str,
+    *,
+    root: Path | None = None,
+    project_id: str | None = None,
+    projects: Sequence[str] | None = None,
+    limit: int = 10,
+) -> list[Citation]:
+    """Hybrid, cited, tombstone-filtered search over long-term memory.
+
+    Restrict to ``project_id`` (or an explicit ``projects`` set) when scoping;
+    otherwise search every indexed project. Returns an empty list when nothing is
+    relevant.
+    """
+
+    root = root or store_root()
+    if not index_db_path(root).exists():
+        return []
+
+    connection = _connect(root)
+    try:
+        candidates = _fuse(connection, query)
+        if not candidates:
+            return []
+        rows = _fetch(connection, list(candidates))
+    finally:
+        connection.close()
+
+    allowed = _allowed_projects(project_id, projects)
+    tombstones = load_tombstones(root)
+    results = [
+        _cite(row, candidates[row["id"]], query_date=date.today())
+        for row in rows
+        if (allowed is None or row["project_id"] in allowed)
+        and not _suppressed(row["text"], row["project_id"], tombstones)
+    ]
+    results.sort(key=lambda citation: citation.score, reverse=True)
+    return results[:limit]
+
+
+def _fuse(connection: sqlite3.Connection, query: str) -> dict[int, float]:
+    """Reciprocal-rank-fuse vector and keyword hits into rowid → base score."""
+
+    scores: dict[int, float] = {}
+
+    # Vector hits, kept only above the relevance floor so an unanswerable query
+    # contributes nothing.
+    query_vector = sqlite_vec.serialize_float32(embed([query])[0])
+    vector_rows = connection.execute(
+        "SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+        (query_vector, _CANDIDATES),
+    ).fetchall()
+    for rank, (rowid, distance) in enumerate(vector_rows):
+        if 1.0 - (distance * distance) / 2.0 >= _MIN_SIMILARITY:
+            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (_RRF_K + rank)
+
+    # Keyword hits over content words.
+    fts_query = _fts_query(query)
+    if fts_query:
+        try:
+            keyword_rows = connection.execute(
+                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?",
+                (fts_query, _CANDIDATES),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            keyword_rows = []
+        for rank, (rowid,) in enumerate(keyword_rows):
+            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (_RRF_K + rank)
+
+    return scores
+
+
+def _fetch(connection: sqlite3.Connection, rowids: list[int]) -> list[sqlite3.Row]:
+    connection.row_factory = sqlite3.Row
+    placeholders = ",".join("?" for _ in rowids)
+    return connection.execute(
+        "SELECT id, project_id, source, date, heading, text "
+        f"FROM chunks WHERE id IN ({placeholders})",
+        rowids,
+    ).fetchall()
+
+
+def _cite(row: sqlite3.Row, base_score: float, *, query_date: date) -> Citation:
+    """Apply the recency/source rerank and build a citation with an excerpt."""
+
+    score = base_score * _recency_factor(row["date"], query_date) * _source_weight(row["heading"])
+    return Citation(
+        project_id=row["project_id"],
+        source=row["source"],
+        date=row["date"],
+        heading=row["heading"],
+        excerpt=_excerpt(row["text"]),
+        text=row["text"],
+        score=score,
+    )
+
+
+def _recency_factor(entry_date: str, query_date: date) -> float:
+    """Boost recent entries mildly (within roughly a year)."""
+
+    try:
+        days = (query_date - date.fromisoformat(entry_date)).days
+    except ValueError:
+        return 1.0
+    return 1.0 + _RECENCY_WEIGHT * max(0.0, 1.0 - days / 365.0)
+
+
+def _source_weight(heading: str) -> float:
+    """Weight a session digest above raw capture, and aged-out entries below."""
+
+    lowered = heading.lower()
+    if lowered.startswith("session digest"):
+        return 1.2
+    if lowered.startswith("aged out"):
+        return 0.9
+    return 1.0
+
+
+def _excerpt(text: str) -> str:
+    """A short, checkable quote of a chunk (body preferred over the heading)."""
+
+    body = text.split("\n", 1)[1].strip() if "\n" in text else text
+    collapsed = " ".join(body.split())
+    return collapsed[:_EXCERPT_CHARS] + ("…" if len(collapsed) > _EXCERPT_CHARS else "")
+
+
+def _fts_query(query: str) -> str | None:
+    """Turn a natural query into an FTS5 OR-match over its content words."""
+
+    tokens = [
+        token for token in re.findall(r"[A-Za-z0-9_]+", query) if token.lower() not in _STOPWORDS
+    ]
+    return " OR ".join(f'"{token}"' for token in tokens) if tokens else None
+
+
+def _allowed_projects(
+    project_id: str | None, projects: Sequence[str] | None
+) -> frozenset[str] | None:
+    if projects is not None:
+        return frozenset(projects)
+    if project_id is not None:
+        return frozenset({project_id})
+    return None
+
+
+def _suppressed(text: str, project_id: str, tombstones: list[dict[str, str]]) -> bool:
+    """Whether a tombstone for this project covers this chunk's text."""
+
+    normalised = " ".join(text.lower().split())
+    return any(
+        tombstone.get("project_id") == project_id and tombstone["key"] in normalised
+        for tombstone in tombstones
+    )
+
+
+def reindex_main() -> int:
+    """``mimer-reindex`` entry point: rebuild the index from the files."""
+
+    count = reindex(store_root())
+    print(f"Mimer: reindexed {count} chunk(s) into {index_db_path(store_root())}.")
+    return 0
+
+
+def recall_main(argv: list[str] | None = None) -> int:
+    """``mimer-recall`` entry point: a plain terminal search over long-term memory."""
+
+    import sys
+
+    args = argv if argv is not None else sys.argv[1:]
+    if not args:
+        print("usage: mimer-recall <query>")
+        return 1
+
+    results = search(" ".join(args), root=store_root())
+    if not results:
+        print("Mimer: nothing relevant found.")
+        return 0
+    for citation in results:
+        print(f"[{citation.source} · {citation.date} · {citation.heading}] {citation.excerpt}")
+    return 0

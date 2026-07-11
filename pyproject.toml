@@ -7,7 +7,10 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Thomas Barregren", email = "thomas@kntnt.com" }]
 keywords = ["memory", "knowledge", "claude-code", "okf", "second-brain"]
-dependencies = []
+dependencies = [
+    "model2vec>=0.6",
+    "sqlite-vec>=0.1.6",
+]
 
 [project.urls]
 Homepage = "https://github.com/Kntnt/Mimer"
@@ -21,6 +24,8 @@ mimer-session-start = "mimer.hooks.session_start:main"
 mimer-stop = "mimer.hooks.stop:main"
 mimer-session-end = "mimer.hooks.session_end:main"
 mimer-memory = "mimer.curate:main"
+mimer-reindex = "mimer.index:reindex_main"
+mimer-recall = "mimer.index:recall_main"
 
 [build-system]
 requires = ["hatchling"]
@@ -43,6 +48,11 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+
+# Third-party libraries without type stubs.
+[[tool.mypy.overrides]]
+module = ["sqlite_vec", "model2vec"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
