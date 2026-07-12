@@ -1,15 +1,19 @@
-"""Session-level pause: the throwaway-session control (ADR 0013).
+"""The capture pause: the throwaway-session control (ADR 0013).
 
 Say "pause capture" before a sensitive session and nothing is recorded — no
-extractive capture, no digest, no git fold, no distillation — until the session
-ends or the user resumes. It is realised as a single marker file in the store:
-the capture and digest paths check it before doing any work, and the SessionEnd
-hook lifts it once the paused session ends, so the pause is naturally
-session-scoped without threading a session id through every surface.
+extractive capture, no digest, no git fold, no distillation — until the user
+resumes. It is realised as a single marker file at the store root, so it is
+*store-wide*, not session-scoped: the ``mimer-manage`` command that sets it runs
+as a plain subprocess with no session id to key on, and the capture and digest
+paths (each in their own detached process) check only the marker's presence.
 
-Pausing errs toward *not* recording: a marker left behind by a crashed session
-suppresses capture until the next clean session end rather than leaking a
-sensitive session's contents.
+The pause is therefore deliberately sticky. It is not lifted by a session
+ending — an unrelated concurrent session must never lift a pause it did not ask
+for, nor have its own capture silently suppressed and then resumed by another
+session's boundary. Only an explicit "resume" clears it. To keep a forgotten or
+crash-stranded pause from silently swallowing later sessions, its presence is
+surfaced on every SessionStart and in ``mimer-manage health`` (never silent),
+and it errs toward *not* recording while in effect.
 """
 
 from __future__ import annotations

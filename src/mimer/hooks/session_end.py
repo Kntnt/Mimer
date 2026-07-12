@@ -18,7 +18,7 @@ from mimer.distill import distill_session
 from mimer.gitreader import fold_git_log
 from mimer.hooks.runner import run_hook
 from mimer.paths import store_root
-from mimer.pause import clear_paused, is_paused
+from mimer.pause import is_paused
 from mimer.project import resolve
 from mimer.registry import Registry
 
@@ -32,10 +32,11 @@ def handle(payload: Mapping[str, Any]) -> None:
 
     root = store_root()
 
-    # A paused session records nothing at the boundary either, and the pause
-    # lifts now that the session that asked for it has ended (#35).
+    # A paused session records nothing at the boundary either — neither the git
+    # fold nor distillation runs. The pause is store-wide, so a session ending
+    # never lifts it (that would suppress and then silently resume an unrelated
+    # concurrent session); only an explicit "resume" does (#35).
     if is_paused(root):
-        clear_paused(root)
         return
 
     cwd = Path(payload.get("cwd") or ".")

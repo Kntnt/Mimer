@@ -163,7 +163,7 @@ driven through `mimer-manage`; relay its one-line echo verbatim.
 
 When the user says **"pause capture"** (or "don't record this", "stop recording
 for now") before a sensitive session, pause it: nothing is captured or digested
-until they resume or the session ends.
+until they explicitly resume.
 
 ```bash
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage pause
@@ -171,11 +171,14 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage resume
 ```
 
 The pause covers the whole throwaway case: automatic capture, the session
-digest, git folding and distillation all stand down while it is in effect. It
-lifts on its own when the session ends, so a forgotten pause never silently
-suppresses the next session. An explicit **"resume capture"** lifts it sooner.
-A deliberate "remember this" still writes while paused — pause governs automatic
-recording, not the user's own curated writes.
+digest, git folding and distillation all stand down while it is in effect. It is
+store-wide and deliberately sticky: a session ending does not lift it (that would
+let an unrelated concurrent session clear a pause it never asked for), so it
+stays until an explicit **"resume capture"**. A standing pause is announced on
+every SessionStart and shown by `mimer-manage health`, so a forgotten one is a
+visible notice, never a silent capture blackout. A deliberate "remember this"
+still writes while paused — pause governs automatic recording, not the user's own
+curated writes.
 
 ### Per-project settings (ADR 0013)
 

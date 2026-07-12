@@ -22,6 +22,7 @@ from mimer.failure_log import fresh_failures
 from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
+from mimer.pause import is_paused
 from mimer.project import resolve
 from mimer.shortterm import ensure_short_term, read_short_term
 from mimer.snapshot import DATA_FRAME_HEADER, build_snapshot
@@ -57,8 +58,24 @@ def handle(payload: Mapping[str, Any]) -> None:
         profile=render_profile(root),
         distilled=drain_distilled(resolution.project_id, root),
         health=_health_notice(root),
+        paused=_pause_notice(root),
     )
     _emit(snapshot)
+
+
+def _pause_notice(root: Path) -> str:
+    """A one-line notice when a store-wide capture pause is in effect (#35).
+
+    Announcing a standing pause every session is what keeps a forgotten or
+    crash-stranded pause from silently swallowing later sessions' memory.
+    """
+
+    if not is_paused(root):
+        return ""
+    return (
+        "⏸ Mimer: capture is PAUSED store-wide — nothing is being recorded this "
+        'session. Say "resume capture" to lift it.'
+    )
 
 
 def _health_notice(root: Path) -> str:

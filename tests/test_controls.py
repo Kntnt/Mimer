@@ -15,11 +15,12 @@ from mimer.bundle import list_concepts
 from mimer.capture import capture_from_payload
 from mimer.digest import digest_session
 from mimer.distill import distill_fact
+from mimer.hooks import session_end
 from mimer.pause import clear_paused, is_paused, set_paused
 from mimer.project import resolve
 from mimer.registry import Registry
 from mimer.store import ensure_store
-from tests.harness import run_hook, session_end_payload
+from tests.harness import run_hook, session_end_payload, session_start_payload
 from tests.transcript_fixture import write_transcript
 
 
@@ -81,15 +82,22 @@ def test_paused_session_captures_nothing(store_root: Path, project_dir: Path) ->
 
 
 def test_resume_restores_capture(store_root: Path, project_dir: Path) -> None:
-    """After the pause is lifted, capture records normally again."""
+    """Capture is suppressed while paused and records again only after resume.
+
+    Asserting the paused outcome first makes the capture pause-gate load-bearing:
+    were the gate removed, the mid-pause capture would already record, so this
+    test — not just ``clear_paused`` — constrains the pause behaviour.
+    """
 
     ensure_store(store_root)
+
     set_paused(store_root)
+    paused = capture_from_payload(_seeded_stop(project_dir, "off the record"), root=store_root)
+    assert paused.status == "paused"
+
     clear_paused(store_root)
-
-    result = capture_from_payload(_seeded_stop(project_dir, "back on the record"), root=store_root)
-
-    assert result.status == "captured"
+    resumed = capture_from_payload(_seeded_stop(project_dir, "back on the record"), root=store_root)
+    assert resumed.status == "captured"
 
 
 def test_paused_session_skips_digest_without_calling_the_model(store_root: Path) -> None:
@@ -111,8 +119,14 @@ def test_paused_session_skips_digest_without_calling_the_model(store_root: Path)
     assert result.status == "paused"
 
 
-def test_session_end_lifts_the_pause(store_root: Path, project_dir: Path) -> None:
-    """The SessionEnd hook lifts a session-level pause, so the next session records."""
+def test_session_end_leaves_the_pause_in_place(store_root: Path, project_dir: Path) -> None:
+    """A session ending never lifts the store-wide pause (#35).
+
+    The pause is store-wide, so an unrelated concurrent session reaching
+    SessionEnd must not clear a pause it never asked for — only an explicit
+    resume does. Were SessionEnd to clear it, that session's next Stop would
+    record the sensitive work the pause was meant to protect.
+    """
 
     ensure_store(store_root)
     set_paused(store_root)
@@ -125,7 +139,59 @@ def test_session_end_lifts_the_pause(store_root: Path, project_dir: Path) -> Non
     )
 
     assert result.returncode == 0, result.stderr
-    assert not is_paused(store_root)
+    assert is_paused(store_root)
+
+
+def test_paused_session_end_records_nothing_at_the_boundary(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While paused, SessionEnd folds no git and distils nothing (AC1: #35).
+
+    Capture and the digest are covered above; this guards the two remaining
+    session-boundary recording paths, so a regression that let git-folding or
+    distillation run during a paused session would fail here.
+    """
+
+    ensure_store(store_root)
+    set_paused(store_root)
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+
+    calls: list[str] = []
+    monkeypatch.setattr(session_end, "digest_session", lambda payload: None)
+    monkeypatch.setattr(session_end, "fold_git_log", lambda *a, **k: calls.append("fold"))
+    monkeypatch.setattr(session_end, "distill_session", lambda *a, **k: calls.append("distill"))
+
+    session_end.handle(session_end_payload(cwd=str(project_dir)))
+
+    assert calls == []
+
+
+def test_session_start_announces_a_standing_pause(store_root: Path, project_dir: Path) -> None:
+    """SessionStart announces a store-wide pause, so a forgotten one is visible (#35)."""
+
+    ensure_store(store_root)
+    _project_id(store_root, project_dir)
+    set_paused(store_root)
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(project_dir)),
+        store_root=store_root,
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "PAUSED" in result.stdout
+
+
+def test_health_reports_a_standing_pause(store_root: Path) -> None:
+    """A standing pause shows in store health, so it is never a silent blackout (#35)."""
+
+    ensure_store(store_root)
+    assert manage.store_health(store_root).paused is False
+
+    set_paused(store_root)
+    assert manage.store_health(store_root).paused is True
 
 
 # --- Per-project setting: capture on/off -------------------------------------
@@ -172,6 +238,57 @@ def test_capture_setting_round_trips_through_the_command(
     manage.set_project_setting("capture", True, cwd=project_dir, root=store_root)
     enabled = capture_from_payload(_seeded_stop(project_dir, "visible"), root=store_root)
     assert enabled.status == "captured"
+
+
+def test_capture_disabled_project_skips_digest_without_calling_the_model(
+    store_root: Path, project_dir: Path
+) -> None:
+    """With capture off, the digest returns without invoking the model (AC2: #35)."""
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+    registry = Registry.load(store_root)
+    registry.set_capture(pid, enabled=False)
+    registry.save()
+
+    def fail_if_called(_prompt: str) -> str | None:
+        raise AssertionError("the model must not be called when capture is disabled")
+
+    payload = {
+        "session_id": "s1",
+        "cwd": str(project_dir),
+        "transcript_path": "/tmp/transcript.jsonl",
+    }
+    result = digest_session(payload, root=store_root, haiku=fail_if_called)
+
+    assert result.status == "capture-disabled"
+
+
+def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With capture off, SessionEnd folds no git yet still distils (AC2: #35).
+
+    Git folding is recording, so it honours the per-project capture switch;
+    distillation only bridges already-curated memory and runs regardless
+    (ADR 0013). This makes the git-fold guard load-bearing.
+    """
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+    registry = Registry.load(store_root)
+    registry.set_capture(pid, enabled=False)
+    registry.save()
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+
+    calls: list[str] = []
+    monkeypatch.setattr(session_end, "digest_session", lambda payload: None)
+    monkeypatch.setattr(session_end, "fold_git_log", lambda *a, **k: calls.append("fold"))
+    monkeypatch.setattr(session_end, "distill_session", lambda *a, **k: calls.append("distill"))
+
+    session_end.handle(session_end_payload(cwd=str(project_dir)))
+
+    assert calls == ["distill"]
 
 
 # --- Per-project setting: participation in widened recall --------------------
@@ -262,6 +379,32 @@ def test_manage_settings_cli_shows_and_sets(
 
     pid = _project_id(store_root, project_dir)
     assert not Registry.load(store_root).distill_to_global_enabled(pid)
+
+
+# --- Concurrent registry safety ----------------------------------------------
+
+
+def test_set_project_setting_returns_none_when_project_merged_away(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project removed by a concurrent merge in the reload window yields None,
+    not a KeyError traceback (#35)."""
+
+    from mimer.project import Resolution, ResolutionStatus
+
+    ensure_store(store_root)
+
+    # Simulate resolve() naming a project that a concurrent merge (ADR 0008) has
+    # since deleted from the registry, so the record is gone at reload time.
+    monkeypatch.setattr(
+        manage,
+        "resolve",
+        lambda *args, **kwargs: Resolution(ResolutionStatus.RECOGNISED, "merged-away"),
+    )
+
+    result = manage.set_project_setting("capture", False, cwd=project_dir, root=store_root)
+
+    assert result is None
 
 
 # --- config.toml removed -----------------------------------------------------

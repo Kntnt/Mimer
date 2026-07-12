@@ -26,9 +26,11 @@ from mimer.index import index_if_present
 from mimer.llm import run_haiku
 from mimer.longterm import append_entry, long_term_dir
 from mimer.paths import store_root
+from mimer.project import REGISTRY_LOCK
 from mimer.redaction import redact
 from mimer.registry import Registry
 from mimer.store import ensure_store
+from mimer.storeio import project_lock
 from mimer.transcript import Exchange, all_exchanges
 
 # The signature of a Mimer-spawned session, so bootstrap never re-imports one.
@@ -221,10 +223,14 @@ def _condense(text: str) -> str:
 
 
 def _ensure_registered(project_id: str, root: Path) -> None:
-    registry = Registry.load(root)
-    if registry.find_by_id(project_id) is None:
-        registry.create(project_id)
-        registry.save()
+    # Take the store-level registry lock around the load-modify-save, so a
+    # concurrent settings change or resolve() cannot lose this record on the
+    # shared registry file (#35, ADR 0011).
+    with project_lock(REGISTRY_LOCK, root=root):
+        registry = Registry.load(root)
+        if registry.find_by_id(project_id) is None:
+            registry.create(project_id)
+            registry.save()
 
 
 def _state(project_id: str, root: Path) -> dict[str, object]:
@@ -232,9 +238,12 @@ def _state(project_id: str, root: Path) -> dict[str, object]:
 
 
 def _save_state(project_id: str, state: dict[str, object], root: Path) -> None:
-    registry = Registry.load(root)
-    registry.set_import_state(project_id, state)
-    registry.save()
+    # Same registry lock: import-state progress and any concurrent settings
+    # change must not clobber each other on the shared file (#35, ADR 0011).
+    with project_lock(REGISTRY_LOCK, root=root):
+        registry = Registry.load(root)
+        registry.set_import_state(project_id, state)
+        registry.save()
 
 
 def _default_transcripts_dir(cwd: Path) -> Path:

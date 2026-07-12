@@ -60,6 +60,7 @@ def build_snapshot(
     profile: str = "",
     distilled: list[str] | None = None,
     health: str = "",
+    paused: str = "",
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -71,6 +72,9 @@ def build_snapshot(
             announcement so a re-injection is visible.
         manifest: A compact statement of what memory holds beyond the snapshot.
         profile: The pinned profile Concepts, injected on every session.
+        health: A one-line health warning when the failure log is fresh.
+        paused: A one-line notice when a store-wide capture pause is in effect, so
+            a standing pause is announced every session rather than silent (#35).
     """
 
     count = count_dated_items(short_term_text)
@@ -90,6 +94,8 @@ def build_snapshot(
     # knows when recall is worth invoking; the distilled line announces what was
     # promoted since the last session (ADR 0014).
     lines = []
+    if paused:
+        lines.append(paused)
     if health:
         lines.append(health)
     lines.append(announcement)
