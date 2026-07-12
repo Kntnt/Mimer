@@ -86,6 +86,42 @@ def test_run_install_creates_the_index_so_writes_are_indexed(store_root: Path) -
     assert search("what search tool did we pick", root=store_root)
 
 
+def test_run_install_reports_gracefully_on_model_download_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model-download failure yields an actionable report, not a traceback."""
+
+    def offline(_texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("Failed to connect to huggingface.co")
+
+    monkeypatch.setattr("mimer.install.embed", offline)
+    report = run_install(store_root)
+
+    assert not report.ok
+    assert report.messages
+    joined = " ".join(report.messages).lower()
+    assert "model" in joined
+    assert "re-run" in joined
+
+
+def test_run_install_reports_gracefully_on_index_build_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An index-build failure yields an actionable report, not a traceback."""
+
+    def broken(_root: Path) -> int:
+        raise RuntimeError("disk I/O error building the index")
+
+    monkeypatch.setattr("mimer.install.reindex", broken)
+    report = run_install(store_root)
+
+    assert not report.ok
+    assert report.messages
+    joined = " ".join(report.messages).lower()
+    assert "index" in joined
+    assert "re-run" in joined
+
+
 def test_fresh_failures_are_recent_only(store_root: Path) -> None:
     """Only recently-logged failures count as fresh."""
 
