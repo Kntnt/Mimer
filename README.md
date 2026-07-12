@@ -52,7 +52,7 @@ The market holds four kinds of tool, and only one of them is really Mimer's peer
 
 Mimer complements the first three rather than replacing them: you can still build with a library, run khoj, or keep Obsidian for your own notes. The comparison that matters is inside the fourth kind.
 
-**Inside the agent-memory category.** Below, Mimer against Claude Code's built-in auto memory and five of the most visible, actively maintained open-source projects that give a coding agent a memory: [claude-mem](https://github.com/thedotmack/claude-mem), [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian), [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (which targets the OpenClaw/Hermes agent rather than Claude Code), [basic-memory](https://github.com/basicmachines-co/basic-memory) and [swarmvault](https://github.com/swarmclawai/swarmvault). Mimer's column reflects the design in this repository — it is not built yet.
+**Inside the agent-memory category.** Below, Mimer against Claude Code's built-in auto memory and five of the most visible, actively maintained open-source projects that give a coding agent a memory: [claude-mem](https://github.com/thedotmack/claude-mem), [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian), [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (which targets the OpenClaw/Hermes agent rather than Claude Code), [basic-memory](https://github.com/basicmachines-co/basic-memory) and [swarmvault](https://github.com/swarmclawai/swarmvault). Mimer's column reflects the implementation shipped in this repository.
 
 | Feature | Mimer | Built-in auto memory | claude-mem | claude-obsidian | TencentDB | basic-memory | swarmvault |
 |---|---|---|---|---|---|---|---|
@@ -67,13 +67,13 @@ Mimer complements the first three rather than replacing them: you can still buil
 | Knowledge global, memory scoped per project | ✓ | ✗ | ~ | ~ | ✗ | ✗ | ~ |
 | Git history as a capture source | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | No background service required | ✓ | ✓ | ✗ | ✓ | ✓ | ~ | ✓ |
-| Installable today | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Installable today | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 *✓ yes · ~ partial · ✗ not offered. Notes on the ~ cells: built-in auto memory saves notes when Claude judges them useful rather than capturing sessions, and reorganises its own notes rather than distilling a knowledge base; claude-mem stores observations in SQLite behind a local worker service rather than plain files, and layers retrieval (index → timeline → details) rather than memory; basic-memory's capture is an opt-in output style, its recall links to source notes without per-fact citations, and it runs as an MCP server; swarmvault ingests sessions via manual CLI commands; claude-obsidian's and swarmvault's project scoping is vault-level rather than a global/project split. basic-memory can optionally sync to its own cloud; the rest are local-only.*
 
 **What Mimer offers.** No single row is a moat — any of these projects could add git capture in a week, and the platform's built-in memory grows with every release. Mimer's bet is the combination, plus discipline the category skips: knowledge as plain text following a published spec instead of a private database; a scope model that keeps client work confidential while your own knowledge follows you across projects; every recalled fact cited back to a checkable source, with the full transcript archived behind it; forgetting that actually spans the notes, the index and the raw record; secrets stripped before storage; and all of it with no background service, no daemon and no API key — hooks, one skill and a few scripts.
 
-**Where the others are ahead.** They ship today; Mimer does not (see the roadmap in `docs/vision.md`). claude-mem is the category incumbent with enormous adoption, a web viewer for browsing memory in real time, and support for several agents beyond Claude Code. The built-in auto memory costs nothing to install and is on by default. basic-memory and swarmvault reach far more tools — MCP clients, Obsidian, Cursor, VS Code. swarmvault and claude-obsidian build typed knowledge graphs, and TencentDB auto-generates a user persona, richer structures than Mimer's linked concepts. swarmvault stages changes in a review queue before they land; Mimer curates automatically instead, trusting scope rules, confirmations and citations over a gate — faster, but less controlled. By riding on Obsidian, claude-obsidian and basic-memory give you a real editor and graph view for free, which Mimer has no answer to. And running locally, Mimer's search is "good enough" rather than the best a hosted model could give. Plainly: Mimer is in early development — use it at your own risk.
+**Where the others are ahead.** A head start buys real advantages Mimer has not caught up to. claude-mem is the category incumbent with enormous adoption, a web viewer for browsing memory in real time, and support for several agents beyond Claude Code. The built-in auto memory costs nothing to install and is on by default. basic-memory and swarmvault reach far more tools — MCP clients, Obsidian, Cursor, VS Code. swarmvault and claude-obsidian build typed knowledge graphs, and TencentDB auto-generates a user persona, richer structures than Mimer's linked concepts. swarmvault stages changes in a review queue before they land; Mimer curates automatically instead, trusting scope rules, confirmations and citations over a gate — faster, but less controlled. By riding on Obsidian, claude-obsidian and basic-memory give you a real editor and graph view for free, which Mimer has no answer to. And running locally, Mimer's search is "good enough" rather than the best a hosted model could give. Plainly: Mimer is new — a first `0.1.0` — so use it with the care any young tool deserves.
 
 ### How you use it
 
@@ -128,7 +128,23 @@ Remove the Mimer plugin in Claude Code to unregister its hooks. Running `mimer-u
 
 ## Usage
 
-Once installed, Mimer works in the background. At the start of a session it supplies the snapshot to the agent and says so in one line; as the session proceeds the agent records what is worth keeping; and when you ask the agent to recall something, Mimer returns the relevant knowledge together with a citation to its source. Detailed usage will be documented as the interface settles.
+Once installed, Mimer works in the background. At the start of a session it supplies the snapshot to the agent and says so in one line; as the session proceeds the agent records what is worth keeping; and when you ask the agent to recall something, Mimer returns the relevant knowledge together with a citation to its source.
+
+Most of the time you drive Mimer by talking to the agent, not by typing commands: say "remember this", "what did we decide about X?", or "what do you know about me?" and the memory skill runs the right engine for you. The commands below are the full user-facing surface — the agent invokes most of them on your behalf through the skill, and you run the maintenance ones directly.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `mimer-install` | First-run provisioning: creates the owner-only `~/.mimer/` store, verifies the interpreter can load SQLite extensions, pre-fetches the embedding model, and builds the initial search index. Run once from the plugin directory. |
+| `mimer-bootstrap` | Opt-in, resumable import of a project's pre-existing Claude Code session and git history into memory. Run once per project. |
+| `mimer-memory` | The curated-write engine behind "remember", "note that" and "forget about"; the memory skill calls it and echoes back the one-line result. |
+| `mimer-recall` | Semantic, cited search over memory — project-scoped by default, `--widen` to reach other projects; the skill calls it for questions about past work. |
+| `mimer-manage` | Inspect and correct permanent memory: `profile`, `recent`, `health`, and `retract <slug>`. |
+| `mimer-reindex` | Rebuild the derived search index from memory; the index is reproducible, so running this is safe whenever it drifts. |
+| `mimer-uninstall` | Leaves your `~/.mimer/` store in place and writes a pointer note explaining how to resume or fully remove it. |
+
+Every command runs through `uv`; from the plugin directory the form is `uv run --project /path/to/Mimer <command>`.
 
 ## Questions, bugs, and feature requests
 
@@ -138,7 +154,16 @@ Found a bug or want to request a feature? Please [open an issue](https://github.
 
 ## Development
 
-Mimer is written in Python. Clone the repository and read the coding standard under [`agents.d/coding-standard/`](agents.d/coding-standard/) – `general.md` plus `python.md` – before changing code. Build and test instructions will be added as the toolchain takes shape.
+Mimer is written in Python. Clone the repository and read the coding standard under [`agents.d/coding-standard/`](agents.d/coding-standard/) – `general.md` plus `python.md` – before changing code.
+
+The project is managed with [uv](https://docs.astral.sh/uv/). Install the dependencies with `uv sync`, then run the same gates CI runs — lint, formatting, static type check and tests:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest -q
+```
 
 ## How you can contribute
 

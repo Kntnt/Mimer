@@ -16,6 +16,13 @@ It never hand-edits the store; it drives the deterministic engine
 duplicates), writes under the per-project lock, and returns the exact one-line
 echo to relay to the user.
 
+> **`${CLAUDE_PLUGIN_ROOT}`.** Every command below runs its engine through `uv`
+> against Mimer's own checkout, which `${CLAUDE_PLUGIN_ROOT}` names. Claude Code
+> documents that variable for hooks; live testing confirms it also
+> **resolves in skill-run Bash**, and these commands rely on that. Should a
+> future platform release stop exporting it to skills, substitute an absolute
+> path to the plugin directory — nothing else in the commands changes.
+
 ## Trigger phrases
 
 Act when the user's message carries an explicit memory intent:
