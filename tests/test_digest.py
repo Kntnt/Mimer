@@ -136,7 +136,8 @@ def test_concurrent_digests_of_one_session_write_one_block(
 
     ensure_store(store_root)
     transcript = write_transcript(
-        project_dir / "t.jsonl", [("how should we index?", "use sqlite-vec", "2026-07-11T15:00:00Z")]
+        project_dir / "t.jsonl",
+        [("how should we index?", "use sqlite-vec", "2026-07-11T15:00:00Z")],
     )
     payload = _payload(project_dir, transcript, session_id="sess-race")
 

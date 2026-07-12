@@ -29,10 +29,9 @@ from mimer.shortterm import (
     ensure_short_term,
     parse_short_term,
     render_short_term,
-    short_term_path,
 )
 from mimer.store import FILE_MODE
-from mimer.storeio import update_file
+from mimer.storeio import project_lock, write_atomic
 from mimer.transcript import conversation_text
 
 Haiku = Callable[[str], str | None]
@@ -87,14 +86,19 @@ def digest_session(
 
         digest, active, pending = _parse_reply(reply)
 
-        # Persist the three products; a duplicate racing session is caught by the
-        # ledger re-check.
-        if is_digested(project_id, session_id, root):
-            return DigestResult("duplicate")
-        _append_digest(project_id, today, digest, root)
-        _refresh_short_term(project_id, active, pending, today, root)
-        archive_path = _archive_transcript(project_id, session_id, transcript, root)
-        record_digested(project_id, session_id, root)
+        # Re-check and persist as one serialised unit under the project lock — the
+        # way capture already does — so two SessionEnd runs racing on this session
+        # (a retry, a crash-and-refire, overlapping events) digest it at most once
+        # instead of each appending its own block. The Haiku call above stays
+        # outside the lock; holding it across a ~120s model call would wedge the
+        # store for every other session.
+        with project_lock(project_id, root=root):
+            if is_digested(project_id, session_id, root):
+                return DigestResult("duplicate")
+            _append_digest(project_id, today, digest, root)
+            _refresh_short_term(project_id, active, pending, today, root)
+            archive_path = _archive_transcript(project_id, session_id, transcript, root)
+            record_digested(project_id, session_id, root)
 
         # Keep the derived index in step, when one exists (ADR 0011).
         index_if_present(project_id, today.isoformat(), root)
@@ -164,21 +168,20 @@ def _append_digest(project_id: str, today: date, digest: str, root: Path) -> Non
 def _refresh_short_term(
     project_id: str, active: list[str], pending: list[str], today: date, root: Path
 ) -> None:
-    """Rewrite the auto-maintained short-term sections from the digest."""
+    """Rewrite the auto-maintained short-term sections from the digest.
 
-    ensure_short_term(project_id, root)
-    refreshed = {
-        AUTO_REFRESHED_SECTIONS[0]: active,
-        AUTO_REFRESHED_SECTIONS[1]: pending,
-    }
+    The caller already holds the project lock, so the file is read and rewritten
+    directly with ``write_atomic``; re-locking via ``update_file`` would deadlock
+    on the same per-project advisory lock.
+    """
 
-    def transform(content: str) -> str:
-        sections = parse_short_term(content)
-        for name, texts in refreshed.items():
-            sections[name] = [Entry(today.isoformat(), text) for text in texts]
-        return render_short_term(project_id, sections)
-
-    update_file(short_term_path(project_id, root), transform, project_id=project_id, root=root)
+    # Replace each auto-maintained section wholesale with today's digest lines,
+    # leaving the curated sections (Notes) untouched.
+    path = ensure_short_term(project_id, root)
+    sections = parse_short_term(path.read_text(encoding="utf-8"))
+    sections[AUTO_REFRESHED_SECTIONS[0]] = [Entry(today.isoformat(), text) for text in active]
+    sections[AUTO_REFRESHED_SECTIONS[1]] = [Entry(today.isoformat(), text) for text in pending]
+    write_atomic(path, render_short_term(project_id, sections))
 
 
 def _archive_transcript(project_id: str, session_id: str, transcript: Path, root: Path) -> Path:
