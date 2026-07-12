@@ -8,9 +8,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from mimer import gitreader
+from mimer.failure_log import fresh_failures
 from mimer.gitreader import fold_git_log
 from mimer.index import reindex, search
-from mimer.longterm import daily_log_path
+from mimer.longterm import daily_log_path, long_term_dir
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.gitutil import init_repo
@@ -74,6 +78,58 @@ def test_excerpt_survives_a_history_rewrite(store_root: Path, tmp_path: Path) ->
     stored = daily_log_path(pid, _commit_date(repo), store_root)
     # The stored excerpt survives even though the SHA is unresolvable.
     assert any("xyzzy" in log.read_text() for log in stored.parent.glob("*.md"))
+
+
+def test_first_fold_backfills_full_history_beyond_100_commits(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """First adoption of a repo with >100 prior commits folds the whole history.
+
+    The reader used to consider only the most recent 100 commits, so anything
+    older was silently and permanently absent (issue #42). A first fold now pages
+    through the entire history.
+    """
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+
+    # A repository whose history is well past the old 100-commit window.
+    for n in range(150):
+        _commit(repo, f"Commit number {n:03d} marker-{n:03d}")
+    pid = _project(store_root, repo)
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # Every commit is folded, including the oldest — far beyond the last 100.
+    assert folded > 100
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert "marker-000" in stored
+    assert "marker-149" in stored
+
+    # Re-running the completed fold still adds nothing.
+    assert fold_git_log(pid, repo, root=store_root) == 0
+
+
+def test_first_fold_is_bounded_and_logged(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first backfill honours a documented bound and logs the truncation.
+
+    An enormous repository must not stall a session boundary, so the first fold
+    is capped; the cap is observable in the failure log rather than silent.
+    """
+
+    monkeypatch.setattr(gitreader, "_FIRST_FOLD_LIMIT", 5)
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    for n in range(20):
+        _commit(repo, f"Commit number {n:03d}")
+    pid = _project(store_root, repo)
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    assert folded == 5
+    assert any("backfill" in message for message in fresh_failures(store_root))
 
 
 def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> None:
