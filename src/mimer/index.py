@@ -24,13 +24,13 @@ from typing import Protocol
 import sqlite_vec
 
 from mimer import db
+from mimer.bundle import concept_identity_text
 from mimer.embedding import EMBEDDING_DIMENSIONS, embed
 from mimer.longterm import daily_log_path
-from mimer.matcher import is_same_fact
 from mimer.paths import store_root
 from mimer.registry import PROJECTS_DIRNAME
 from mimer.store import ensure_store
-from mimer.tombstones import load_tombstones
+from mimer.tombstones import is_suppressed, load_tombstones
 
 INDEX_FILENAME = "index.db"
 
@@ -249,7 +249,7 @@ def concept_chunk(
     """Build an index chunk from a permanent-memory Concept's fields."""
 
     source = f"{_PERMANENT_SOURCE_PREFIX}{slug}.md"
-    text = f"{title}\n{body}".strip()
+    text = concept_identity_text(title, body)
     key = sha256(f"{origin}\x00{source}\x00{text}".encode()).hexdigest()[:16]
     return _Chunk(key, origin, source, (timestamp or "")[:10], title, text, scope)
 
@@ -358,7 +358,7 @@ def search(
         _cite(row, candidates[row["id"]], query_date=date.today())
         for row in rows
         if _in_scope(row, allowed, home=project_id)
-        and not _suppressed(row["text"], row["project_id"], tombstones)
+        and not is_suppressed(row["text"], project_id=row["project_id"], tombstones=tombstones)
     ]
     results.sort(key=lambda citation: citation.score, reverse=True)
     return results[:limit]
@@ -485,21 +485,6 @@ def _allowed_projects(
     if project_id is not None:
         return frozenset({project_id})
     return None
-
-
-def _suppressed(text: str, project_id: str, tombstones: list[dict[str, str]]) -> bool:
-    """Whether a tombstone for this project covers this chunk's text.
-
-    Uses the shared matcher, whose quotation test suppresses a chunk that quotes a
-    forgotten fact verbatim even when the chunk bundles many other facts, yet whose
-    specificity guard keeps a short tombstone from over-suppressing a longer,
-    unrelated chunk that merely scatters its words.
-    """
-
-    return any(
-        tombstone.get("project_id") == project_id and is_same_fact(text, tombstone["text"])
-        for tombstone in tombstones
-    )
 
 
 def reindex_main() -> int:

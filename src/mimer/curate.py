@@ -3,8 +3,10 @@
 Every write reads the whole of short-term memory first (so a re-``remember``
 updates rather than duplicates), then adds, replaces or removes an entry under
 the per-project store lock, and echoes what happened in one line. ``forget`` is
-the soft tier of ADR 0012 — removal plus a tombstone; the raw long-term record
-is untouched. An over-cap write drives distillation: durable entries are
+the soft tier of ADR 0012 — it removes the entry, retracts any matching permanent
+Concept, and writes a tombstone (so recall, the manifest and the injected profile
+all filter the fact out), while the raw long-term record is untouched. An over-cap
+write drives distillation: durable entries are
 promoted into permanent memory before transient entries age out to the daily log
 — promote-then-evict (ADR 0017).
 
@@ -21,6 +23,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from mimer.bundle import concept_identity_text, list_concepts, retract_concept
 from mimer.distill import distill_durable_entries
 from mimer.erasure import erase_from_raw_record
 from mimer.longterm import append_entry
@@ -230,6 +233,30 @@ def _remove_matching_from_short_term(text: str, *, project_id: str, root: Path) 
     return removed
 
 
+def _retract_matching_concepts(text: str, *, project_id: str, root: Path) -> list[str]:
+    """Retract every permanent Concept the shared matcher judges the same fact as
+    ``text``, so a forget reaches permanent memory (ADR 0012, issue #32). Returns
+    the titles of the retracted Concepts.
+
+    Scoped to Concepts whose origin is this project — the origin-keyed rule recall
+    and the injection paths suppress by (ADR 0013) — so a forget never reaches into
+    another project's permanent memory. Matching is on the same title+body text
+    recall indexes (:func:`mimer.bundle.concept_identity_text`), so a Concept that
+    would be recalled or injected for this fact is exactly the one retracted.
+
+    Shared by the soft (``forget``) and hard (``redact``) tiers so redact stays a
+    true superset of forget and neither leaves a Concept the other would retract.
+    """
+
+    retracted = []
+    for concept in list_concepts(root):
+        identity = concept_identity_text(concept.title, concept.body)
+        if concept.origin == project_id and is_same_fact(identity, text):
+            retract_concept(concept.slug, root)
+            retracted.append(concept.title)
+    return retracted
+
+
 def forget(
     text: str, *, project_id: str, root: Path | None = None, today: date | None = None
 ) -> WriteResult:
@@ -244,6 +271,7 @@ def forget(
     text = strip_secrets(text)
 
     removed = _remove_matching_from_short_term(text, project_id=project_id, root=root)
+    retracted = _retract_matching_concepts(text, project_id=project_id, root=root)
     write_tombstone(text, project_id=project_id, root=root, tier="forget")
 
     if removed:
@@ -258,6 +286,8 @@ def forget(
             f'Mimer: nothing in short-term memory matched "{text}", but it was tombstoned so it '
             "will not resurface. The raw long-term record is untouched."
         )
+    if retracted:
+        echo += f" Retracted {len(retracted)} matching permanent concept(s)."
     return WriteResult(action, echo)
 
 
@@ -284,6 +314,7 @@ def redact(
 
     stripped = strip_secrets(text)
     _remove_matching_from_short_term(stripped, project_id=project_id, root=root)
+    _retract_matching_concepts(stripped, project_id=project_id, root=root)
     write_tombstone(stripped, project_id=project_id, root=root, tier="redact")
     erase_from_raw_record(text, project_id=project_id, root=root)
 
