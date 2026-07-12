@@ -246,10 +246,14 @@ def _promote(text: str, project_id: str, scope: str, root: Path) -> DistillResul
     try:
         return distill_fact(text=text, project_id=project_id, scope=scope, root=root)
     except Exception as exc:  # noqa: BLE001 - a failed promotion must not lose the entry
-        # Log the failure by a stable fact identifier, never the content: the log
-        # is surfaced by `mimer-manage health`, and the fact may hold a secret (#24).
+        # Log the failure by a stable fact identifier and the exception type, never
+        # the content: the log is surfaced by `mimer-manage health`, and an exception
+        # repr can quote the failing fact — reintroducing memory that redaction cannot
+        # recognise (personal data, plain prose), not only shape-detectable secrets (#24).
         identifier = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-        log_failure(f"distill: promotion failed for fact {identifier}: {exc!r}", root=root)
+        log_failure(
+            f"distill: promotion failed for fact {identifier}: {type(exc).__name__}", root=root
+        )
         return DistillResult("failed")
 
 

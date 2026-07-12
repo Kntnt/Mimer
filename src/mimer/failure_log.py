@@ -1,10 +1,13 @@
 """The failure log: the single place every detached process reports to, so
 "detached" never means "unobservable" (ADR 0011).
 
-The log is surfaced back to the user by ``mimer-manage health``, so it must never
-become a back door around the redaction guarantee: every message is run through
-the redaction pass here before it reaches the file, so each writer benefits
-without having to remember (issue #24).
+The log is surfaced back to the user by ``mimer-manage health``, so every message
+is run through the redaction pass here before it reaches the file — each writer
+benefits without having to remember (issue #24). That pass is secret-shape-based:
+it strips recognised secret shapes, not arbitrary personal data or memory prose,
+so callers must still log identifiers and exception types rather than raw content.
+The log's owner-only file mode (0o600) is the backstop for anything that is not a
+recognised secret shape.
 """
 
 from __future__ import annotations
@@ -19,12 +22,14 @@ from mimer.redaction import redact
 def log_failure(message: str, *, root: Path | None = None) -> None:
     """Append one timestamped line to the failure log.
 
-    The message is redacted before it is written, so a secret that reached a
-    caller — an exception repr embedding pre-redaction content, say — cannot leak
-    through the log the health command surfaces. Newlines are then flattened so a
-    single failure is always a single physical line, keeping the log grep-able.
-    Assumes the store already exists (its creation is
-    :func:`mimer.store.ensure_store`'s job).
+    The message is redacted before it is written, so a recognised secret shape
+    that reached a caller — an exception repr embedding pre-redaction content, say
+    — cannot leak through the log the health command surfaces. Redaction is
+    shape-based, so it does not strip non-secret personal data or memory prose;
+    callers must not pass raw memory content (log an identifier or exception type
+    instead). Newlines are then flattened so a single failure is always a single
+    physical line, keeping the log grep-able. Assumes the store already exists (its
+    creation is :func:`mimer.store.ensure_store`'s job).
 
     Args:
         message: A description of what went wrong.
