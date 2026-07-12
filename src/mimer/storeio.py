@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.store import FILE_MODE, ensure_store
+from mimer.store import FILE_MODE, ensure_dir, ensure_store
 
 # Per-project advisory locks live here, one file per project id.
 LOCKS_DIRNAME = "locks"
@@ -53,7 +53,7 @@ def project_lock(project_id: str, *, root: Path | None = None) -> Iterator[None]
     ensure_store(root)
 
     lock_file = _lock_path(project_id, root)
-    lock_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_dir(lock_file.parent)
 
     # Open (creating if needed) and take an exclusive lock, releasing on exit.
     fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, FILE_MODE)
@@ -73,7 +73,7 @@ def append_text(path: Path, text: str) -> None:
     or a small group) to stay within the platform's atomic-write bound.
     """
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent)
 
     data = (text.rstrip("\n") + "\n").encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
@@ -120,7 +120,7 @@ def write_atomic(path: Path, content: str) -> None:
     must already hold the relevant :func:`project_lock`.
     """
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.chmod(FILE_MODE)

@@ -334,7 +334,6 @@ def regenerate_index(root: Path | None = None) -> None:
         f"* [{c.title}]({c.slug}.md) - {c.description or _first_line(c.body)}" for c in concepts
     )
     path = index_md_path(root)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_atomic(path, "\n".join(lines) + "\n")
 
 
@@ -348,7 +347,6 @@ def _write(concept: Concept, root: Path | None) -> None:
     """
 
     path = concept_path(concept.slug, root)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_atomic(path, _serialise(concept))
 
 

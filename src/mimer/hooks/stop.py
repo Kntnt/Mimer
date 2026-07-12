@@ -19,6 +19,7 @@ from typing import Any
 
 from mimer.hooks.runner import run_hook
 from mimer.paths import store_root
+from mimer.store import ensure_dir
 
 SPOOL_DIRNAME = "spool"
 
@@ -31,7 +32,7 @@ def handle(payload: Mapping[str, Any]) -> None:
     # Spool the payload to a private file the detached capture process consumes
     # and then deletes.
     spool_dir = root / SPOOL_DIRNAME
-    spool_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_dir(spool_dir)
     handle_fd, spool_path = tempfile.mkstemp(dir=spool_dir, suffix=".json")
     with open(handle_fd, "w", encoding="utf-8") as spool_file:
         json.dump(dict(payload), spool_file)

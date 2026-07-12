@@ -62,3 +62,32 @@ def ensure_store(root: Path | None = None) -> Path:
     log.chmod(FILE_MODE)
 
     return root
+
+
+def ensure_dir(directory: Path) -> None:
+    """Create ``directory`` and any missing ancestors, each pinned to 0700.
+
+    ``Path.mkdir(mode=…, parents=True)`` applies the mode only to the final
+    component and creates intermediate parents at the umask default (typically
+    0755, world-traversable). The store concentrates every project's memory, so
+    no directory Mimer creates may be readable by other users (ADR 0013); this
+    helper creates and chmods every missing level down to ``directory`` to
+    :data:`DIR_MODE`. Only what the call creates is pinned — an existing ancestor
+    (a temp directory, the user's home) is left untouched.
+
+    Args:
+        directory: The directory to ensure; its missing ancestors are created too.
+    """
+
+    # Collect the missing chain from the target up to the first existing ancestor.
+    missing: list[Path] = []
+    current = directory
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+
+    # Create each missing level owner-only, correcting the umask default that
+    # mkdir would otherwise leave on the intermediate directories.
+    for path in reversed(missing):
+        path.mkdir(mode=DIR_MODE, exist_ok=True)
+        path.chmod(DIR_MODE)

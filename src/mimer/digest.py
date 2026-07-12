@@ -30,7 +30,6 @@ from mimer.shortterm import (
     parse_short_term,
     render_short_term,
 )
-from mimer.store import FILE_MODE
 from mimer.storeio import project_lock, write_atomic
 from mimer.transcript import conversation_text
 
@@ -200,10 +199,6 @@ def _archive_transcript(project_id: str, session_id: str, transcript: Path, root
     before any store write, so it is a safe filename component here (#25).
     """
 
-    archive_dir = transcripts_dir(project_id, root)
-    archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-
-    archive_path = archive_dir / f"{session_id or 'session'}.jsonl"
-    archive_path.write_text(redact(transcript.read_text(encoding="utf-8")), encoding="utf-8")
-    archive_path.chmod(FILE_MODE)
+    archive_path = transcripts_dir(project_id, root) / f"{session_id or 'session'}.jsonl"
+    write_atomic(archive_path, redact(transcript.read_text(encoding="utf-8")))
     return archive_path
