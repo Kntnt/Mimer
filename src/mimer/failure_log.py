@@ -47,7 +47,10 @@ def fresh_failures(root: Path | None = None, *, within_hours: int = 24) -> list[
     """Return failure messages logged within the last ``within_hours``.
 
     Used to surface a one-line health notice at session start (Stage 8). Lines
-    with an unparseable timestamp are ignored.
+    with an unparseable timestamp are ignored. Each surfaced message is redacted
+    again on read: the log file is user-writable and may hold legacy lines written
+    before write-time redaction existed, so redaction is enforced at every boundary
+    that echoes the log back (issue #24).
     """
 
     path = (root or store_root()) / LOG_FILENAME
@@ -63,5 +66,5 @@ def fresh_failures(root: Path | None = None, *, within_hours: int = 24) -> list[
         except ValueError:
             continue
         if when >= cutoff:
-            fresh.append(message)
+            fresh.append(redact(message))
     return fresh

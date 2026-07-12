@@ -15,6 +15,7 @@ from pathlib import Path
 from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept
 from mimer.longterm import LONG_TERM_DIRNAME
 from mimer.paths import LOG_FILENAME, store_root
+from mimer.redaction import redact
 from mimer.registry import PROJECTS_DIRNAME, Registry
 
 _RECENT_FAILURES = 5
@@ -96,11 +97,14 @@ def _latest_daily_log(project_dirs: list[Path]) -> str | None:
 
 
 def _recent_failures(root: Path) -> list[str]:
+    # Redact each line on read: the log is user-writable and may hold legacy lines
+    # written before write-time redaction existed, so `mimer-manage health` must not
+    # echo a secret it happens to find there (issue #24).
     log = root / LOG_FILENAME
     if not log.exists():
         return []
     lines = [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return lines[-_RECENT_FAILURES:]
+    return [redact(line) for line in lines[-_RECENT_FAILURES:]]
 
 
 def main(argv: list[str] | None = None) -> int:
