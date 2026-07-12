@@ -55,6 +55,10 @@ _RULES: list[tuple[re.Pattern[str], _Replacement]] = [
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), REDACTED),
     # Slack tokens: bot/user/etc. (`xox[baprs]-`) and app-level (`xapp-`).
     (re.compile(r"\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}\b"), REDACTED),
+    # npm tokens by their own value prefix (`npm_` + 36 chars), like every other
+    # class here — not by the `_authToken=` key name, which the common
+    # `NPM_TOKEN=`, `export` and bare-pasted forms never carry.
+    (re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"), REDACTED),
     # Bearer tokens in an Authorization header: keep the scheme, drop the token.
     (re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + REDACTED),
     # Basic auth in an Authorization header: keep the scheme, drop the base64
@@ -63,13 +67,19 @@ _RULES: list[tuple[re.Pattern[str], _Replacement]] = [
     (re.compile(r"(?i)(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/=]{16,}"), r"\1" + REDACTED),
     # `.npmrc` registry auth tokens: keep the key, redact the value.
     (re.compile(r"(?i)(_authToken\s*=\s*)[^\s'\"]+"), r"\1" + REDACTED),
-    # Assigned secrets: keep the key and quoting, redact the value. The AWS
+    # Assigned secrets: keep the key and quoting, redact the value. An optional
+    # identifier prefix (`DB_`, `GITHUB_`, `STRIPE_`, `MY_AWS_`) is allowed
+    # before the keyword so the dominant `.env`/`export`/CI suffix forms
+    # (`DB_PASSWORD=`, `GITHUB_TOKEN=`) match — the leading `\b` alone never
+    # sits mid-identifier. The keyword must still be the immediate left of the
+    # separator, so an ordinary `token_count = 5` is left untouched. The AWS
     # secret access key is listed explicitly because none of its interior words
     # sit on a word boundary, so `secret`/`access_key` alone never match it.
     (
         re.compile(
-            r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth"
-            r"|aws[_-]?secret[_-]?access[_-]?key)"
+            r"(?i)\b((?:[A-Za-z0-9]+[_.\-])*"
+            r"(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth"
+            r"|aws[_-]?secret[_-]?access[_-]?key))"
             r"(\s*[:=]\s*)(['\"]?)([^\s'\"]+)(\3)"
         ),
         lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{REDACTED}{m.group(5)}",
