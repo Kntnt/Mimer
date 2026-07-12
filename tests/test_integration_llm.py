@@ -6,7 +6,7 @@ stdout parsing — never runs in CI. A vendor-side flag change or a wrapped outp
 would then degrade the digest to "deferred / no concepts" silently. This module
 drives the real binary end to end.
 
-It is deselected by default: the tests run only when ``MIMER_INTEGRATION=1`` is
+It is skipped by default: the tests run only when ``MIMER_INTEGRATION=1`` is
 set and a ``claude`` binary is reachable, so default CI needs no live binary.
 """
 
@@ -74,4 +74,13 @@ def test_real_digest_against_real_transcript_is_parseable(
     resolution = resolve(project_dir, root=store_root)
     assert resolution.project_id is not None
     log = daily_log_path(resolution.project_id, "2026-06-18", store_root)
+
+    # A parseable reply is what actually lands a digest block in the daily log —
+    # status=='digested' alone only means the reply was non-empty. Guard the read
+    # so a model that ignored the requested format fails as a clear assertion
+    # naming the cause, not a FileNotFoundError on the never-written log.
+    assert log.exists(), (
+        f"real digest left no daily-log entry (status={result.status}): the model "
+        "reply carried no parseable '## Digest' section"
+    )
     assert "## Session digest" in log.read_text(encoding="utf-8")

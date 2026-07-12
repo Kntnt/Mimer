@@ -7,7 +7,7 @@ missing package file, or a wheel that omits a module would still pass CI. This
 test builds the wheel, installs it into a throwaway virtualenv, and drives the
 console scripts and a real hook from that install.
 
-It is deselected by default (set ``MIMER_PACKAGING=1``) because building and
+It is skipped by default (set ``MIMER_PACKAGING=1``) because building and
 installing a fresh environment is slow. It needs no ``claude`` binary.
 """
 
@@ -40,6 +40,31 @@ def _declared_console_scripts() -> list[str]:
 
     manifest = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return sorted(manifest["project"]["scripts"].keys())
+
+
+def _resolved_entry_point_targets(venv_python: Path) -> list[str]:
+    """The names of the installed ``mimer`` console scripts whose target resolves.
+
+    Runs inside the fresh venv and, for every ``console_scripts`` entry point the
+    installed distribution declares, calls ``EntryPoint.load()`` — which imports
+    the ``module`` and binds the ``attr`` of a ``module:attr`` mapping. A renamed
+    or typo'd ``[project.scripts]`` target therefore fails here, where a mere
+    ``bin/<script>`` existence check waves it through: the wrapper file is created
+    regardless and only errors when the script is actually executed.
+    """
+
+    probe = (
+        "import importlib.metadata as md, json\n"
+        "resolved = []\n"
+        "for ep in md.distribution('mimer').entry_points:\n"
+        "    if ep.group != 'console_scripts':\n"
+        "        continue\n"
+        "    ep.load()\n"
+        "    resolved.append(ep.name)\n"
+        "print(json.dumps(sorted(resolved)))\n"
+    )
+    completed = _run([str(venv_python), "-c", probe], timeout=120)
+    return list(json.loads(completed.stdout))
 
 
 def _run(
@@ -88,9 +113,16 @@ def test_wheel_install_exposes_and_runs_console_scripts_and_a_hook(tmp_path: Pat
 
     bin_dir = _build_and_install(tmp_path)
 
-    # Every declared console script materialises as an executable entry point.
+    # Every declared console script materialises as a wrapper file in the venv.
     for script in _declared_console_scripts():
         assert (bin_dir / script).exists(), f"missing console script: {script}"
+
+    # And every one of those entry points points at a target that actually
+    # resolves — the check the bare ``.exists()`` above cannot make, since a
+    # broken ``[project.scripts]`` mapping still ships a wrapper that only fails
+    # on execution. This is the regression the ticket names: a renamed target
+    # would keep the file check green while breaking the hook it backs.
+    assert _resolved_entry_point_targets(bin_dir / "python") == _declared_console_scripts()
 
     # A store and env isolated from the real ~/.mimer; the guard var must not leak
     # in from the outer pytest run.

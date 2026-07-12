@@ -68,6 +68,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
-    "integration: opt-in test that drives a live `claude` binary (set MIMER_INTEGRATION=1); deselected by default CI",
+    "integration: opt-in test that drives a live `claude` binary (set MIMER_INTEGRATION=1); skipped by default",
     "packaging: opt-in smoke test that builds and installs the wheel (set MIMER_PACKAGING=1); needs no `claude` binary",
 ]
