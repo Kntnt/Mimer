@@ -26,6 +26,7 @@ import sqlite_vec
 from mimer import db
 from mimer.embedding import EMBEDDING_DIMENSIONS, embed
 from mimer.longterm import daily_log_path
+from mimer.matcher import is_same_fact
 from mimer.paths import store_root
 from mimer.registry import PROJECTS_DIRNAME
 from mimer.store import ensure_store
@@ -487,11 +488,14 @@ def _allowed_projects(
 
 
 def _suppressed(text: str, project_id: str, tombstones: list[dict[str, str]]) -> bool:
-    """Whether a tombstone for this project covers this chunk's text."""
+    """Whether a tombstone for this project covers this chunk's text.
 
-    normalised = " ".join(text.lower().split())
+    Uses the shared matcher, so a short tombstone no longer suppresses a longer,
+    unrelated chunk that merely contains its words.
+    """
+
     return any(
-        tombstone.get("project_id") == project_id and tombstone["key"] in normalised
+        tombstone.get("project_id") == project_id and is_same_fact(text, tombstone["text"])
         for tombstone in tombstones
     )
 

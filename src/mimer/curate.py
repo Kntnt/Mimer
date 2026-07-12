@@ -21,6 +21,7 @@ from datetime import date
 from pathlib import Path
 
 from mimer.longterm import append_entry
+from mimer.matcher import is_same_fact
 from mimer.paths import store_root
 from mimer.project import resolve
 from mimer.redaction import redact
@@ -182,10 +183,9 @@ def forget(
         nonlocal removed
         sections = parse_short_term(content)
 
-        # Remove any entry that matches or contains the target fact's identity.
-        key = _key(text)
+        # Remove every entry the shared matcher judges the same fact as the target.
         for name, entries in sections.items():
-            kept = [e for e in entries if _key(e.text) != key and key not in _key(e.text)]
+            kept = [e for e in entries if not is_same_fact(e.text, text)]
             removed += len(entries) - len(kept)
             sections[name] = kept
         return render_short_term(project_id, sections)

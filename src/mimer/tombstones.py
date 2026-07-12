@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mimer.matcher import is_same_fact
 from mimer.paths import store_root
 from mimer.storeio import append_text
 
@@ -24,19 +25,16 @@ def tombstones_path(root: Path | None = None) -> Path:
     return (root or store_root()) / TOMBSTONES_FILENAME
 
 
-def _key(text: str) -> str:
-    """A normalised identity key for a fact, so trivial wording differs equally."""
-
-    return " ".join(text.lower().split())
-
-
 def write_tombstone(
     text: str, *, project_id: str, root: Path | None = None, tier: str = "forget"
 ) -> None:
-    """Append a tombstone recording a forgotten fact's identity and origin."""
+    """Append a tombstone recording a forgotten fact's identity and origin.
+
+    The forgotten fact is stored verbatim; identity against it is decided by the
+    shared matcher (:func:`mimer.matcher.is_same_fact`), not a pre-normalised key.
+    """
 
     record = {
-        "key": _key(text),
         "text": text,
         "project_id": project_id,
         "tier": tier,
@@ -58,10 +56,13 @@ def load_tombstones(root: Path | None = None) -> list[dict[str, str]]:
 
 
 def is_tombstoned(text: str, *, project_id: str, root: Path | None = None) -> bool:
-    """Whether a fact has been forgotten in the given project."""
+    """Whether a fact has been forgotten in the given project.
 
-    key = _key(text)
+    A reworded restatement of a forgotten fact still counts as forgotten, because
+    identity is decided by the shared matcher rather than exact string equality.
+    """
+
     return any(
-        record["key"] == key and record.get("project_id") == project_id
+        record.get("project_id") == project_id and is_same_fact(text, record["text"])
         for record in load_tombstones(root)
     )
