@@ -74,15 +74,22 @@ def remember(
     section: str = CURATED_SECTION,
     cap: int = SHORT_TERM_CAP,
     today: date | None = None,
-    durable: bool = False,
+    durable: bool = True,
 ) -> WriteResult:
     """Add ``text`` to short-term memory, updating in place if already present.
 
+    A curated write is ``durable`` by default: the user explicitly asked Mimer to
+    remember it and it passed the skill's salience judgment, so it is knowledge
+    worth promoting to permanent memory. The cap keeps durable entries until
+    session-end distillation promotes-then-evicts them; only ``durable=False``
+    entries — the digest's auto-refreshed working state and bootstrap's
+    orientation note — age out into the daily log (ADR 0017).
+
     A write that exceeds the cap ages out transient entries (oldest first) into
     the daily log; durable entries are kept, and if the cap cannot be met with
-    transient evictions alone the write warns and keeps everything (ADR 0017).
-    The whole read-modify-write plus the daily-log append happen under one lock,
-    so an evicted entry is never absent from both places.
+    transient evictions alone the write warns and keeps everything. The whole
+    read-modify-write plus the daily-log append happen under one lock, so an
+    evicted entry is never absent from both places.
 
     A secret the user or agent asks to remember is stripped here at the sink, so
     the redaction guarantee holds independently of the agent's judgment.
@@ -227,12 +234,6 @@ def _build_parser() -> argparse.ArgumentParser:
     for verb in ("remember", "note", "forget"):
         subparser = subparsers.add_parser(verb)
         subparser.add_argument("text")
-        if verb != "forget":
-            subparser.add_argument(
-                "--durable",
-                action="store_true",
-                help="mark this entry durable so the cap keeps it for distillation",
-            )
     return parser
 
 
@@ -251,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "forget":
         result = forget(args.text, project_id=resolution.project_id)
     else:
-        result = remember(args.text, project_id=resolution.project_id, durable=args.durable)
+        result = remember(args.text, project_id=resolution.project_id)
 
     print(result.echo)
     if result.warning:

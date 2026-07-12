@@ -179,12 +179,15 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> tuple[i
             concept_count += 1
 
     # Seed an initial short-term working set so the next session starts oriented.
+    # This is transient orientation, not durable knowledge, so it is not
+    # re-distilled into a Concept (the facts themselves were distilled above).
     if facts:
         remember(
             f"Bootstrapped prior history; key facts distilled ({len(facts)}).",
             project_id=project_id,
             root=root,
             today=date.today(),
+            durable=False,
         )
     return concept_count, bool(facts)
 

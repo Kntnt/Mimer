@@ -62,11 +62,18 @@ trivially re-derivable from the code, or secrets the user pasted in passing
 
 ### Durability — short-term now, permanent later
 
-Everything this skill writes goes to short-term memory. Durable, reusable
-knowledge is promoted to permanent memory automatically by distillation later;
-you do not file it by hand. If the user says a fact is "always" true about them
-or asks you to "always remember" it, tell them that is a profile/pinned write,
-which arrives with permanent memory — do not fake it here.
+Everything this skill writes goes to short-term memory, and everything you
+remember here is durable knowledge: at session end, distillation automatically
+promotes it into a permanent Concept — deduplicated against what Mimer already
+knows, superseding an older version rather than contradicting it. You pass no
+flag and file nothing by hand; the salience rule above is the only gate, so
+write only what is genuinely worth keeping and it is promoted for you. The
+transient working state (what is active, what is still undecided) is refreshed
+automatically by the session digest, not by this skill.
+
+If the user says a fact is "always" true about them or asks you to "always
+remember" it, tell them that is a profile/pinned write, which arrives with
+permanent memory — do not fake it here.
 
 ### "forget about X" — delete or defer?
 

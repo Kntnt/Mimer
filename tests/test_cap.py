@@ -36,11 +36,17 @@ def test_over_cap_evicts_oldest_transient_to_daily_log(store_root: Path, project
             project_id=pid,
             root=store_root,
             cap=3,
+            durable=False,
             today=date.fromisoformat(day),
         )
 
     result = remember(
-        "the newest note", project_id=pid, root=store_root, cap=3, today=date(2026, 7, 11)
+        "the newest note",
+        project_id=pid,
+        root=store_root,
+        cap=3,
+        durable=False,
+        today=date(2026, 7, 11),
     )
 
     assert _total(store_root, pid) == 3
@@ -88,9 +94,23 @@ def test_mixed_evicts_transient_keeps_durable(store_root: Path, project_dir: Pat
         durable=True,
         today=date(2026, 7, 1),
     )
-    remember("throwaway one", project_id=pid, root=store_root, cap=2, today=date(2026, 7, 2))
+    remember(
+        "throwaway one",
+        project_id=pid,
+        root=store_root,
+        cap=2,
+        durable=False,
+        today=date(2026, 7, 2),
+    )
 
-    remember("throwaway two", project_id=pid, root=store_root, cap=2, today=date(2026, 7, 3))
+    remember(
+        "throwaway two",
+        project_id=pid,
+        root=store_root,
+        cap=2,
+        durable=False,
+        today=date(2026, 7, 3),
+    )
 
     sections = parse_short_term(read_short_term(pid, store_root))
     kept = [e.text for entries in sections.values() for e in entries]
@@ -108,10 +128,17 @@ def test_eviction_loses_nothing(store_root: Path, project_dir: Path) -> None:
     pid = _project(store_root, project_dir)
     for index, day in enumerate(("2026-07-01", "2026-07-02")):
         remember(
-            f"fact {index}", project_id=pid, root=store_root, cap=2, today=date.fromisoformat(day)
+            f"fact {index}",
+            project_id=pid,
+            root=store_root,
+            cap=2,
+            durable=False,
+            today=date.fromisoformat(day),
         )
 
-    remember("fact 2", project_id=pid, root=store_root, cap=2, today=date(2026, 7, 3))
+    remember(
+        "fact 2", project_id=pid, root=store_root, cap=2, durable=False, today=date(2026, 7, 3)
+    )
 
     short_term = read_short_term(pid, store_root)
     log = daily_log_path(pid, "2026-07-03", store_root).read_text()
