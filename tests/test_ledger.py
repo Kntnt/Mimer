@@ -82,13 +82,15 @@ def test_extend_with_no_keys_is_a_noop(tmp_path: Path) -> None:
     assert not path.exists()
 
 
-def test_default_capacity_covers_the_git_commit_window() -> None:
-    """The default dedup window stays wider than the git reader's commit window: a
-    regression guard against lowering capacity to or below it, since that invariant
-    is what keeps a reachable commit inside the window under linear history. The
-    re-fold-free behaviour itself is exercised in test_gitreader (#41).
+def test_default_capacity_covers_the_git_page_window() -> None:
+    """The default dedup window stays wider than the git reader's page window: a
+    regression guard against lowering capacity to or below it, so a steady-state
+    fold's freshly recorded tip shas comfortably outnumber a single read page and
+    stay in the window — keeping a reachable commit excluded under linear history
+    (#42's reachability fold). The re-fold-free behaviour itself is exercised in
+    test_gitreader (#41).
     """
 
-    from mimer.gitreader import _COMMIT_LIMIT
+    from mimer.gitreader import _PAGE_SIZE
 
-    assert DEFAULT_CAPACITY > _COMMIT_LIMIT
+    assert DEFAULT_CAPACITY > _PAGE_SIZE

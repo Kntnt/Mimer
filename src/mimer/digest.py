@@ -106,9 +106,10 @@ def digest_session(
         # Re-check and persist as one serialised unit under the project lock — the
         # way capture already does — so two SessionEnd runs racing on this session
         # (a retry, a crash-and-refire, overlapping events) digest it at most once
-        # instead of each appending its own block. The Haiku call above stays
-        # outside the lock; holding it across a ~120s model call would wedge the
-        # store for every other session.
+        # instead of each appending its own block, and the digest ledger's in-place
+        # rewrite (#41) is never raced. The Haiku call above stays outside the lock;
+        # holding it across a ~120s model call would wedge the store for every other
+        # session.
         with project_lock(project_id, root=root):
             if is_digested(project_id, session_id, root):
                 return DigestResult("duplicate")

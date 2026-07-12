@@ -7,11 +7,10 @@ id — an id from months ago is never re-submitted — so a ledger needs a bound
 window of recent ids, not infinite history.
 
 This module holds exactly that window in a plain file, one id per line: it stays
-a plain file so dedup survives an index-free store (ADR 0011). It is *meant* to
-keep at most ``capacity`` of the most recently recorded ids, evicting the oldest,
-so the file's size and the cost of a membership check or a record stay bounded
-however long a project lives. This first cut does not yet evict — the failing
-tests (#41) demand the bound the green step adds.
+a plain file so dedup survives an index-free store (ADR 0011), and it keeps at
+most ``capacity`` of the most recently recorded ids, evicting the oldest. Both
+the file's size and the cost of a membership check or a record therefore stay
+bounded however long a project lives, instead of growing one id per turn forever.
 
 A record is a read-modify-write, so — like any store artefact rewritten in place
 (ADR 0011) — the caller must hold the per-project lock. Capture, the digest and
@@ -59,14 +58,14 @@ class Ledger:
         return set(self._load())
 
     def record(self, key: str) -> None:
-        """Add one ``key`` to the window."""
+        """Add one ``key`` to the window, evicting the oldest beyond ``capacity``."""
 
         self.extend((key,))
 
     def extend(self, keys: Iterable[str]) -> None:
-        """Add ``keys`` to the window in order.
+        """Add ``keys`` to the window in order, then trim to the most recent ``capacity``.
 
-        A batch keeps the write to a single rewrite. An empty batch is a no-op —
+        A batch keeps the trim to a single rewrite. An empty batch is a no-op —
         it neither creates nor rewrites the file.
         """
 
@@ -74,11 +73,10 @@ class Ledger:
         if not additions:
             return
 
-        # Append after the existing window. NOTE (#41): this first cut does not yet
-        # bound the window — the eviction the failing tests demand is the green step.
+        # Append after the existing window, then keep only its most recent tail.
         window = self._load()
         window.extend(additions)
-        write_atomic(self.path, "\n".join(window) + "\n")
+        write_atomic(self.path, "\n".join(window[-self.capacity :]) + "\n")
 
     def _load(self) -> list[str]:
         """The current window as an ordered list (oldest first); [] when absent."""
