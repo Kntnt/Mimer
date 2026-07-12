@@ -62,24 +62,56 @@ def prefetch_embedding_model() -> None:
 
 
 def run_install(root: Path | None = None) -> InstallReport:
-    """Run the install flow: create the store, check capabilities, pre-fetch."""
+    """Run the install flow: create the store, check capabilities, pre-fetch.
+
+    Every step that can fail on a fresh machine — an interpreter that cannot
+    load SQLite extensions, a model download over a flaky network, an index
+    build — is turned into an actionable :class:`InstallReport` rather than a raw
+    traceback, so first run reads as "try again", not "broken". The store is
+    created first and every step is idempotent, so a failed install leaves a
+    resumable state: fix the cause and re-run.
+    """
 
     root = root or store_root()
     ensure_store(root)
 
-    messages: list[str] = []
+    # Fail early when the interpreter cannot load SQLite extensions — the
+    # sqlite-vec index cannot work without them.
     problem = check_sqlite_extensions()
     if problem is not None:
         return InstallReport(False, [problem])
 
-    prefetch_embedding_model()
+    # Pre-fetch the embedding model; a download failure (typically no network)
+    # becomes a report, not a traceback, mirroring the SQLite check above.
+    try:
+        prefetch_embedding_model()
+    except Exception as exc:  # noqa: BLE001 - any download failure should degrade to a report
+        return InstallReport(
+            False,
+            [
+                f"Could not fetch the embedding model '{MODEL_NAME}', which Mimer's search "
+                f"needs. This usually means no network connection. Details: {exc}. Check your "
+                "connection and re-run the install — nothing was lost, it resumes from here."
+            ],
+        )
 
-    # Create the index up front so capture, digest, git and bootstrap writes are
-    # indexed incrementally from the first session — no manual reindex needed.
-    reindex(root)
+    # Build the index up front so capture, digest, git and bootstrap writes are
+    # indexed from the first session; a build failure becomes a report too.
+    try:
+        reindex(root)
+    except Exception as exc:  # noqa: BLE001 - any index-build failure should degrade to a report
+        return InstallReport(
+            False,
+            [
+                f"Could not build the search index. Details: {exc}. Your memory store was left "
+                f"in place at {root}; re-run the install to try building the index again."
+            ],
+        )
 
-    messages.append(f"Store ready at {root}; embedding model '{MODEL_NAME}' fetched; index built.")
-    return InstallReport(True, messages)
+    return InstallReport(
+        True,
+        [f"Store ready at {root}; embedding model '{MODEL_NAME}' fetched; index built."],
+    )
 
 
 def write_uninstall_pointer(root: Path | None = None) -> Path:
