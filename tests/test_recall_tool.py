@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mimer.bundle import create_concept
 from mimer.index import reindex
 from mimer.longterm import daily_log_path
 from mimer.project import resolve
@@ -69,6 +70,92 @@ def test_widening_is_explicit_and_excluded_project_never_surfaces(store_root: Pa
     assert "alpha" in projects
     assert "charlie" in projects
     assert "bravo" not in projects
+
+
+def test_widened_recall_never_leaks_project_scoped_concept(store_root: Path) -> None:
+    """A widened recall from the home project (client-b) gates Concepts by scope
+    yet still reaches other projects' logs — the whole ADR 0013 fix for the
+    confirmed leak in issue #20.
+
+    In one pass the fix must: hide a foreign project-scoped Concept, still reach
+    that same foreign project's log on the same topic (Concept and log go through
+    different gates), let a global Concept cross, and surface the home project's
+    own scoped Concept (visible only because recall threads the home identity into
+    search — never because widening reached its origin)."""
+
+    _register(store_root, "client-a", "client-b")
+
+    # Foreign project client-a: a confidential, project-scoped Concept a widened
+    # recall from client-b must never surface.
+    create_concept(
+        title="Client A secret rule",
+        body="Client A's private API base path is internal-only and confidential.",
+        concept_type="Decision",
+        origin="client-a",
+        scope="project",
+        root=store_root,
+    )
+
+    # Foreign project client-a: a client-neutral, global Concept allowed to
+    # travel across projects.
+    create_concept(
+        title="Global technique",
+        body="Prefer dependency injection to keep seams testable across projects.",
+        concept_type="Technique",
+        origin="client-a",
+        scope="global",
+        root=store_root,
+    )
+
+    # Home project client-b: its own project-scoped Concept, visible under
+    # widening only because client-b is the home identity threaded into search.
+    create_concept(
+        title="Client B home rule",
+        body="Client B keeps its staging rollout details in the home playbook.",
+        concept_type="Decision",
+        origin="client-b",
+        scope="project",
+        root=store_root,
+    )
+
+    # Foreign project client-a: a log on the blocked Concept's topic, which
+    # widening must still reach even while the Concept beside it stays hidden.
+    _seed(store_root, "client-a", "Client A rolled out the private API base path last sprint.")
+    reindex(store_root)
+
+    foreign = recall(
+        "client A private API base path internal-only",
+        root=store_root,
+        project_id="client-b",
+        widen=True,
+    )
+    home_own = recall(
+        "client B staging rollout home playbook",
+        root=store_root,
+        project_id="client-b",
+        widen=True,
+    )
+    globaled = recall(
+        "dependency injection testable seams",
+        root=store_root,
+        project_id="client-b",
+        widen=True,
+    )
+
+    # The foreign scoped Concept never leaks, yet the foreign project's log on the
+    # same topic does surface: the Concept and log gates diverge under widening.
+    assert all("internal-only" not in citation.text for citation in foreign.citations)
+    assert any(
+        "last sprint" in citation.text and citation.project_id == "client-a"
+        for citation in foreign.citations
+    )
+
+    # The home project's own scoped Concept surfaces under widening — recall must
+    # thread its identity into search for the home gate to admit it.
+    assert any("home playbook" in citation.text for citation in home_own.citations)
+
+    # A global Concept still crosses projects.
+    assert any("dependency injection" in citation.text for citation in globaled.citations)
 
 
 def test_unanswerable_recall_states_nothing_found(store_root: Path) -> None:
