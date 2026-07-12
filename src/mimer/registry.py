@@ -17,6 +17,7 @@ from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.store import FILE_MODE, ensure_store
+from mimer.storeio import project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
 # store root.
@@ -213,16 +214,29 @@ class Registry:
         ``transcripts/`` on both sides no longer makes ``os.replace`` raise
         ``ENOTEMPTY`` mid-loop — and a file present on both sides is combined by
         artefact type rather than silently overwritten. The source directory is
-        drained and removed only after everything has moved, so a merge is never
-        left half-applied.
+        drained and removed only after everything has moved.
+
+        The whole merge runs under the target's per-project lock, and every
+        colliding file is re-read and rewritten atomically inside it (ADR 0011),
+        so a concurrent writer to the live target cannot lose an update and no
+        target artefact is ever left truncated by a crash. Cross-file
+        transactionality is not attempted: an unexpected error part-way leaves
+        the already-folded artefacts in the target, and a crash between combining
+        a source artefact and unlinking it can re-append that artefact on a
+        retry. That residual is acceptable while merge has no live caller; it must
+        be revisited before a UI exposes the action.
         """
 
         source_dir = project_dir(source_id, self._root)
         if not source_dir.exists():
             return
 
-        _merge_directory(source_dir, project_dir(target_id, self._root), target_id)
-        source_dir.rmdir()
+        # Run the whole merge under the target's lock so a concurrent writer to
+        # the live target cannot lose an update (ADR 0011); the source is a
+        # retired orphan, so only the target's lock is contended.
+        with project_lock(target_id, root=self._root):
+            _merge_directory(source_dir, project_dir(target_id, self._root), target_id)
+            source_dir.rmdir()
 
 
 def _merge_directory(source_dir: Path, target_dir: Path, target_id: str) -> None:
@@ -269,8 +283,7 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
             source_file.read_text(encoding="utf-8"),
             target_id,
         )
-        target_file.write_text(merged, encoding="utf-8")
-        target_file.chmod(FILE_MODE)
+        write_atomic(target_file, merged)
     else:
         _concatenate_file(source_file, target_file)
 
@@ -278,14 +291,15 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
 def _concatenate_file(source_file: Path, target_file: Path) -> None:
     """Append the source file's content onto the target's, preserving every line.
 
-    A newline is inserted at the seam when the target does not already end with
-    one, so the target's last record and the source's first never fuse into a
-    single line.
+    The combined content is written atomically (temp file then ``os.replace``),
+    so a crash mid-write never truncates the target's existing records — and the
+    replacement carries the store's owner-only mode. A newline is inserted at the
+    seam when the target does not already end with one, so the target's last
+    record and the source's first never fuse into a single line.
     """
 
     existing = target_file.read_text(encoding="utf-8")
     addition = source_file.read_text(encoding="utf-8")
 
     separator = "" if not existing or existing.endswith("\n") else "\n"
-    target_file.write_text(existing + separator + addition, encoding="utf-8")
-    target_file.chmod(FILE_MODE)
+    write_atomic(target_file, existing + separator + addition)

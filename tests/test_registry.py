@@ -9,6 +9,7 @@ import json
 import stat
 from pathlib import Path
 
+from mimer.distill import DISTILLED_QUEUE_FILENAME
 from mimer.gitreader import GIT_LEDGER_FILENAME
 from mimer.longterm import (
     append_entry,
@@ -230,3 +231,83 @@ def test_merge_short_term_dedups_entries_present_on_both_sides(tmp_path: Path) -
     assert notes.count("shared note") == 1
     assert "orphan only" in notes
     assert "canonical only" in notes
+
+
+def test_merge_leaves_combined_files_owner_only(tmp_path: Path) -> None:
+    """A file combined during a merge ends up 0600, even when the target copy was
+    seeded group/world-readable — the merge must not widen the store's owner-only
+    invariant (ADR 0011)."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+    reg.save()
+
+    # Seed both sides so short-term.md and the git ledger collide, then loosen the
+    # target copies to 0644 so the assertion fails unless the merge tightens them.
+    _seed_short_term("orphan", tmp_path, notes=["orphan note"])
+    _seed_short_term("canonical", tmp_path, notes=["canonical note"])
+    _seed_git_ledger("orphan", tmp_path, "shaorphan")
+    _seed_git_ledger("canonical", tmp_path, "shacanonical")
+    canonical_short_term = short_term_path("canonical", tmp_path)
+    canonical_ledger = long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME
+    canonical_short_term.chmod(0o644)
+    canonical_ledger.chmod(0o644)
+
+    reg.merge("orphan", "canonical")
+
+    assert stat.S_IMODE(canonical_short_term.stat().st_mode) == 0o600
+    assert stat.S_IMODE(canonical_ledger.stat().st_mode) == 0o600
+
+
+def test_merge_inserts_seam_newline_when_target_lacks_one(tmp_path: Path) -> None:
+    """Concatenating onto a target whose last record has no trailing newline keeps
+    the target's last line and the source's first line distinct rather than fusing
+    them into one."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+    reg.save()
+
+    # Write the target ledger without a trailing newline so the concatenation must
+    # supply the seam itself; the source ends normally.
+    orphan_ledger = long_term_dir("orphan", tmp_path) / GIT_LEDGER_FILENAME
+    orphan_ledger.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    orphan_ledger.write_text("shaorphan\n", encoding="utf-8")
+    canonical_ledger = long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME
+    canonical_ledger.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    canonical_ledger.write_text("shacanonical", encoding="utf-8")
+
+    reg.merge("orphan", "canonical")
+
+    shas = canonical_ledger.read_text().split()
+    assert shas == ["shacanonical", "shaorphan"]
+
+
+def test_merge_concatenates_colliding_distilled_queues(tmp_path: Path) -> None:
+    """A ``.distilled-queue`` present on both sides is concatenated, so no queued
+    announcement title is lost when the projects merge."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+    reg.save()
+
+    # Seed the top-level distilled queue on both sides so it collides at the
+    # project-dir root rather than under long-term/.
+    orphan_queue = project_dir("orphan", tmp_path) / DISTILLED_QUEUE_FILENAME
+    orphan_queue.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    orphan_queue.write_text("orphan title\n", encoding="utf-8")
+    canonical_queue = project_dir("canonical", tmp_path) / DISTILLED_QUEUE_FILENAME
+    canonical_queue.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    canonical_queue.write_text("canonical title\n", encoding="utf-8")
+
+    reg.merge("orphan", "canonical")
+
+    titles = canonical_queue.read_text().splitlines()
+    assert "orphan title" in titles
+    assert "canonical title" in titles
