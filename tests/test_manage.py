@@ -129,6 +129,22 @@ def test_store_health_reports_counts_sizes_and_failures(store_root: Path) -> Non
     assert any("something went wrong" in line for line in report.recent_failures)
 
 
+def test_health_cannot_surface_unredacted_secret_from_log(store_root: Path) -> None:
+    """`mimer-manage health` reads the failure log; a seeded secret-bearing failure
+    never surfaces unredacted in the recent-failures tail (issue #24).
+
+    The secret is assembled from fragments so no complete literal is committed.
+    """
+
+    ensure_store(store_root)
+    secret = "ghp_" + "0123456789abcdefghij" + "klmnopqrstuvwxyzABCD"
+    log_failure(f"digest: RuntimeError({secret!r})", root=store_root)
+
+    report = store_health(store_root)
+
+    assert all(secret not in line for line in report.recent_failures)
+
+
 def test_retracted_concept_stops_surfacing(store_root: Path) -> None:
     """A retracted Concept stops surfacing in recall and in the injected profile."""
 

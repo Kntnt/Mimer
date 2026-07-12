@@ -6,6 +6,7 @@ the next-session announcement queue (ADRs 0013, 0014, 0015, 0017).
 
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 from pathlib import Path
 
@@ -402,6 +403,30 @@ def test_digest_refreshed_working_state_is_not_promoted(
     # The digest's threads reached short-term, but none became a Concept.
     assert "refactoring the tokenizer" in read_short_term(pid, store_root)
     assert list_concepts(store_root) == []
+
+
+def test_failed_promotion_logs_identifier_not_fact_content(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed promotion logs a stable identifier for the fact, never the fact's
+    content — the log is surfaced by health and must not quote memory (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    fact = f"The wombat cutover credential is {secret} for the alpha region."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    def boom(**_kwargs: object) -> None:
+        raise RuntimeError("promotion failed")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    identifier = hashlib.sha256(fact.encode("utf-8")).hexdigest()[:12]
+    assert identifier in log
+    assert "wombat cutover" not in log
+    assert secret not in log
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
