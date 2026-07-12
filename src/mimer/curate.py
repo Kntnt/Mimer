@@ -23,6 +23,7 @@ from pathlib import Path
 from mimer.longterm import append_entry
 from mimer.paths import store_root
 from mimer.project import resolve
+from mimer.redaction import redact
 from mimer.shortterm import (
     SHORT_TERM_CAP,
     Entry,
@@ -72,7 +73,15 @@ def remember(
     transient evictions alone the write warns and keeps everything (ADR 0017).
     The whole read-modify-write plus the daily-log append happen under one lock,
     so an evicted entry is never absent from both places.
+
+    A secret the user or agent asks to remember is stripped here at the sink, so
+    the redaction guarantee holds independently of the agent's judgment.
     """
+
+    # Enforce redaction at the sink: dedup, storage and any eviction all operate
+    # on the redacted text, so a secret never lands in short-term memory nor is
+    # carried forward when a durable entry is later distilled (issue #23).
+    text = redact(text)
 
     root = root or store_root()
     today = today or date.today()
