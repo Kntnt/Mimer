@@ -76,14 +76,18 @@ _RULES: list[tuple[re.Pattern[str], _Replacement]] = [
     # separator, so an ordinary `token_count = 5` is left untouched. The AWS
     # secret access key is listed explicitly because none of its interior words
     # sit on a word boundary, so `secret`/`access_key` alone never match it.
+    # The value alternates on quoting: a quoted value runs to its matching
+    # closing quote (so a whitespace-bearing passphrase is redacted whole, not
+    # just its first word), an unquoted value is the leading non-space run.
     (
         re.compile(
-            r"(?i)\b((?:[A-Za-z0-9]+[_.\-])*"
+            r"(?i)\b(?P<key>(?:[A-Za-z0-9]+[_.\-])*"
             r"(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth"
             r"|aws[_-]?secret[_-]?access[_-]?key))"
-            r"(\s*[:=]\s*)(['\"]?)([^\s'\"]+)(\3)"
+            r"(?P<sep>\s*[:=]\s*)"
+            r"(?:(?P<quote>['\"])[^'\"]*(?P=quote)|[^\s'\"]+)"
         ),
-        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{REDACTED}{m.group(5)}",
+        lambda m: f"{m['key']}{m['sep']}{m['quote'] or ''}{REDACTED}{m['quote'] or ''}",
     ),
     # A bare AWS secret access key: a standalone 40-char base64 value. Redacted
     # when it either carries a base64-only character (`+` or `/`) or mixes an

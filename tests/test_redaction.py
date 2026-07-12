@@ -57,6 +57,21 @@ def test_key_value_secret_value_is_removed() -> None:
     assert value not in redacted
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["my secret pass phrase", "correct horse battery staple", "a b c d e"],
+)
+def test_quoted_multiword_secret_value_is_removed(value: str) -> None:
+    """A quoted assigned secret whose value contains whitespace loses the whole
+    value, not just the first word before the space."""
+
+    for line in (f'password = "{value}"', f"password = '{value}'", f'PASSWORD="{value}"'):
+        redacted = redact(line)
+
+        assert value not in redacted
+        assert "REDACTED" in redacted
+
+
 def test_private_key_block_is_removed() -> None:
     """A PEM private-key block is redacted whole."""
 
