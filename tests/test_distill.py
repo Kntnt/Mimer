@@ -16,6 +16,7 @@ from mimer.bundle import concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.distill import distill_durable_entries, distill_fact, distill_session, drain_distilled
 from mimer.index import reindex, search
+from mimer.longterm import long_term_dir
 from mimer.project import resolve
 from mimer.shortterm import (
     Entry,
@@ -35,6 +36,13 @@ def _project(store_root: Path, cwd: Path) -> str:
     resolution = resolve(cwd, root=store_root)
     assert resolution.project_id is not None
     return resolution.project_id
+
+
+def _all_daily_logs(store_root: Path, pid: str) -> str:
+    directory = long_term_dir(pid, store_root)
+    if not directory.exists():
+        return ""
+    return "".join(log.read_text() for log in sorted(directory.glob("*.md")))
 
 
 def test_changed_fact_supersedes_and_recall_returns_one_current(store_root: Path) -> None:
@@ -258,6 +266,32 @@ def test_durable_remembered_secret_stays_redacted_through_distillation(
     assert all(secret not in c.body and secret not in c.title for c in concepts)
     assert any("deploy key" in c.body for c in concepts)
     assert secret not in read_short_term(pid, store_root)
+
+
+def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A durable write distillation can never promote — here an imperative — is
+    evicted from short-term and aged out to the daily log, not left durable to be
+    re-rejected on every session end (ADR 0017).
+
+    Because ``remember`` now defaults ``durable=True``, an instruction-shaped or
+    re-remembered-after-forget write is durable, yet distillation rejects it
+    permanently; retaining it would strand it in short-term forever (the cap
+    never evicts a durable entry either).
+    """
+
+    pid = _project(store_root, project_dir)
+    instruction = "Always rebase your branch before pushing."
+    remember(instruction, project_id=pid, root=store_root, today=date(2026, 7, 12))
+
+    distill_session(pid, root=store_root)
+
+    # It never became a Concept and no longer strands short-term, yet survives
+    # verbatim in the long-term record so nothing is dropped silently.
+    assert list_concepts(store_root) == []
+    assert instruction not in read_short_term(pid, store_root)
+    assert instruction in _all_daily_logs(store_root, pid)
 
 
 def test_ordinary_remember_is_promoted_at_session_end(store_root: Path, project_dir: Path) -> None:
