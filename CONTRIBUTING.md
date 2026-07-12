@@ -24,6 +24,15 @@ Be respectful and constructive in issues, pull requests, and discussions. Assume
 2. **One concern per PR.** Smaller PRs land faster.
 3. **Follow the project's coding standard.** It is materialised under [`agents.d/coding-standard/`](agents.d/coding-standard/) — read `general.md` plus the module(s) for the language or framework you touch before changing code.
 
+## Running the tests
+
+The default suite is fast and needs no external services — run it with `uv run pytest`. It is what CI gates on, and it passes without a live `claude` binary.
+
+Two suites are opt-in because they reach real vendor boundaries, and are deselected unless you ask for them:
+
+- **Integration** (`-m integration`, gated on `MIMER_INTEGRATION=1` and a reachable `claude`): drives the real `claude -p --model haiku` call end to end, so a changed CLI flag or wrapped output surfaces as a failure rather than a silent "deferred" degradation. Run with `MIMER_INTEGRATION=1 uv run pytest -m integration`.
+- **Packaging** (`-m packaging`, gated on `MIMER_PACKAGING=1`): builds the wheel, installs it into a throwaway virtualenv, and runs the packaged `mimer-*` console scripts and a hook. Run with `MIMER_PACKAGING=1 uv run pytest -m packaging`. CI runs this as its own job.
+
 ## Questions
 
 Open an issue or start a discussion. Conversation happens in the open.

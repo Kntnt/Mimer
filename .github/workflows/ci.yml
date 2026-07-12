@@ -35,3 +35,25 @@ jobs:
 
       - name: Tests (pytest)
         run: uv run pytest -q
+
+  # Build the wheel, install it into a fresh environment, and run the packaged
+  # `mimer-*` console scripts and a hook — the seam the in-process Stage 8 gate
+  # cannot reach. Needs no `claude` binary. Kept separate so its build/install
+  # cost never gates the fast unit run.
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Packaging smoke test
+        run: uv run pytest tests/test_packaging.py -q
+        env:
+          MIMER_PACKAGING: "1"
