@@ -144,6 +144,31 @@ def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
     assert any("analytics pipeline" in entry.text for entry in notes)
 
 
+def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A forget phrase past the specificity guard must not over-remove an unrelated entry (issue #18).
+
+    ``test_forget_short_phrase_keeps_an_unrelated_longer_entry`` uses a two-word
+    phrase the guard rejects before the containment path runs. This phrase carries
+    three content words — ``deploy``, ``window``, ``friday`` — all present in the
+    unrelated entry but scattered across separate clauses, so it locks the forget
+    site against over-removal on the path the guard alone does not cover.
+    """
+
+    pid = _project(store_root, project_dir)
+    unrelated = (
+        "The office moved the deploy schedule so the testing window is wider, "
+        "and the celebration happens on friday."
+    )
+    remember(unrelated, project_id=pid, root=store_root, today=TODAY)
+
+    forget("deploy window friday", project_id=pid, root=store_root, today=TODAY)
+
+    notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
+    assert any("celebration happens on friday" in entry.text for entry in notes)
+
+
 def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:
     """A secret passed to remember is stripped before it lands in short-term memory
     (ADR-level guarantee: redaction is enforced at the sink, not by agent judgment)."""

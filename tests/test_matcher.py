@@ -96,3 +96,63 @@ def test_two_different_non_ascii_facts_are_not_the_same_fact() -> None:
         "Lösenordet är hemligt och roteras varje månad.",
         "Fakturan för molnräkningen förfaller nästa tisdag.",
     )
+
+
+def test_generic_phrase_does_not_match_a_contradictory_longer_text() -> None:
+    """A short generic forget must not suppress a longer, contradicting memory (issue #18).
+
+    ``we use redis`` shares only the function words ``we``/``use`` with a memory that
+    in fact says the opposite (Postgres). Counting those glue words as content
+    over-suppressed a directly contradictory fact — the harm ADR 0012 exists to
+    prevent.
+    """
+
+    assert not is_same_fact(
+        "we use redis",
+        "We should use Postgres for the main store, and we will use it heavily.",
+    )
+
+
+def test_stopword_heavy_phrase_does_not_match_a_longer_text_containing_it() -> None:
+    """A phrase that is almost all function words is too generic to be a fact (issue #18).
+
+    ``we use it`` occurs verbatim inside the longer text, but it carries a single
+    content word — far too generic to identify a fact, so it must not suppress the
+    unrelated memory that happens to contain it.
+    """
+
+    assert not is_same_fact(
+        "we use it",
+        "When we run the migration we use it only after the backup is verified.",
+    )
+
+
+def test_short_content_words_scattered_in_a_longer_text_are_not_the_same_fact() -> None:
+    """Three content words scattered across an unrelated text are not the same fact (issue #18).
+
+    Every content word of ``deploy window friday`` appears in the longer text, but
+    dispersed across unrelated clauses rather than as the forgotten fact. Whole-set
+    containment over-suppressed here; only a genuine restatement (a contiguous run
+    or near-total overlap) should match.
+    """
+
+    assert not is_same_fact(
+        "deploy window friday",
+        "The office moved the deploy schedule so the testing window is wider, "
+        "and the celebration happens on friday.",
+    )
+
+
+def test_forgotten_fact_embedded_verbatim_in_a_larger_chunk_is_the_same_fact() -> None:
+    """A forgotten fact quoted verbatim inside a much larger chunk is the same fact (issue #18).
+
+    Recall chunks bundle a whole turn or an aged-out block, so a forgotten fact
+    routinely sits inside a chunk many times its size. The matcher must still
+    recognise it, or the fact resurfaces in that chunk and the forget is defeated.
+    """
+
+    assert is_same_fact(
+        "the staging password is hunter2",
+        "Assistant: tokens live in redis and the staging password is hunter2 until "
+        "rotation. User: how do we handle secrets?",
+    )

@@ -108,6 +108,35 @@ def test_short_tombstone_does_not_suppress_an_unrelated_longer_memory(store_root
     assert any("analytics pipeline" in r.text for r in results)
 
 
+def test_tombstone_whose_words_scatter_in_a_longer_memory_does_not_suppress_it(
+    store_root: Path,
+) -> None:
+    """A tombstone long enough to pass the specificity guard must still not suppress a
+    longer memory that merely scatters its words (issue #18).
+
+    The earlier over-suppression test uses a two-word phrase, so the guard rejects it
+    before the containment path runs. This tombstone carries three content words —
+    ``deploy``, ``window``, ``friday`` — all present in the unrelated memory but
+    dispersed across separate clauses, exercising the path the guard alone does not
+    cover.
+    """
+
+    unrelated = (
+        "The office moved the deploy schedule so the testing window is wider, "
+        "and the celebration happens on friday."
+    )
+    _seed(store_root, "2026-06-07", [("Ops", unrelated)])
+    reindex(store_root)
+    assert search("when is the office celebration and deploy schedule?", root=store_root, project_id=PID)
+
+    write_tombstone("deploy window friday", project_id=PID, root=store_root)
+
+    results = search(
+        "when is the office celebration and deploy schedule?", root=store_root, project_id=PID
+    )
+    assert any("celebration happens on friday" in r.text for r in results)
+
+
 def test_tombstoned_fact_in_a_multi_fact_capture_chunk_is_suppressed(store_root: Path) -> None:
     """A forgotten fact bundled with others in one chunk is still suppressed (issue #18).
 
