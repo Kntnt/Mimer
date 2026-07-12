@@ -35,7 +35,35 @@ def _connection_string() -> str:
     return "postgres://admin:" + "s3cr3tPassw0rd" + "@db.example.com:5432/prod"
 
 
-SECRETS = [_aws_key(), _github_token(), _openai_key(), _slack_token(), _connection_string()]
+def _stripe_key() -> str:
+    return "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+
+
+def _google_key() -> str:
+    return "AIza" + "SyDummyGoogleApiKey" + "0123456789abcdef"
+
+
+def _jwt() -> str:
+    return (
+        "eyJ"
+        + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        + "."
+        + "eyJzdWIiOiIxMjM0In0"
+        + "."
+        + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+
+
+SECRETS = [
+    _aws_key(),
+    _github_token(),
+    _openai_key(),
+    _slack_token(),
+    _connection_string(),
+    _stripe_key(),
+    _google_key(),
+    _jwt(),
+]
 
 
 @pytest.mark.parametrize("secret", SECRETS)

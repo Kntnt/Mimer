@@ -10,9 +10,10 @@ committed to the repository (GitHub push protection scans file contents);
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from mimer.failure_log import log_failure
+from mimer.failure_log import fresh_failures, log_failure
 from mimer.paths import LOG_FILENAME
 from mimer.store import ensure_store
 
@@ -32,3 +33,22 @@ def test_log_failure_redacts_secret_before_writing(store_root: Path) -> None:
     contents = (store_root / LOG_FILENAME).read_text(encoding="utf-8")
     assert secret not in contents
     assert "REDACTED" in contents
+
+
+def test_fresh_failures_redacts_legacy_unredacted_line(store_root: Path) -> None:
+    """A secret-bearing line written before write-time redaction existed is still
+    not surfaced verbatim: fresh_failures redacts on read (issue #24)."""
+
+    ensure_store(store_root)
+    secret = _aws_key()
+
+    # Simulate a legacy line written directly, bypassing log_failure's redaction.
+    timestamp = datetime.now(UTC).isoformat()
+    (store_root / LOG_FILENAME).write_text(
+        f"{timestamp}\tdistill: promotion failed for {secret}\n", encoding="utf-8"
+    )
+
+    surfaced = fresh_failures(store_root)
+
+    assert surfaced
+    assert all(secret not in message for message in surfaced)

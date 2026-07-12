@@ -5,6 +5,7 @@ retraction (ADRs 0012, 0013).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from mimer.bundle import Source, create_concept, retract_concept
 from mimer.failure_log import log_failure
 from mimer.index import reindex, search
 from mimer.manage import main, profile, recent_concepts, store_health
+from mimer.paths import LOG_FILENAME
 from mimer.store import ensure_store
 
 
@@ -142,6 +144,25 @@ def test_health_cannot_surface_unredacted_secret_from_log(store_root: Path) -> N
 
     report = store_health(store_root)
 
+    assert all(secret not in line for line in report.recent_failures)
+
+
+def test_health_redacts_legacy_unredacted_log_line(store_root: Path) -> None:
+    """A secret-bearing line already in the log before write-time redaction existed
+    is not surfaced by health: the recent-failures tail is redacted on read (#24)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+    # A legacy line written directly, bypassing log_failure's write-time redaction.
+    timestamp = datetime.now(UTC).isoformat()
+    (store_root / LOG_FILENAME).write_text(
+        f"{timestamp}\tdistill: promotion failed for {secret}\n", encoding="utf-8"
+    )
+
+    report = store_health(store_root)
+
+    assert report.recent_failures
     assert all(secret not in line for line in report.recent_failures)
 
 

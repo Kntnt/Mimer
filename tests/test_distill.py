@@ -429,6 +429,31 @@ def test_failed_promotion_logs_identifier_not_fact_content(
     assert secret not in log
 
 
+def test_failed_promotion_redacts_secret_in_exception_repr(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a promotion raises an error whose repr quotes the content being
+    processed, the failure log still must not surface a secret from it: the hashed
+    identifier keeps the body out, and log_failure redacts the exception repr that
+    would otherwise reintroduce it (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+    fact = f"The billing credential is {secret}."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    # An error whose repr embeds pre-redaction content — exactly the reintroduction
+    # path the hashed identifier alone cannot close.
+    def boom(**_kwargs: object) -> None:
+        raise ValueError(f"could not serialise {fact!r}")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    assert secret not in log
+
+
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
     """A newly distilled Concept is queued for the next session's announcement."""
 
