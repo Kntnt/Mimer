@@ -108,6 +108,54 @@ def test_short_tombstone_does_not_suppress_an_unrelated_longer_memory(store_root
     assert any("analytics pipeline" in r.text for r in results)
 
 
+def test_tombstoned_fact_in_a_multi_fact_capture_chunk_is_suppressed(store_root: Path) -> None:
+    """A forgotten fact bundled with others in one chunk is still suppressed (issue #18).
+
+    A captured turn packs a whole User+Assistant exchange under one heading, so a
+    chunk is routinely far larger than any single fact it contains. Recall must
+    still suppress a chunk that carries a forgotten fact, or the fact resurfaces
+    verbatim in that chunk and the forget is defeated (ADR 0012).
+    """
+
+    secret = "the staging password is hunter2"
+    body = (
+        f"- Assistant: session tokens live in Redis, the cache warms on boot, and {secret} "
+        "until the next rotation.\n"
+        "- User: how do we handle secrets in staging?"
+    )
+    _seed(store_root, "2026-06-05", [("Turn digest", body)])
+    reindex(store_root)
+    assert search("what is the staging password?", root=store_root, project_id=PID)
+
+    write_tombstone(secret, project_id=PID, root=store_root)
+
+    results = search("what is the staging password?", root=store_root, project_id=PID)
+    assert all("hunter2" not in r.text for r in results)
+
+
+def test_tombstoned_fact_in_an_aged_out_block_is_suppressed(store_root: Path) -> None:
+    """A forgotten fact inside an aged-out block is suppressed (issue #18).
+
+    Aged-out blocks group many facts under one heading, so the chunk dwarfs the
+    single forgotten fact — the same multi-fact regression as a captured turn.
+    """
+
+    secret = "the api key is sk-live-42"
+    body = (
+        "- [2026-06-05] the deploy window is friday afternoon\n"
+        f"- [2026-06-05] {secret}\n"
+        "- [2026-06-05] the oncall rotation is weekly"
+    )
+    _seed(store_root, "2026-06-06", [("Aged out of short-term (2026-06-06)", body)])
+    reindex(store_root)
+    assert search("what is the api key?", root=store_root, project_id=PID)
+
+    write_tombstone(secret, project_id=PID, root=store_root)
+
+    results = search("what is the api key?", root=store_root, project_id=PID)
+    assert all("sk-live-42" not in r.text for r in results)
+
+
 def test_unanswerable_query_returns_empty(store_root: Path) -> None:
     """A query unrelated to anything stored returns an explicit empty result."""
 

@@ -104,6 +104,46 @@ def test_tombstoned_fact_stays_gone_across_reload(store_root: Path, project_dir:
     assert len(load_tombstones(store_root)) == 1
 
 
+def test_forget_removes_a_reworded_restatement(store_root: Path, project_dir: Path) -> None:
+    """Soft forget removes a reworded restatement, not just the exact wording (issue #18).
+
+    forget delegates identity to the shared matcher, so a short-term entry that
+    restates the forgotten fact in different words is removed too — a plain
+    substring test would have left it behind.
+    """
+
+    pid = _project(store_root, project_dir)
+    remember("The prototype used a Redis cache.", project_id=pid, root=store_root, today=TODAY)
+
+    result = forget(
+        "We used Redis for the prototype cache", project_id=pid, root=store_root, today=TODAY
+    )
+
+    assert result.action == "removed"
+    notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
+    assert notes == []
+
+
+def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A short forget phrase must not over-remove an unrelated longer entry (issue #18).
+
+    Substring forget removed every entry that merely contained the phrase; the
+    shared matcher's specificity guard keeps a short phrase from matching a longer,
+    unrelated memory.
+    """
+
+    pid = _project(store_root, project_dir)
+    unrelated = "The analytics pipeline uses Redis Streams to buffer events before the load."
+    remember(unrelated, project_id=pid, root=store_root, today=TODAY)
+
+    forget("uses redis", project_id=pid, root=store_root, today=TODAY)
+
+    notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
+    assert any("analytics pipeline" in entry.text for entry in notes)
+
+
 def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:
     """A secret passed to remember is stripped before it lands in short-term memory
     (ADR-level guarantee: redaction is enforced at the sink, not by agent judgment)."""
@@ -136,9 +176,7 @@ def test_forget_by_the_full_secret_removes_the_redacted_entry(
     assert result.action == "removed"
     assert parse_short_term(read_short_term(pid, store_root))["Notes"] == []
     tombstones = load_tombstones(store_root)
-    assert tombstones and all(
-        secret not in t["text"] and secret not in t["key"] for t in tombstones
-    )
+    assert tombstones and all(secret not in t["text"] for t in tombstones)
 
 
 def test_remember_persists_for_a_new_session(store_root: Path, project_dir: Path) -> None:

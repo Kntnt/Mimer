@@ -72,3 +72,27 @@ def test_two_short_facts_sharing_one_word_are_not_the_same_fact() -> None:
     """Two short facts that share a single word are distinct, not the same fact."""
 
     assert not is_same_fact("uses redis", "uses postgres")
+
+
+def test_non_ascii_reworded_fact_is_recognised_as_the_same_fact() -> None:
+    """A reworded non-ASCII (Swedish) fact is still the same fact (issue #18).
+
+    The tokenizer keeps non-ASCII letters, so a non-English fact is matched on its
+    real content words rather than on the ASCII fragments a ``[a-z0-9]+`` scan would
+    leave behind.
+    """
+
+    assert is_same_fact(
+        "Prototypen använde en Redis-cache.",
+        "Vi använde Redis för prototypens cache",
+    )
+
+
+def test_two_different_non_ascii_facts_are_not_the_same_fact() -> None:
+    """Two unrelated non-ASCII facts are distinct, so tokenisation is not collapsing
+    different words to the same ASCII fragment."""
+
+    assert not is_same_fact(
+        "Lösenordet är hemligt och roteras varje månad.",
+        "Fakturan för molnräkningen förfaller nästa tisdag.",
+    )
