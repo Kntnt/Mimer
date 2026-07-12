@@ -5,7 +5,9 @@ description: >-
   "note that" something worth keeping, or to "forget about" something. Reads the
   whole of short-term memory first, then adds, replaces or removes an entry with
   a one-line echo. "forget" is the soft tier: it removes and tombstones, leaving
-  the raw record intact.
+  the raw record intact. Also the control surface: "pause capture" for a
+  sensitive session, and the per-project settings (capture, distill-to-global,
+  widening).
 ---
 
 # Memory — curated writes
@@ -151,3 +153,50 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage recent
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage health
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage retract <slug>
 ```
+
+## Staying in control — pause and per-project settings
+
+The user stays in control of what is recorded. Two controls sit here, both
+driven through `mimer-manage`; relay its one-line echo verbatim.
+
+### Pausing capture for a sensitive session
+
+When the user says **"pause capture"** (or "don't record this", "stop recording
+for now") before a sensitive session, pause it: nothing is captured or digested
+until they resume or the session ends.
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage pause
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage resume
+```
+
+The pause covers the whole throwaway case: automatic capture, the session
+digest, git folding and distillation all stand down while it is in effect. It
+lifts on its own when the session ends, so a forgotten pause never silently
+suppresses the next session. An explicit **"resume capture"** lifts it sooner.
+A deliberate "remember this" still writes while paused — pause governs automatic
+recording, not the user's own curated writes.
+
+### Per-project settings (ADR 0013)
+
+Each project carries three switches. Show them, or change one, when the user
+asks — "what are the memory settings here?", "stop recording this project",
+"keep this project's knowledge from leaving it", "don't include this project in
+cross-project search".
+
+- **capture** — automatic capture on or off for this project.
+- **distill-to-global** — whether this project's knowledge may be promoted with
+  global scope, or stays project-scoped.
+- **widening** — whether this project takes part in widened (cross-project)
+  recall.
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage settings
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage settings capture off
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage settings distill-to-global off
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage settings widening off
+```
+
+Each setting takes `on` or `off`. Settings are project-scoped and live in the
+registry; run the command from the project's working directory so it resolves
+the right project.

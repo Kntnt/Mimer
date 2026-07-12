@@ -1,14 +1,13 @@
 """Bootstrap of the on-disk store: an owner-only directory holding, at this
-stage, the configuration file and the failure log. Idempotent by design so any
-hook may call it on every invocation.
+stage, the failure log. Idempotent by design so any hook may call it on every
+invocation.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from mimer.paths import CONFIG_FILENAME, LOG_FILENAME, store_root
+from mimer.paths import LOG_FILENAME, store_root
 
 # Owner-only permission bits. The store concentrates every project's material in
 # one place and must stay unreadable to other users (the vision's trust boundary,
@@ -16,25 +15,14 @@ from mimer.paths import CONFIG_FILENAME, LOG_FILENAME, store_root
 DIR_MODE = 0o700
 FILE_MODE = 0o600
 
-# The configuration file seeded on first run: hand-editable and extended by later
-# stages. Deliberately minimal — its full surface is an open decision in the
-# vision.
-DEFAULT_CONFIG = """\
-# Mimer configuration. Created on first run; safe to edit by hand.
-
-[core]
-# Schema version of this configuration file.
-version = 1
-"""
-
 
 def ensure_store(root: Path | None = None) -> Path:
-    """Create the store root, configuration file and failure log if absent.
+    """Create the store root and failure log if absent.
 
     The directory mode is pinned to 0700 and the files to 0600 on every call, so
     a store created under a permissive umask is corrected in place. Existing
-    files are never overwritten, so a hand-edited config and prior failure-log
-    lines survive.
+    files are never overwritten, so prior failure-log lines survive. Per-project
+    settings live in the registry, not a config file, so none is seeded (#35).
 
     Args:
         root: Store root to create; defaults to :func:`mimer.paths.store_root`.
@@ -49,16 +37,6 @@ def ensure_store(root: Path | None = None) -> Path:
     # pre-existed under a looser umask.
     root.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
     root.chmod(DIR_MODE)
-
-    # Seed the configuration file once, owner-only from creation so it is never
-    # momentarily world-readable under a permissive umask; re-pin every call so a
-    # config an older, pre-invariant store left at 0644 is corrected in place.
-    config = root / CONFIG_FILENAME
-    if not config.exists():
-        fd = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(DEFAULT_CONFIG)
-    config.chmod(FILE_MODE)
 
     # Seed an empty failure log once, owner-only from creation; re-pin every call
     # to correct a log an older store left world-readable.

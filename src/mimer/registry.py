@@ -136,6 +136,38 @@ class Registry:
 
         self._records[project_id].settings["exclude_from_widening"] = not participate
 
+    def capture_enabled(self, project_id: str) -> bool:
+        """Whether automatic capture is enabled for a project (ADR 0013).
+
+        Capture is on by default; only an explicit per-project setting turns it
+        off. An unregistered project captures.
+        """
+
+        record = self._records.get(project_id)
+        return not (record is not None and record.settings.get("capture") is False)
+
+    def set_capture(self, project_id: str, *, enabled: bool) -> None:
+        """Turn automatic capture on or off for a project."""
+
+        self._records[project_id].settings["capture"] = enabled
+
+    def distill_to_global_enabled(self, project_id: str) -> bool:
+        """Whether a project's knowledge may be distilled with global scope
+        (ADR 0013).
+
+        Enabled by default; only an explicit per-project setting keeps a
+        project's distillations project-scoped. An unregistered project is
+        enabled.
+        """
+
+        record = self._records.get(project_id)
+        return not (record is not None and record.settings.get("distill_to_global") is False)
+
+    def set_distill_to_global(self, project_id: str, *, enabled: bool) -> None:
+        """Set whether a project's knowledge may travel globally via distillation."""
+
+        self._records[project_id].settings["distill_to_global"] = enabled
+
     def import_state(self, project_id: str) -> dict[str, object]:
         """Return a project's bootstrap import state (empty if none)."""
 

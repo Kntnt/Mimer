@@ -21,8 +21,10 @@ from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.longterm import append_entry, is_digested, record_digested, transcripts_dir
 from mimer.paths import safe_identifier, store_root
+from mimer.pause import is_paused
 from mimer.project import resolve
 from mimer.redaction import redact
+from mimer.registry import Registry
 from mimer.shortterm import (
     AUTO_REFRESHED_SECTIONS,
     Entry,
@@ -58,6 +60,10 @@ def digest_session(
     call_haiku = haiku or llm.run_haiku
 
     try:
+        # A paused session is not digested; the model is never called (#35).
+        if is_paused(root):
+            return DigestResult("paused")
+
         cwd = Path(payload.get("cwd") or ".")
         transcript_path = payload.get("transcript_path")
         session_id = str(payload.get("session_id") or "")
@@ -72,6 +78,11 @@ def digest_session(
         project_id = resolution.project_id
         if project_id is None:
             return DigestResult("skipped-identity")
+
+        # A project with capture turned off is not digested either (ADR 0013).
+        if not Registry.load(root).capture_enabled(project_id):
+            return DigestResult("capture-disabled")
+
         if not transcript_path:
             return DigestResult("nothing")
         if is_digested(project_id, session_id, root):

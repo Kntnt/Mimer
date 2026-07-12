@@ -260,13 +260,13 @@ def test_write_atomic_cleans_up_its_temp_when_the_replace_fails(
 def test_ensure_store_seeds_files_owner_only_from_creation(
     store_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The config and failure log are owner-only from creation, not chmod-ed after.
+    """The failure log is owner-only from creation, not chmod-ed after.
 
-    Pinning the final mode hides a brief exposure: ``write_text``/``touch`` create
-    at the umask default (``0644`` here) and only the following ``chmod`` narrows
-    it, leaving a window where the seeded file is world-readable. This records the
-    mode each seeded file has at the instant ``chmod`` is called and requires it to
-    be owner-only already, so creation — not the chmod — established it (issue #26).
+    Pinning the final mode hides a brief exposure: a bare ``touch`` creates at the
+    umask default (``0644`` here) and only the following ``chmod`` narrows it,
+    leaving a window where the seeded file is world-readable. This records the mode
+    each seeded file has at the instant ``chmod`` is called and requires it to be
+    owner-only already, so creation — not the chmod — established it (issue #26).
     """
 
     observed: dict[str, int] = {}

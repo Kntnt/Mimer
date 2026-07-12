@@ -146,7 +146,7 @@ def test_run_install_resumes_after_a_pre_index_failure(
     monkeypatch.setattr("mimer.install.embed", offline)
     first = run_install(store_root)
     assert not first.ok
-    assert (store_root / "config.toml").exists()
+    assert (store_root / "mimer.log").exists()
 
     # Fix the cause (network restored) and re-run the same store: the install
     # now completes and ends with a built index.

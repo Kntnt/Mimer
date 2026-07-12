@@ -24,8 +24,10 @@ from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.longterm import append_entry, is_captured, record_captured
 from mimer.paths import store_root
+from mimer.pause import is_paused
 from mimer.project import resolve
 from mimer.redaction import redact
+from mimer.registry import Registry
 from mimer.storeio import project_lock
 from mimer.transcript import Exchange, last_exchange
 
@@ -52,6 +54,10 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
     root = root or store_root()
 
     try:
+        # A paused session records nothing, whichever project it is in (#35).
+        if is_paused(root):
+            return CaptureResult("paused")
+
         cwd = Path(payload.get("cwd") or ".")
         transcript_path = payload.get("transcript_path")
 
@@ -59,6 +65,11 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
         resolution = resolve(cwd, root=root)
         if resolution.project_id is None:
             return CaptureResult("skipped-identity")
+
+        # A project with capture turned off records nothing (ADR 0013).
+        if not Registry.load(root).capture_enabled(resolution.project_id):
+            return CaptureResult("capture-disabled")
+
         if not transcript_path:
             return CaptureResult("nothing-to-capture")
 

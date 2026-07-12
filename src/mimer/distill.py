@@ -24,7 +24,7 @@ from mimer.failure_log import log_failure
 from mimer.longterm import append_entry
 from mimer.paths import store_root
 from mimer.redaction import redact
-from mimer.registry import project_dir
+from mimer.registry import Registry, project_dir
 from mimer.shortterm import Entry, parse_short_term, render_short_term, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
 from mimer.tombstones import is_tombstoned
@@ -136,6 +136,11 @@ def distill_fact(
     """
 
     root = root or store_root()
+
+    # Honour the project's distill-to-global switch: a project that keeps its
+    # knowledge in-house never promotes a fact with global scope (ADR 0013).
+    if scope == "global" and not Registry.load(root).distill_to_global_enabled(project_id):
+        scope = "project"
 
     # Redact up front so every check and the stored Concept share one secret-free
     # form: the dedup and tombstone lookups compare like with like, and the title

@@ -13,7 +13,6 @@ from pathlib import Path
 STORE_ROOT_ENV = "MIMER_HOME"
 
 # Fixed filenames inside the store root.
-CONFIG_FILENAME = "config.toml"
 LOG_FILENAME = "mimer.log"
 
 # A bare, path-safe identifier: lowercase alphanumerics in hyphen-separated

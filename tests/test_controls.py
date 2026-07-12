@@ -164,7 +164,8 @@ def test_capture_setting_round_trips_through_the_command(
 
     off = manage.set_project_setting("capture", False, cwd=project_dir, root=store_root)
     assert off is not None and off.capture is False
-    assert manage.project_settings(cwd=project_dir, root=store_root).capture is False
+    shown = manage.project_settings(cwd=project_dir, root=store_root)
+    assert shown is not None and shown.capture is False
     disabled = capture_from_payload(_seeded_stop(project_dir, "hidden"), root=store_root)
     assert disabled.status == "capture-disabled"
 
@@ -236,9 +237,7 @@ def test_distill_to_global_on_keeps_global_scope(store_root: Path, project_dir: 
 # --- Management-surface CLI --------------------------------------------------
 
 
-def test_manage_pause_and_resume_cli(
-    store_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_manage_pause_and_resume_cli(store_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``mimer-manage pause`` and ``resume`` toggle the session-level pause."""
 
     monkeypatch.setenv("MIMER_HOME", str(store_root))
