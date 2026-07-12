@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.0] – 2026-07-12
+
 ### Added
 
 - Technical vision and architecture (`docs/vision.md`), including a staged, independently verifiable build plan.
@@ -48,12 +50,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Bootstrap's finishing distillation no longer fails silently, a defect found in end-to-end verification: the distiller prompt is now a strict output contract (so the real Haiku call returns a bullet list rather than conversational prose even under an ambient session context), the parser tolerates surrounding prose, and a finishing pass that yields no concepts over a non-empty record is logged and retried on a later run over the already-imported record rather than being stranded by the completed transcript import. The Concept-headline manifest no longer duplicates a title as its own detail.
 - `mimer-install` now builds the search index up front, so captured, digested, git-folded and imported content is searchable from the first session without a manual `mimer-reindex` (also found in end-to-end verification).
 - The plugin manifest no longer declares `"hooks": "./hooks/hooks.json"`: Claude Code loads the standard hooks file automatically, so the explicit reference registered it twice and made installation and `/reload-plugins` fail with a duplicate-hooks error (found in live installation testing).
-
-## [0.1.0] – 2026-07-11
-
-### Added
-
-- Initial release.
 
 [Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.1.0

@@ -4,7 +4,7 @@ Mimer stores permanent memory in the [Open Knowledge Format](https://github.com/
 
 ## Pinned version and provenance
 
-Mimer targets **OKF v0.1**, at the time of writing a *draft* published in the `GoogleCloudPlatform/knowledge-catalog` repository (Apache 2.0, explicitly "not an official Google product"). Bundles written by Mimer declare `okf_version: 0.1`. When Stage 5a is built, a verbatim copy of the pinned SPEC.md is vendored into `docs/okf/` so the exact text Mimer was written against survives upstream changes.
+Mimer targets **OKF v0.1**, at the time of writing a *draft* published in the `GoogleCloudPlatform/knowledge-catalog` repository (Apache 2.0, explicitly "not an official Google product"). Bundles written by Mimer declare `okf_version: 0.1`. A verbatim copy of the pinned SPEC.md is vendored under `docs/okf/` so the exact text Mimer was written against survives upstream changes.
 
 ## OKF constructs Mimer relies on
 
