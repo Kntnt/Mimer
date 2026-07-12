@@ -5,6 +5,7 @@ hook may call it on every invocation.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from mimer.paths import CONFIG_FILENAME, LOG_FILENAME, store_root
@@ -49,16 +50,21 @@ def ensure_store(root: Path | None = None) -> Path:
     root.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
     root.chmod(DIR_MODE)
 
-    # Seed the configuration file once, then pin its mode.
+    # Seed the configuration file once, owner-only from creation so it is never
+    # momentarily world-readable under a permissive umask; re-pin every call so a
+    # config an older, pre-invariant store left at 0644 is corrected in place.
     config = root / CONFIG_FILENAME
     if not config.exists():
-        config.write_text(DEFAULT_CONFIG, encoding="utf-8")
+        fd = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(DEFAULT_CONFIG)
     config.chmod(FILE_MODE)
 
-    # Seed an empty failure log once, then pin its mode.
+    # Seed an empty failure log once, owner-only from creation; re-pin every call
+    # to correct a log an older store left world-readable.
     log = root / LOG_FILENAME
     if not log.exists():
-        log.touch()
+        log.touch(mode=FILE_MODE)
     log.chmod(FILE_MODE)
 
     return root
@@ -88,7 +94,13 @@ def heal_permissions(root: Path | None = None) -> None:
     # so the invariant holds on its own rather than only via the root's mode.
     root.chmod(DIR_MODE)
     for path in root.rglob("*"):
-        path.chmod(DIR_MODE if path.is_dir() else FILE_MODE)
+        # Skip a path a concurrent writer removed between rglob yielding it and
+        # this chmod — a detached capture consuming a spool file, or a write_atomic
+        # temp being os.replace'd — so a live store never fails the install sweep.
+        try:
+            path.chmod(DIR_MODE if path.is_dir() else FILE_MODE)
+        except FileNotFoundError:
+            continue
 
 
 def ensure_dir(directory: Path) -> None:

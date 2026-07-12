@@ -131,10 +131,17 @@ def write_atomic(path: Path, content: str) -> None:
     # replace the target atomically; the unique name also stops two concurrent
     # writers colliding on a shared temp path.
     handle, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
-        tmp_file.write(content)
-    os.chmod(tmp_name, FILE_MODE)
-    os.replace(tmp_name, path)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(content)
+        os.chmod(tmp_name, FILE_MODE)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Reap the staged temp on any failure before the swap lands — including
+        # KeyboardInterrupt — so repeated mid-write failures never accumulate
+        # orphan .tmp files beside the real store artefacts.
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def update_file(
