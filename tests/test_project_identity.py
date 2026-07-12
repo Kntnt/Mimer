@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.project import ResolutionStatus, confirm_link, resolve
+import pytest
+
+from mimer.manage import main
+from mimer.project import ResolutionStatus, confirm_hint, confirm_link, resolve
 from mimer.registry import Registry
+from mimer.store import ensure_store
 from tests.gitutil import add_worktree, init_repo
 
 
@@ -218,3 +222,76 @@ def test_adding_remote_to_path_keyed_project_reconciles(store_root: Path, tmp_pa
     record = Registry.load(store_root).find_by_id(created.project_id)
     assert record is not None
     assert "github.com/x/proj" in record.remotes
+
+
+def test_confirm_hint_names_command_and_candidate() -> None:
+    """The needs-confirmation hint names the exact command and the candidate id,
+    so a refused directory is a legible, resolvable state rather than a dead end
+    (#34)."""
+
+    hint = confirm_hint("secret-client")
+
+    assert "mimer-manage confirm secret-client" in hint
+
+
+def test_confirm_hint_without_candidate_still_names_the_command() -> None:
+    """When resolution identified no single candidate (ambiguous remotes), the
+    hint still names the confirm command so the user has a way forward (#34)."""
+
+    hint = confirm_hint(None)
+
+    assert "mimer-manage confirm" in hint
+
+
+def test_confirm_command_links_pending_identity_so_memory_proceeds(
+    store_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`mimer-manage confirm <id>` binds this directory to the candidate project,
+    after which resolution recognises it — so injection and capture proceed (#34)."""
+
+    ensure_store(store_root)
+    registry = Registry.load(store_root)
+    registry.create("shared", paths=[str((tmp_path / "orig").resolve())])
+    registry.save()
+
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    (clone / ".mimer").write_text("shared\n", encoding="utf-8")
+    assert resolve(clone, root=store_root).status is ResolutionStatus.NEEDS_CONFIRMATION
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(clone)
+    exit_code = main(["confirm", "shared"])
+
+    assert exit_code == 0
+    assert "shared" in capsys.readouterr().out
+    after = resolve(clone, root=store_root)
+    assert after.status is ResolutionStatus.RECOGNISED
+    assert after.project_id == "shared"
+
+
+def test_confirm_command_rejects_unknown_candidate_with_clean_message(
+    store_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`mimer-manage confirm` answers an unknown candidate id with a one-line
+    rejection and a non-zero exit, never a raw traceback (#34)."""
+
+    ensure_store(store_root)
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(fresh)
+    exit_code = main(["confirm", "no-such-project"])
+
+    assert exit_code != 0
+    out = capsys.readouterr().out
+    assert out.startswith("Mimer:")
+    assert "no-such-project" in out
+    assert "Traceback" not in out

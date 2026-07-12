@@ -12,7 +12,9 @@ from pathlib import Path
 import pytest
 
 from mimer.project import resolve
+from mimer.registry import Registry
 from mimer.shortterm import short_term_path
+from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload, stop_payload
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
@@ -128,3 +130,32 @@ def test_unknown_project_injects_empty_but_well_formed(store_root: Path, project
     assert result.returncode == 0, result.stderr
     context = _injected_context(result.stdout)
     assert "no short-term memory yet" in context
+
+
+def test_needs_confirmation_injection_names_confirm_command(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """When identity needs confirmation the injection refuses, but the refusal
+    names the exact command and candidate id to run — turning a dead end into a
+    resolvable state (#34)."""
+
+    ensure_store(store_root)
+    registry = Registry.load(store_root)
+    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
+    registry.save()
+
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(clone)),
+        store_root=store_root,
+        cwd=clone,
+    )
+
+    assert result.returncode == 0, result.stderr
+    context = _injected_context(result.stdout)
+    assert "needs" in context and "confirmation" in context
+    assert "mimer-manage confirm secret-client" in context
