@@ -29,12 +29,16 @@ _PAGE_SIZE = 100
 # boundary (SessionEnd), so an enormous repo's whole history must not stall it;
 # the most recent commits up to this bound are folded and the truncation is
 # logged rather than dropped silently (issue #42). Steady-state runs are not
-# bounded here — they stop once a whole page is already folded.
+# bounded here — they fold exactly the commits HEAD reaches that the ledger does not.
 _FIRST_FOLD_LIMIT = 2000
 
 # ASCII unit/record separators keep multi-line commit bodies unambiguous.
 _UNIT = "\x1f"
 _RECORD = "\x1e"
+
+# git-log pretty format shared by every read: SHA, author-date (ISO), subject,
+# body, then a record separator.
+_LOG_FORMAT = f"--format=%H{_UNIT}%aI{_UNIT}%s{_UNIT}%b{_RECORD}"
 
 
 @dataclass(frozen=True)
@@ -61,21 +65,14 @@ def git_commits(cwd: Path, *, limit: int | None = _PAGE_SIZE, skip: int = 0) -> 
         args.append(f"-n{limit}")
     if skip:
         args.append(f"--skip={skip}")
-    args += ["--no-color", f"--format=%H{_UNIT}%aI{_UNIT}%s{_UNIT}%b{_RECORD}"]
+    args += ["--no-color", _LOG_FORMAT]
 
     try:
         result = subprocess.run(args, check=True, capture_output=True, text=True, timeout=15)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return []
 
-    commits = []
-    for record in result.stdout.split(_RECORD):
-        fields = record.strip("\n").split(_UNIT)
-        if len(fields) < 4 or not fields[0]:
-            continue
-        sha, iso_date, subject, body = fields[0], fields[1], fields[2], fields[3]
-        commits.append(Commit(sha, subject.strip(), body.strip(), iso_date[:10]))
-    return commits
+    return _parse_commits(result.stdout)
 
 
 def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
@@ -84,10 +81,10 @@ def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
     On first adoption — an empty ledger — the whole history is folded, paging
     through ``git log`` until it is exhausted or the :data:`_FIRST_FOLD_LIMIT`
     safety bound is reached (a truncation is logged, never silent). On later runs
-    only the not-yet-folded commits are folded; paging stops once a whole page is
-    already folded, so re-running adds nothing, while a commit a merge orders
-    behind an already-folded one is still picked up (issue #42). Non-git projects
-    fold nothing.
+    only the not-yet-folded commits are folded — the commits HEAD reaches that no
+    ledger SHA reaches — so re-running adds nothing while a commit a merge orders
+    behind an already-folded one is still picked up however far it lags (issue #42).
+    Non-git projects fold nothing.
     """
 
     root = root or store_root()
@@ -119,17 +116,22 @@ def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
 def _commits_to_fold(cwd: Path, seen: set[str], *, first_fold: bool) -> tuple[list[Commit], bool]:
     """Collect the not-yet-folded commits to fold, newest first.
 
-    Pages through history folding every commit not already in the ledger. A first
-    fold has an empty ledger and folds the whole history, capped at
+    A first fold has an empty ledger and pages through the whole history, capped at
     :data:`_FIRST_FOLD_LIMIT`; the returned flag reports whether that bound
     truncated the walk (older, unfolded history remained), which the caller turns
-    into a logged notice. A steady-state run stops once a whole page holds nothing
-    new — deliberately *not* at the first already-folded SHA: a merge can bring in
-    commits whose commit date predates an already-folded one, so ``git log`` lists
-    them after it, and stopping early would drop them silently and permanently
-    (issue #42).
+    into a logged notice. A steady-state run instead asks git for the set difference
+    directly (see :func:`_unfolded_commits`) — the commits HEAD reaches that no
+    ledger SHA reaches — because ``git log``'s commit-date order is not a sound stop
+    signal: a merge can bring in commits dated behind already-folded ones, and any
+    date-ordered scan would drop them once their lag exceeds a page, silently and
+    permanently (issue #42).
     """
 
+    # Steady state: git computes the not-yet-folded set exactly, order-independent.
+    if not first_fold:
+        return _unfolded_commits(cwd, seen), False
+
+    # First fold: page through the whole history, stopping at the safety bound.
     to_fold: list[Commit] = []
     skip = 0
     while True:
@@ -138,22 +140,65 @@ def _commits_to_fold(cwd: Path, seen: set[str], *, first_fold: bool) -> tuple[li
         if not page:
             return to_fold, False
 
-        # Fold every not-yet-folded commit on the page; a first fold stops the
-        # moment it reaches its safety bound.
-        new_on_page = 0
+        # Take commits up to the safety bound; reaching it flags a truncated walk.
         for commit in page:
-            if first_fold and len(to_fold) >= _FIRST_FOLD_LIMIT:
+            if len(to_fold) >= _FIRST_FOLD_LIMIT:
                 return to_fold, True
-            if commit.sha in seen:
-                continue
             to_fold.append(commit)
-            new_on_page += 1
-
-        # A steady-state page with nothing new means everything older is folded too.
-        if not first_fold and not new_on_page:
-            return to_fold, False
 
         skip += len(page)
+
+
+def _unfolded_commits(cwd: Path, folded: set[str]) -> list[Commit]:
+    """Return the commits reachable from HEAD but not yet folded, newest first.
+
+    ``git log``'s commit-date ordering is not a sound place to stop scanning: a
+    feature branch cut early and merged after mainline advanced brings in commits
+    whose old dates sort them arbitrarily far below already-folded commits, so any
+    page-window heuristic drops them once the lag exceeds a page (issue #42).
+    Reachability exclusion asks git for the set difference instead — everything
+    HEAD reaches minus everything reachable from a folded SHA — yielding exactly the
+    not-yet-folded commits in one pass, whatever the date order. The ledger's SHAs
+    are fed as ``^``-prefixed excludes on stdin because a mature ledger holds
+    thousands; ``--ignore-missing`` (before ``--stdin``) keeps a rewritten-away
+    ledger SHA from aborting the walk, its commit simply reappearing as unfolded
+    under its new SHA. Empty output outside a repo or on any git error folds nothing.
+    """
+
+    excludes = "\n".join(f"^{sha}" for sha in folded)
+    args = [
+        "git",
+        "-C",
+        str(cwd),
+        "log",
+        "HEAD",
+        "--ignore-missing",
+        "--stdin",
+        "--no-color",
+        _LOG_FORMAT,
+    ]
+
+    try:
+        result = subprocess.run(
+            args, check=True, capture_output=True, text=True, timeout=15, input=excludes
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+    return _parse_commits(result.stdout)
+
+
+def _parse_commits(stdout: str) -> list[Commit]:
+    """Parse ``git log`` output rendered with :data:`_LOG_FORMAT` into commits."""
+
+    commits = []
+    for record in stdout.split(_RECORD):
+        fields = record.strip("\n").split(_UNIT)
+        if len(fields) < 4 or not fields[0]:
+            continue
+        sha, iso_date, subject, body = fields[0], fields[1], fields[2], fields[3]
+        commits.append(Commit(sha, subject.strip(), body.strip(), iso_date[:10]))
+    return commits
 
 
 def _render(commit: Commit) -> str:

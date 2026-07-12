@@ -244,6 +244,66 @@ def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_p
     assert "omega-marker" in stored
 
 
+def test_merge_folds_commits_lagging_more_than_a_page_behind(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A merge whose commits lag mainline by more than a page is still fully folded.
+
+    The steady-state reader must not treat ``git log``'s commit-date order as a stop
+    signal. When a merged feature branch's old-dated commits sort more than
+    ``_PAGE_SIZE`` positions below the newest new commit — a whole already-folded
+    page sitting between them — a page-window heuristic returns the moment that page
+    yields nothing new and drops the deeper commits silently and permanently
+    (issue #42). Shrinking the page makes that lag testable without a 100-commit
+    fixture, mirroring how the bound test shrinks ``_FIRST_FOLD_LIMIT``.
+    """
+
+    # A tiny page turns a handful of mainline commits into a lag exceeding one page.
+    monkeypatch.setattr(gitreader, "_PAGE_SIZE", 3)
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    default_branch = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # A feature branch is cut early, then main advances well past a single page.
+    _commit_dated(repo, "A groundwork alpha-marker", "2026-01-01")
+    _git(repo, "branch", "feature")
+    for n in range(5):
+        _commit_dated(repo, f"Mainline {n} main-marker-{n}", f"2026-02-0{n + 1}")
+    pid = _project(store_root, repo)
+    fold_git_log(pid, repo, root=store_root)
+
+    # The feature branch's older-dated commits are merged back, landing below the
+    # already-folded mainline block in git log's date order.
+    _git(repo, "checkout", "-q", "feature")
+    _commit_dated(repo, "F1 feature delta-marker", "2026-01-02")
+    _commit_dated(repo, "F2 feature epsilon-marker", "2026-01-03")
+    _git(repo, "checkout", "-q", default_branch)
+    merge_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-02-07T12:00:00",
+        "GIT_COMMITTER_DATE": "2026-02-07T12:00:00",
+    }
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "-q", "feature", "-m", "M merge omega-marker"],
+        check=True,
+        env=merge_env,
+    )
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # The merge commit and both deep feature commits fold — none lost to paging.
+    assert folded == 3
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert "delta-marker" in stored
+    assert "epsilon-marker" in stored
+    assert "omega-marker" in stored
+
+
 def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> None:
     """Re-running the git reader is idempotent."""
 
