@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from mimer.bundle import create_concept, list_concepts
+from mimer.bundle import list_concepts
 from mimer.curate import remember
-from mimer.distill import _title, distill_fact
+from mimer.distill import distill_fact
 from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.llm import run_haiku
@@ -62,10 +62,12 @@ def bootstrap_project(
     ensure_store(root)
     _ensure_registered(project_id, root)
 
-    raw_imported = _state(project_id, root).get("imported", [])
+    state = _state(project_id, root)
+    raw_imported = state.get("imported", [])
     imported: set[str] = (
         {str(name) for name in raw_imported} if isinstance(raw_imported, list) else set()
     )
+    prior_finished = bool(state.get("finished", False))
     transcripts = (
         sorted(p for p in transcripts_dir.glob("*.jsonl")) if transcripts_dir.exists() else []
     )
@@ -79,19 +81,31 @@ def bootstrap_project(
         if turns:
             imported_turns += len(turns)
             imported_transcripts += 1
-        # Record progress per transcript so a crash resumes here, not at the start.
+        # Record progress per transcript so a crash resumes here, not at the start,
+        # carrying the settled flag so a mid-import crash never re-runs a finished pass.
         imported.add(transcript.name)
-        _save_state(project_id, {"imported": sorted(imported), "complete": False}, root)
+        _save_state(
+            project_id,
+            {"imported": sorted(imported), "complete": False, "finished": prior_finished},
+            root,
+        )
 
-    # Run the finishing pass when there is new history, or when a prior run
-    # produced no Concepts yet — so a distillation that failed silently retries
-    # over the already-imported record rather than being stranded.
+    # Run the finishing pass when there is new history, or when no prior pass has
+    # settled yet — so a distillation that yielded nothing (a silent model
+    # failure) retries over the already-imported record rather than being
+    # stranded, while a pass whose facts were all rejected still settles and does
+    # not re-run on every later invocation. A pre-fix project without the flag
+    # falls back to whether it already has Concepts of its own.
     have_concepts = any(concept.origin == project_id for concept in list_concepts(root))
     concept_count = 0
-    if imported_turns > 0 or not have_concepts:
-        concept_count = _finish(project_id, distiller, root)
+    finished = prior_finished
+    if imported_turns > 0 or not (have_concepts or prior_finished):
+        concept_count, produced_facts = _finish(project_id, distiller, root)
+        finished = finished or produced_facts
 
-    _save_state(project_id, {"imported": sorted(imported), "complete": True}, root)
+    _save_state(
+        project_id, {"imported": sorted(imported), "complete": True, "finished": finished}, root
+    )
     return BootstrapResult(imported_transcripts, imported_turns, concept_count)
 
 
@@ -118,12 +132,17 @@ def _import_transcript(transcript: Path, project_id: str, root: Path) -> list[Ex
     return exchanges
 
 
-def _finish(project_id: str, distiller: Distiller | None, root: Path) -> int:
+def _finish(project_id: str, distiller: Distiller | None, root: Path) -> tuple[int, bool]:
     """The finishing pass: distil Concepts, a starter profile and short-term.
 
     Reads the already-imported long-term record (not just this run's transcripts),
     so a distillation that yielded nothing can be retried on a later run. A
     non-empty record that yields no facts is logged, never silently dropped.
+
+    Returns the number of Concepts created or superseded, and whether the
+    distiller yielded any facts. The latter tells the caller the pass has settled
+    — facts were considered — even when every fact was rejected or deduplicated,
+    so an all-rejected pass is not retried on every later invocation.
     """
 
     conversation = _imported_record(project_id, root)
@@ -135,24 +154,29 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> int:
             root=root,
         )
 
+    # Distil every fact through the same guard so bootstrap never bypasses the
+    # instruction, tombstone and dedup checks. The first fact seeds the pinned,
+    # global starter profile (opt-in import implies confirmation); routing it
+    # through distill_fact makes a re-run over more history deduplicate rather
+    # than duplicate the profile, and honour a tombstone if it was forgotten.
+    # Every other fact defaults to project scope, keeping a client project's
+    # facts confined to it (ADR 0013).
     concept_count = 0
     for index, fact in enumerate(facts):
         if index == 0:
-            # The first fact seeds the pinned starter profile (opt-in import
-            # implies confirmation).
-            create_concept(
-                title=_title(fact),
-                body=fact,
-                concept_type="Preference",
-                origin=project_id,
+            result = distill_fact(
+                text=fact,
+                project_id=project_id,
                 scope="global",
+                concept_type="Preference",
                 pinned=True,
                 confirmed=True,
                 root=root,
             )
         else:
-            distill_fact(text=fact, project_id=project_id, scope="global", root=root)
-        concept_count += 1
+            result = distill_fact(text=fact, project_id=project_id, root=root)
+        if result.status in ("created", "superseded"):
+            concept_count += 1
 
     # Seed an initial short-term working set so the next session starts oriented.
     if facts:
@@ -162,7 +186,7 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> int:
             root=root,
             today=date.today(),
         )
-    return concept_count
+    return concept_count, bool(facts)
 
 
 def _imported_record(project_id: str, root: Path) -> str:

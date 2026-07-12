@@ -101,8 +101,19 @@ def distill_fact(
     root: Path | None = None,
     scope: str = "project",
     citations: list[Source] | None = None,
+    concept_type: str = "Fact",
+    pinned: bool = False,
+    confirmed: bool = False,
 ) -> DistillResult:
-    """Distil one fact into permanent memory: create, extend, supersede or reject."""
+    """Distil one fact into permanent memory: create, extend, supersede or reject.
+
+    Every fact is guarded identically — rejected when instruction-shaped
+    (ADR 0014) or tombstoned (ADR 0012), deduplicated or superseded against an
+    existing Concept about the same subject (ADR 0015). ``concept_type``,
+    ``pinned`` and ``confirmed`` forward to :func:`create_concept` for the one
+    case where a distilled fact seeds the pinned profile (bootstrap), so that
+    seed passes the same guards as every other fact instead of bypassing them.
+    """
 
     root = root or store_root()
 
@@ -119,9 +130,11 @@ def distill_fact(
     concept = create_concept(
         title=_title(text),
         body=text,
-        concept_type="Fact",
+        concept_type=concept_type,
         origin=project_id,
         scope=scope,
+        pinned=pinned,
+        confirmed=confirmed,
         citations=citations,
         supersedes=predecessor.id if predecessor is not None else None,
         root=root,
