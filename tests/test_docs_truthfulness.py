@@ -20,6 +20,7 @@ README = ROOT / "README.md"
 NOTICE = ROOT / "NOTICE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 OKF_PROFILE = ROOT / "docs" / "okf-profile.md"
+VISION = ROOT / "docs" / "vision.md"
 SKILL = ROOT / "skills" / "memory" / "SKILL.md"
 PYPROJECT = ROOT / "pyproject.toml"
 PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
@@ -173,6 +174,24 @@ def test_changelog_claim_about_readme_command_coverage_is_true() -> None:
         readme = README.read_text(encoding="utf-8")
         missing = {command for command in _user_facing_commands() if command not in readme}
         assert missing == set(), f"CHANGELOG claim is false; README omits: {sorted(missing)}"
+
+
+def test_vision_does_not_describe_a_nonexistent_high_water_mark() -> None:
+    """vision.md must not describe distillation as gated on a per-project
+    high-water mark: that mechanism exists nowhere in the code, and pointing the
+    next implementer at it is exactly the untruth issue #28 fixes."""
+
+    assert "high-water" not in VISION.read_text(encoding="utf-8").lower()
+
+
+def test_vision_names_the_real_distillation_trigger_and_idempotency() -> None:
+    """The Stage 5b description must name the real trigger (the short-term cap and
+    session boundaries) and the real idempotency mechanism (dedup and
+    supersession), which is what the code actually does (issue #28)."""
+
+    text = VISION.read_text(encoding="utf-8").lower()
+    assert "short-term cap" in text
+    assert "dedup" in text and "supersession" in text
 
 
 def test_skill_documents_the_claude_plugin_root_dependency() -> None:

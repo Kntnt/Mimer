@@ -1,6 +1,7 @@
 """Unit tests for curated writes (Stage 2): remember adds and dedups, an
-over-cap write warns but evicts nothing, and soft forget removes the entry and
-writes a tombstone that keeps the fact gone (ADRs 0012, 0017, 0018).
+over-cap write drives distillation (promoting durable entries into permanent
+memory), and soft forget removes the entry and writes a tombstone that keeps the
+fact gone (ADRs 0012, 0017, 0018).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from mimer.bundle import list_concepts
 from mimer.curate import forget, main, remember
 from mimer.project import resolve
 from mimer.registry import Registry
@@ -57,25 +59,33 @@ def test_remember_duplicate_updates_not_duplicates(store_root: Path, project_dir
     assert notes[0].date == "2026-07-11"
 
 
-def test_over_cap_durable_write_warns_and_evicts_nothing(
+def test_over_cap_durable_write_promotes_to_permanent(
     store_root: Path, project_dir: Path
 ) -> None:
-    """When only durable entries remain, an over-cap write warns and keeps all
-    (durable entries are promoted by distillation, not aged out — ADR 0017)."""
+    """An over-cap write drives distillation: durable entries are promoted into
+    permanent Concepts and leave short-term, rather than being warned about and
+    kept (ADR 0017's cap-driven promote-then-evict, issue #28)."""
 
     pid = _project(store_root, project_dir)
-    for i in range(3):
-        remember(f"fact {i}", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY)
+    facts = (
+        "the client prefers British English",
+        "deployments run on Tuesdays",
+        "the API rate limit is one hundred per minute",
+    )
+    for index, fact in enumerate(facts):
+        remember(
+            fact, project_id=pid, root=store_root, cap=3, durable=True, today=date(2026, 7, index + 1)
+        )
 
     result = remember(
-        "one too many", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY
+        "the staging box runs Ubuntu", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY
     )
 
-    assert result.warning is not None
-    assert "cap" in result.warning.lower()
+    assert result.warning is None
     assert not result.aged_out
+    assert len(list_concepts(store_root)) == 4
     notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
-    assert len(notes) == 4
+    assert notes == []
 
 
 def test_forget_removes_entry_and_writes_tombstone(store_root: Path, project_dir: Path) -> None:
