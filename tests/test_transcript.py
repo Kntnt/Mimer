@@ -29,8 +29,9 @@ def test_last_exchange_is_extracted(tmp_path: Path) -> None:
     assert exchange.date == "2026-07-11"
 
 
-def test_turn_identity_is_stable_and_content_derived(tmp_path: Path) -> None:
-    """The same exchange yields the same turn id across parses (for idempotency)."""
+def test_turn_identity_is_stable_for_a_re_fired_turn(tmp_path: Path) -> None:
+    """The same turn — identical text at the same timestamp — yields the same id
+    across parses, so a re-fired identical Stop hook stays idempotent (#38)."""
 
     turns = [("q", "a", "2026-07-11T10:00:00Z")]
     first = last_exchange(write_transcript(tmp_path / "a.jsonl", turns))
@@ -38,6 +39,17 @@ def test_turn_identity_is_stable_and_content_derived(tmp_path: Path) -> None:
 
     assert first is not None and second is not None
     assert first.turn_id == second.turn_id
+
+
+def test_same_text_at_different_moments_gets_distinct_identities(tmp_path: Path) -> None:
+    """Identical text at two different timestamps yields distinct turn ids, so a
+    genuinely repeated short exchange is not collapsed into one capture (#38)."""
+
+    early = last_exchange(write_transcript(tmp_path / "e.jsonl", [("continue", "Done.", "2026-07-11T10:00:00Z")]))
+    late = last_exchange(write_transcript(tmp_path / "l.jsonl", [("continue", "Done.", "2026-07-11T11:00:00Z")]))
+
+    assert early is not None and late is not None
+    assert early.turn_id != late.turn_id
 
 
 def test_empty_transcript_returns_none(tmp_path: Path) -> None:
