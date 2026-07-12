@@ -22,11 +22,12 @@ from datetime import date
 from pathlib import Path
 
 from mimer.distill import distill_durable_entries
+from mimer.erasure import erase_from_raw_record
 from mimer.longterm import append_entry
 from mimer.matcher import is_same_fact
 from mimer.paths import store_root
 from mimer.project import confirm_hint, resolve
-from mimer.redaction import redact
+from mimer.redaction import redact as strip_secrets
 from mimer.shortterm import (
     SHORT_TERM_CAP,
     Entry,
@@ -103,7 +104,7 @@ def remember(
     # Enforce redaction at the sink: dedup, storage and any eviction all operate
     # on the redacted text, so a secret never lands in short-term memory nor is
     # carried forward when a durable entry is later distilled (issue #23).
-    text = redact(text)
+    text = strip_secrets(text)
 
     root = root or store_root()
     today = today or date.today()
@@ -206,6 +207,29 @@ def _aged_out_block(evicted: list[Entry], today: date) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _remove_matching_from_short_term(text: str, *, project_id: str, root: Path) -> int:
+    """Remove every short-term entry the shared matcher judges the same fact as
+    ``text``, under the project lock. Returns how many entries were removed.
+
+    Shared by the soft (``forget``) and hard (``redact``) tiers so they agree on
+    what "the fact" is and neither can diverge from the other (issue #18).
+    """
+
+    removed = 0
+
+    def transform(content: str) -> str:
+        nonlocal removed
+        sections = parse_short_term(content)
+        for name, entries in sections.items():
+            kept = [e for e in entries if not is_same_fact(e.text, text)]
+            removed += len(entries) - len(kept)
+            sections[name] = kept
+        return render_short_term(project_id, sections)
+
+    update_file(short_term_path(project_id, root), transform, project_id=project_id, root=root)
+    return removed
+
+
 def forget(
     text: str, *, project_id: str, root: Path | None = None, today: date | None = None
 ) -> WriteResult:
@@ -214,32 +238,19 @@ def forget(
     root = root or store_root()
     ensure_short_term(project_id, root)
 
-    # Redact before matching and tombstoning so a forget targets the same
+    # Strip secrets before matching and tombstoning so a forget targets the same
     # secret-free form remember stored, and no raw secret is persisted to the
     # durable tombstone ledger (issue #23).
-    text = redact(text)
+    text = strip_secrets(text)
 
-    removed = 0
-
-    def transform(content: str) -> str:
-        nonlocal removed
-        sections = parse_short_term(content)
-
-        # Remove every entry the shared matcher judges the same fact as the target.
-        for name, entries in sections.items():
-            kept = [e for e in entries if not is_same_fact(e.text, text)]
-            removed += len(entries) - len(kept)
-            sections[name] = kept
-        return render_short_term(project_id, sections)
-
-    update_file(short_term_path(project_id, root), transform, project_id=project_id, root=root)
+    removed = _remove_matching_from_short_term(text, project_id=project_id, root=root)
     write_tombstone(text, project_id=project_id, root=root, tier="forget")
 
     if removed:
         action = "removed"
         echo = (
             f'Mimer: forgot "{text}" — removed from short-term memory and tombstoned so it '
-            "will not resurface. The raw long-term record is untouched (use redact to erase it)."
+            "will not resurface. The raw long-term record is untouched; run redact to erase it."
         )
     else:
         action = "tombstoned"
@@ -250,6 +261,40 @@ def forget(
     return WriteResult(action, echo)
 
 
+def redact(
+    text: str, *, project_id: str, root: Path | None = None, today: date | None = None
+) -> WriteResult:
+    """Hard-forget ``text``: everything :func:`forget` does, then erase the raw record.
+
+    Redact is a superset of forget (ADR 0012): it removes matching entries from
+    short-term memory and writes a tombstone (so recall and re-distillation stay
+    suppressed), then additionally rewrites the append-only daily logs and the
+    archived transcripts in place, replacing the fact's span with a redaction
+    marker, and reindexes so the purged content no longer surfaces. It is also how
+    a secret captured before the storage-time redaction pass is scrubbed.
+
+    Short-term removal and the tombstone operate on the secret-stripped form (to
+    align with what remember stored and keep the ledger secret-free — issue #23),
+    while the raw-record erasure matches ``text`` verbatim as the caller names it,
+    so a leaked secret still sitting raw in the record is found and erased.
+    """
+
+    root = root or store_root()
+    ensure_short_term(project_id, root)
+
+    stripped = strip_secrets(text)
+    _remove_matching_from_short_term(stripped, project_id=project_id, root=root)
+    write_tombstone(stripped, project_id=project_id, root=root, tier="redact")
+    erase_from_raw_record(text, project_id=project_id, root=root)
+
+    echo = (
+        f'Mimer: redacted "{stripped}" — removed from short-term memory, tombstoned, and erased '
+        "from the raw long-term logs and transcripts, then reindexed. Content exported or backed "
+        "up before now is beyond Mimer's reach."
+    )
+    return WriteResult("redacted", echo)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The ``mimer-memory`` command-line interface used by the memory skill."""
 
@@ -257,7 +302,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="mimer-memory", description="Curated writes to Mimer's short-term memory."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for verb in ("remember", "note", "forget"):
+    for verb in ("remember", "note", "forget", "redact"):
         subparser = subparsers.add_parser(verb)
         subparser.add_argument("text")
     return parser
@@ -280,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "forget":
         result = forget(args.text, project_id=resolution.project_id)
+    elif args.command == "redact":
+        result = redact(args.text, project_id=resolution.project_id)
     else:
         result = remember(args.text, project_id=resolution.project_id)
 

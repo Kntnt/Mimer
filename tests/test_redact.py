@@ -73,7 +73,9 @@ def test_redact_erases_the_fact_from_the_daily_log_in_place(
 
     pid = _project(store_root, project_dir)
     fact = "the office moves to the fourth floor in august"
-    append_entry(pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root)
+    append_entry(
+        pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root
+    )
 
     redact(fact, project_id=pid, root=store_root)
 
@@ -178,7 +180,9 @@ def test_cli_redact_erases_across_layers(store_root: Path, project_dir: Path) ->
 
     pid = _project(store_root, project_dir)
     fact = "the office moves to the fourth floor in august"
-    append_entry(pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root)
+    append_entry(
+        pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root
+    )
 
     executable = Path(sys.executable).parent / "mimer-memory"
     env = {**os.environ, "MIMER_HOME": str(store_root)}

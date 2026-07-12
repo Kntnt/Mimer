@@ -5,9 +5,10 @@ description: >-
   "note that" something worth keeping, or to "forget about" something. Reads the
   whole of short-term memory first, then adds, replaces or removes an entry with
   a one-line echo. "forget" is the soft tier: it removes and tombstones, leaving
-  the raw record intact. Also the control surface: "pause capture" for a
-  sensitive session, and the per-project settings (capture, distill-to-global,
-  widening).
+  the raw record intact; "redact" is the hard tier: it additionally erases the
+  fact from the raw logs and transcripts. Also the control surface: "pause
+  capture" for a sensitive session, and the per-project settings (capture,
+  distill-to-global, widening).
 ---
 
 # Memory — curated writes
@@ -32,6 +33,7 @@ Act when the user's message carries an explicit memory intent:
 - **Remember** — "remember that …", "remember to …", "keep in mind …".
 - **Note that** — "note that …", "make a note …", "for the record …".
 - **Forget about** — "forget about …", "drop …", "you can forget …".
+- **Redact / erase** — "redact …", "scrub … from the record", "really erase …", "wipe … for good".
 
 A passing mention of the word "remember" is not a request to write memory. Only
 act when the user is clearly asking Mimer to store or drop something.
@@ -44,6 +46,7 @@ Run the engine from the project's working directory and relay its echo verbatim:
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-memory remember "the fact, in the user's own terms"
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-memory note     "the note"
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-memory forget   "the fact to drop"
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-memory redact   "the fact to erase from the raw record"
 ```
 
 Pass the fact as a single, self-contained sentence — one claim per write, phrased
@@ -93,7 +96,29 @@ permanent memory — do not fake it here.
 When it is genuinely unclear, ask which they mean before deleting. `forget` is
 the soft tier: it removes and tombstones so the fact will not resurface, but the
 raw long-term record stays. Erasing that record is `redact`, a separate,
-explicit action.
+explicit action described next.
+
+### Redact — the hard tier that erases the raw record
+
+`redact` is a superset of `forget`: it does everything forget does — remove from
+short-term memory, tombstone, suppress recall and re-distillation — and then
+additionally rewrites the append-only daily logs and the archived transcripts in
+place, replacing the fact's span with a redaction marker, and reindexes so the
+purged content stops surfacing. Reach for it when the user wants a fact *gone
+from the record*, not merely deprioritised: "redact X", "scrub X from the logs",
+"really erase X", or when a secret was captured before the redaction pass caught
+it and must be wiped from the raw record.
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-memory redact "the fact to erase"
+```
+
+Redaction is the one sanctioned mutation of the otherwise append-only layers, so
+it is irreversible — prefer `forget` unless erasure is genuinely intended, and
+when unsure, ask. Relay the engine's echo, including its honest residual: Mimer
+can only reach the store it controls, so any content exported or backed up before
+the redact — copies outside `~/.mimer/`, a synced backup, a paste elsewhere — is
+beyond its reach.
 
 ### Confirmation
 

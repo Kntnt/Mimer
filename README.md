@@ -138,7 +138,7 @@ Most of the time you drive Mimer by talking to the agent, not by typing commands
 |---|---|
 | `mimer-install` | First-run provisioning: creates the owner-only `~/.mimer/` store, verifies the interpreter can load SQLite extensions, pre-fetches the embedding model, and builds the initial search index. Run once from the plugin directory. |
 | `mimer-bootstrap` | Opt-in, resumable import of a project's pre-existing Claude Code session and git history into memory. Run once per project. |
-| `mimer-memory` | The curated-write engine behind "remember", "note that" and "forget about"; the memory skill calls it and echoes back the one-line result. |
+| `mimer-memory` | The curated-write engine behind "remember", "note that", "forget about" and "redact"; forget is the soft tier (remove and tombstone), redact the hard tier (also erase the fact from the raw logs and transcripts, then reindex). The memory skill calls it and echoes back the one-line result. |
 | `mimer-recall` | Semantic, cited search over memory — project-scoped by default, `--widen` to reach other projects; the skill calls it for questions about past work. |
 | `mimer-manage` | Inspect and correct permanent memory: `profile`, `recent`, `health`, `retract <slug>`, and `confirm <candidate-id>` to link this directory to a project when its identity needs confirmation. |
 | `mimer-reindex` | Rebuild the derived search index from memory; the index is reproducible, so running this is safe whenever it drifts. |
