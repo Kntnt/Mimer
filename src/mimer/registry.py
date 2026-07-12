@@ -17,6 +17,7 @@ from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.store import FILE_MODE, ensure_store
+from mimer.storeio import append_fold, project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
 # store root.
@@ -206,14 +207,120 @@ class Registry:
         return target
 
     def _move_project_memory(self, source_id: str, target_id: str) -> None:
-        """Move the contents of the source project's directory under the target's."""
+        """Merge the source project's on-disk memory into the target's, losslessly.
+
+        The move is recursive and collision-aware (issue #33): subdirectories are
+        merged in place rather than replaced — so a non-empty ``long-term/`` or
+        ``transcripts/`` on both sides no longer makes ``os.replace`` raise
+        ``ENOTEMPTY`` mid-loop — and a file present on both sides is combined by
+        artefact type rather than silently overwritten. The source directory is
+        drained and removed only after everything has moved.
+
+        Concurrency (ADR 0011). The merge holds the target's per-project lock
+        throughout. ``short-term.md`` is combined read-modify-write inside that
+        lock, and its live writers (the memory skill and the session digest) take
+        the same lock, so a concurrent update to it cannot be lost. Every
+        append-only artefact — daily logs, the capture/digest/git ledgers, the
+        distilled queue, transcripts — is folded with ``O_APPEND`` (see
+        :func:`_concatenate_file`), matching its lockless producers, so a
+        concurrent append is neither lost nor able to truncate the target, whether
+        or not that producer holds any lock.
+
+        Not attempted. The merge is not crash- or failure-atomic across artefacts.
+        An unexpected error part-way leaves the already-folded artefacts in the
+        target; and because a fold keeps the source file and appends its bytes to
+        the target, a retry after a crash between folding an artefact and unlinking
+        it re-appends — duplicates — it (harmless for ``short-term.md``, which
+        dedups; a duplicate line elsewhere). The source directory is also drained
+        and removed before the caller persists the registry, and only the target is
+        locked: a crash between the drain and ``save`` leaves the registry still
+        naming an emptied source, and a stray writer still resolving to the retired
+        source id is not serialised against the drain. These residuals are
+        acceptable while merge has no live caller; they must be revisited before a
+        UI exposes the action.
+        """
 
         source_dir = project_dir(source_id, self._root)
         if not source_dir.exists():
             return
 
-        target_dir = project_dir(target_id, self._root)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for item in source_dir.iterdir():
-            os.replace(item, target_dir / item.name)
-        source_dir.rmdir()
+        # Run the whole merge under the target's lock so a concurrent writer to
+        # the live target cannot lose an update (ADR 0011); the source is a
+        # retired orphan, so only the target's lock is contended.
+        with project_lock(target_id, root=self._root):
+            _merge_directory(source_dir, project_dir(target_id, self._root), target_id)
+            source_dir.rmdir()
+
+
+def _merge_directory(source_dir: Path, target_dir: Path, target_id: str) -> None:
+    """Recursively merge ``source_dir`` into ``target_dir``, emptying the source.
+
+    A leaf absent on the target is moved outright; a leaf present on both sides is
+    combined by :func:`_combine_files`; a subdirectory recurses. Each source
+    subdirectory is removed once drained, as the walk unwinds.
+    """
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Fold each source entry into the target, recursing into subdirectories and
+    # combining colliding leaf files instead of clobbering them.
+    for item in source_dir.iterdir():
+        destination = target_dir / item.name
+        if item.is_dir():
+            _merge_directory(item, destination, target_id)
+            item.rmdir()
+        elif destination.exists():
+            _combine_files(item, destination, target_id)
+            item.unlink()
+        else:
+            os.replace(item, destination)
+
+
+def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None:
+    """Combine a leaf file present on both sides of a merge, keeping every entry.
+
+    ``short-term.md`` is a structured document, so its dated entries are merged
+    section by section (duplicates dropped) under the target's id and rewritten
+    atomically. Every other project artefact — daily logs, the capture/digest/git
+    ledgers, the distilled queue, archived transcripts — is append-only, so the
+    source's content is folded onto the end of the target's with ``O_APPEND``
+    rather than overwritten (see :func:`_concatenate_file`).
+    """
+
+    # Imported lazily: shortterm depends on this module for ``project_dir``, so a
+    # top-level import would be circular.
+    from mimer.shortterm import SHORT_TERM_FILENAME, merge_documents
+
+    if target_file.name == SHORT_TERM_FILENAME:
+        merged = merge_documents(
+            target_file.read_text(encoding="utf-8"),
+            source_file.read_text(encoding="utf-8"),
+            target_id,
+        )
+        write_atomic(target_file, merged)
+    else:
+        _concatenate_file(source_file, target_file)
+
+
+def _concatenate_file(source_file: Path, target_file: Path) -> None:
+    """Fold the source file's records onto the end of the target's, losing none.
+
+    Every append-only artefact this handles — daily logs, the capture/digest/git
+    ledgers, the distilled queue, archived transcripts — is written by its live
+    producer with lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`), which
+    ignores the project lock. Folding by read-modify-write would silently drop any
+    record a producer appended between the read and the rewrite, so the fold uses
+    ``O_APPEND`` too (:func:`mimer.storeio.append_fold`): the source's bytes land
+    at the target's end-of-file, never truncating it and never racing a concurrent
+    appender. A newline is inserted at the seam when the target does not already
+    end with one, so the target's last record and the source's first never fuse
+    into a single line.
+    """
+
+    # Read the target only to decide the seam; it is never written back, so a
+    # record a producer appends after this read is preserved by the fold below.
+    existing = target_file.read_text(encoding="utf-8")
+    addition = source_file.read_text(encoding="utf-8")
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+
+    append_fold(target_file, separator + addition)
