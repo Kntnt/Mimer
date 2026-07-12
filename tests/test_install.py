@@ -15,7 +15,9 @@ from mimer.bundle import create_concept, list_concepts
 from mimer.embedding import embed
 from mimer.failure_log import fresh_failures, log_failure
 from mimer.install import (
+    InstallReport,
     check_sqlite_extensions,
+    install_main,
     prefetch_embedding_model,
     run_install,
     write_uninstall_pointer,
@@ -84,6 +86,149 @@ def test_run_install_creates_the_index_so_writes_are_indexed(store_root: Path) -
     capture_from_payload({"cwd": str(project), "transcript_path": str(transcript)}, root=store_root)
 
     assert search("what search tool did we pick", root=store_root)
+
+
+def test_run_install_reports_gracefully_on_model_download_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model-download failure yields an actionable report, not a traceback."""
+
+    def offline(_texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("Failed to connect to huggingface.co")
+
+    monkeypatch.setattr("mimer.install.embed", offline)
+    report = run_install(store_root)
+
+    assert not report.ok
+    assert report.messages
+    joined = " ".join(report.messages).lower()
+    assert "model" in joined
+    assert "re-run" in joined
+
+
+def test_run_install_reports_gracefully_on_index_build_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An index-build failure yields an actionable report, not a traceback."""
+
+    # Isolate the index-build path: stub the prefetch so this test reaches the
+    # reindex failure deterministically, never a real model download that would
+    # fail first offline and report the wrong step.
+    monkeypatch.setattr("mimer.install.prefetch_embedding_model", lambda: None)
+
+    def broken(_root: Path) -> int:
+        raise RuntimeError("disk I/O error building the index")
+
+    monkeypatch.setattr("mimer.install.reindex", broken)
+    report = run_install(store_root)
+
+    assert not report.ok
+    assert report.messages
+    joined = " ".join(report.messages).lower()
+    assert "index" in joined
+    assert "re-run" in joined
+
+
+def test_run_install_resumes_after_a_pre_index_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure before the index build (the model download) leaves a resumable
+    state: the store survives the failure and a re-run, once the cause is fixed,
+    completes cleanly. Covers the failure point that runs before reindex; the
+    mid-reindex case is covered by the partial-index test below."""
+
+    from mimer.index import index_db_path
+
+    # First run fails at the model-download step (no network); the store is
+    # created before that step, so the failure loses nothing.
+    def offline(_texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("Failed to connect to huggingface.co")
+
+    monkeypatch.setattr("mimer.install.embed", offline)
+    first = run_install(store_root)
+    assert not first.ok
+    assert (store_root / "config.toml").exists()
+
+    # Fix the cause (network restored) and re-run the same store: the install
+    # now completes and ends with a built index.
+    monkeypatch.undo()
+    second = run_install(store_root)
+    assert second.ok
+    assert index_db_path(store_root).exists()
+
+
+def test_run_install_resumes_after_a_partial_index_build(store_root: Path) -> None:
+    """The riskier case: a failure *during* the index build leaves a half-built
+    index.db behind, and a re-run must recover from it. reindex drops any existing
+    index before rebuilding, so the re-run produces a complete, searchable index —
+    the mid-reindex half of run_install's resumability promise."""
+
+    from mimer.index import index_db_path, search
+
+    # Seed indexable content so the index build has real work — and thus a real
+    # embed call — to fail on.
+    create_concept(
+        title="Search tool choice",
+        body="we chose ripgrep for fast search",
+        concept_type="Fact",
+        origin="p",
+        scope="global",
+        root=store_root,
+    )
+
+    # First run: the model download is stubbed out so the build is reached
+    # deterministically, then the index build fails partway — after reindex has
+    # already created the index.db file, the half-built artifact to recover from.
+    with pytest.MonkeyPatch.context() as first_run:
+        first_run.setattr("mimer.install.prefetch_embedding_model", lambda: None)
+
+        def broken(_texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("disk I/O error building the index")
+
+        first_run.setattr("mimer.index.embed", broken)
+        first = run_install(store_root)
+    assert not first.ok
+    assert index_db_path(store_root).exists()
+
+    # Second run: with the cause fixed, the re-run drops the half-built index and
+    # rebuilds a complete one that answers a query about the seeded content.
+    with pytest.MonkeyPatch.context() as second_run:
+        second_run.setattr("mimer.install.prefetch_embedding_model", lambda: None)
+        second = run_install(store_root)
+    assert second.ok
+    assert search("what search tool did we pick", root=store_root)
+
+
+def test_install_main_reports_a_failure_as_exit_code_one(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The install entry point degrades a failing report to exit code 1 with the
+    actionable message printed — never a propagated traceback."""
+
+    monkeypatch.setattr("mimer.install.store_root", lambda: store_root)
+    monkeypatch.setattr(
+        "mimer.install.run_install",
+        lambda _root: InstallReport(False, ["could not fetch the embedding model — re-run"]),
+    )
+
+    code = install_main()
+    output = capsys.readouterr().out
+
+    assert code == 1
+    assert "could not fetch the embedding model" in output
+
+
+def test_install_main_reports_success_as_exit_code_zero(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful report maps to exit code 0."""
+
+    monkeypatch.setattr("mimer.install.store_root", lambda: store_root)
+    monkeypatch.setattr(
+        "mimer.install.run_install", lambda _root: InstallReport(True, ["store ready"])
+    )
+
+    assert install_main() == 0
 
 
 def test_fresh_failures_are_recent_only(store_root: Path) -> None:
