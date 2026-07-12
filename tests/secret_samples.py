@@ -90,7 +90,8 @@ def _basic_auth() -> str:
 
 
 def _npmrc_token() -> str:
-    return "npm_" + "abcdef0123456789ABCDEF" + "0123456789abcdef0123"
+    # A modern npm access/automation token: the `npm_` prefix and 36 characters.
+    return "npm_" + "abcdef0123456789ABCDEF012345" + "6789abcd"
 
 
 def _aws_secret_bare_value() -> str:
@@ -99,6 +100,30 @@ def _aws_secret_bare_value() -> str:
     # digit) so it exercises the bare rule's shape distinguisher, not its
     # base64-special shortcut.
     return "wJalrXUtnFEMI" + "K7MDENGbPxRfiCY" + "EXAMPLEKEYab"
+
+
+def _aws_secret_bare_base64_value() -> str:
+    # A 40-character AWS secret whose run carries a base64-only `/` but omits an
+    # upper-case letter, so it fails the mixed-case shape branch and is redacted
+    # only by the bare rule's base64 shortcut — pinning that shortcut against a
+    # silent removal that the shape-branch fixtures would not catch.
+    return "ab/defghij" + "0123456789" + "abcdefghij" + "0123456789"
+
+
+def _env_db_password_value() -> str:
+    return "hunter2" + "SuperSecret"
+
+
+def _env_github_token_value() -> str:
+    return "someOpaqueValue" + "123456"
+
+
+def _env_stripe_api_key_value() -> str:
+    return "rawValueGoes" + "Here123"
+
+
+def _env_my_secret_value() -> str:
+    return "topSecret" + "Value123"
 
 
 def _aws_secret_labelled_value() -> str:
@@ -138,12 +163,44 @@ SAMPLES: list[Sample] = [
         f"//registry.npmjs.org/:_authToken={_npmrc_token()}",
         _npmrc_token(),
     ),
+    # npm's own serialisations that never carry the literal `_authToken`: the
+    # dominant `.env`/CI `NPM_TOKEN=` form and a bare pasted token value.
+    Sample("npm-token-env", f"NPM_TOKEN={_npmrc_token()}", _npmrc_token()),
+    Sample("npm-token-bare", _npmrc_token(), _npmrc_token()),
     Sample(
         "aws-secret-labelled",
         f"aws_secret_access_key = {_aws_secret_labelled_value()}",
         _aws_secret_labelled_value(),
     ),
     Sample("aws-secret-bare", _aws_secret_bare_value(), _aws_secret_bare_value()),
+    Sample(
+        "aws-secret-bare-base64",
+        _aws_secret_bare_base64_value(),
+        _aws_secret_bare_base64_value(),
+    ),
+    # A sensitive keyword glued as the suffix of a longer identifier — the way a
+    # developer actually pastes secrets from `.env`, `export` and CI config.
+    Sample(
+        "env-db-password",
+        f"DB_PASSWORD={_env_db_password_value()}",
+        _env_db_password_value(),
+    ),
+    Sample(
+        "env-github-token",
+        f"GITHUB_TOKEN={_env_github_token_value()}",
+        _env_github_token_value(),
+    ),
+    Sample(
+        "env-stripe-api-key",
+        f"STRIPE_API_KEY={_env_stripe_api_key_value()}",
+        _env_stripe_api_key_value(),
+    ),
+    Sample("env-my-secret", f"MY_SECRET={_env_my_secret_value()}", _env_my_secret_value()),
+    Sample(
+        "env-prefixed-aws-secret",
+        f"MY_AWS_SECRET_ACCESS_KEY={_aws_secret_labelled_value()}",
+        _aws_secret_labelled_value(),
+    ),
     Sample(
         "single-credential-url",
         f"https://{_url_credential()}@internal.example.com/path",
