@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mimer.bundle import create_concept
 from mimer.index import reindex
 from mimer.longterm import daily_log_path
@@ -19,6 +21,10 @@ from mimer.recall import recall
 from mimer.registry import Registry
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload
+
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
 
 SKILL = Path(__file__).resolve().parent.parent / "skills" / "memory" / "SKILL.md"
 

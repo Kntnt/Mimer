@@ -25,6 +25,10 @@ from mimer.install import (
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 README = Path(__file__).resolve().parent.parent / "README.md"
 
 

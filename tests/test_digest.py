@@ -28,6 +28,10 @@ from tests.harness import run_hook
 from tests.secret_samples import SAMPLES, Sample
 from tests.transcript_fixture import write_transcript
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 TODAY = date(2026, 7, 11)
 
 DIGEST_REPLY = """## Digest

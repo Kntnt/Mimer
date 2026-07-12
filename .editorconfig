@@ -15,7 +15,10 @@ indent_size = 4
 [*.py]
 max_line_length = 100
 
-[*.{yml,yaml,json,toml}]
+# YAML and JSON use 2-space indent. TOML is deliberately excluded: the project's
+# own pyproject.toml is written with 4-space array items (the global default
+# above), so listing toml here would make an editor reflow it on the next edit.
+[*.{yml,yaml,json}]
 indent_size = 2
 
 [*.md]

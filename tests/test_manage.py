@@ -17,6 +17,10 @@ from mimer.manage import main, profile, recent_concepts, store_health
 from mimer.paths import LOG_FILENAME
 from mimer.store import ensure_store
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 
 def test_global_recalls_cross_project_project_scoped_does_not(store_root: Path) -> None:
     """A global Concept from A recalls, cited, from B; a project-scoped one does not."""

@@ -227,6 +227,8 @@ def test_hook_subprocess_code_is_measured_by_coverage(tmp_path: Path) -> None:
     appearing in the combined data therefore proves child-process coverage is
     active."""
 
+    import contextlib
+
     import coverage
     from coverage.exceptions import NoDataError
 
@@ -247,10 +249,8 @@ def test_hook_subprocess_code_is_measured_by_coverage(tmp_path: Path) -> None:
     assert result.returncode == 0
 
     combiner = coverage.Coverage(data_file=str(data_file))
-    try:
+    with contextlib.suppress(NoDataError):
         combiner.combine()
-    except NoDataError:
-        pass
     measured = {Path(path).name for path in combiner.get_data().measured_files()}
 
     assert "runner.py" in measured, (

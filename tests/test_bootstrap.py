@@ -19,6 +19,10 @@ from mimer.shortterm import read_short_term
 from mimer.store import ensure_store
 from tests.transcript_fixture import write_transcript
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 MIMER_DIGEST_PROMPT = "You are Mimer's session digester. Summarise the following coding session."
 
 

@@ -19,6 +19,10 @@ from tests.harness import (
     stop_payload,
 )
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 EVENTS = [
     ("SessionStart", session_start_payload),
     ("Stop", stop_payload),

@@ -20,6 +20,10 @@ from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.gitutil import init_repo
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 
 def _project(store_root: Path, cwd: Path) -> str:
     resolution = resolve(cwd, root=store_root)

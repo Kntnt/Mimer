@@ -31,6 +31,10 @@ from mimer.tombstones import write_tombstone
 from tests.harness import run_hook
 from tests.transcript_fixture import write_transcript
 
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
+
 
 def _project(store_root: Path, cwd: Path) -> str:
     resolution = resolve(cwd, root=store_root)

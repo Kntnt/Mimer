@@ -7,11 +7,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mimer.capture import capture_from_payload
 from mimer.index import index_db_path, reindex, search
 from mimer.longterm import daily_log_path
 from mimer.tombstones import write_tombstone
 from tests.transcript_fixture import write_transcript
+
+# Every test here loads the embedding model (directly or via a hook subprocess),
+# so the session fixture prefetches it once before the suite runs (conftest.py).
+pytestmark = pytest.mark.embedding
 
 PID = "proj-a"
 

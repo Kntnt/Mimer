@@ -5,24 +5,45 @@ fails loudly if any test ever creates the real ``~/.mimer``.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _prefetch_embedding_model() -> None:
-    """Fetch the embedding model once, before any test body runs, then pin
-    Hugging Face to offline mode for the rest of the session (issue #46).
+def needs_embedding_model(items: Iterable[Any]) -> bool:
+    """Whether any collected test is marked as needing the embedding model.
 
-    This makes the download deterministic — a single point at session start
-    instead of lazily inside whichever test first calls ``embed`` — and, once
-    the cache is warm, turns a cache miss into a loud failure at a known step
-    rather than a flaky mid-suite dependency on Hugging Face being reachable.
-    Subprocesses spawned by the hook harness inherit ``HF_HUB_OFFLINE`` and so
-    load the same cached model without touching the network.
+    A test is marked ``embedding`` when it embeds — directly via ``embed`` or
+    indirectly by driving a hook subprocess that does. The session prefetch keys
+    off this so a run that collects no such test never loads the model.
     """
+
+    return any(item.get_closest_marker("embedding") is not None for item in items)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _prefetch_embedding_model(request: pytest.FixtureRequest) -> None:
+    """Fetch the embedding model once, before any embedding-dependent test runs,
+    then pin Hugging Face to offline mode for the rest of the session (issue #46).
+
+    The prefetch is gated on collection: it runs only when at least one collected
+    test is marked ``embedding``. A targeted run of pure unit tests
+    (``pytest tests/test_store_unit.py``, ``pytest -k test_editorconfig``) thus
+    never loads the model and stays independent of the network and the model
+    cache, even on a cold cache with no connectivity.
+
+    When the suite does include embedding tests, the fetch happens here at session
+    start — a single deterministic point rather than lazily inside whichever test
+    first calls ``embed`` — so a cache miss fails loudly at one known place, not
+    as a flaky mid-suite dependency on Hugging Face being reachable. Subprocesses
+    spawned by the hook harness inherit ``HF_HUB_OFFLINE`` and load the same
+    cached model without touching the network.
+    """
+
+    if not needs_embedding_model(request.session.items):
+        return
 
     from mimer.install import prefetch_embedding_model
 
