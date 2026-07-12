@@ -111,7 +111,10 @@ def digest_session(
         return DigestResult("digested", archive_path)
 
     except Exception as exc:  # noqa: BLE001 - the digest must never crash the session
-        log_failure(f"digest: {exc!r}", root=root)
+        # Log the exception type, never its repr: the repr can quote the transcript
+        # being processed before redaction ran, and log_failure's shape-based pass
+        # cannot strip non-secret memory prose or PII from the health-surfaced log (#24).
+        log_failure(f"digest: {type(exc).__name__}", root=root)
         return DigestResult("failed")
 
 

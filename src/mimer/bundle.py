@@ -452,7 +452,12 @@ def _log_skip(path: Path, reason: str, exc: Exception, root: Path | None) -> Non
     if path in _LOGGED_SKIPS:
         return
     _LOGGED_SKIPS.add(path)
-    log_failure(f"bundle: skipped {reason} {path.name}: {exc!r}", root=root)
+
+    # Log the file name and exception type, never the exception repr: a parse error
+    # can quote the Concept's own body (memory prose), which log_failure's shape-based
+    # pass cannot strip from the health-surfaced log (#24). The reason and file name
+    # keep the skip diagnosable without the repr.
+    log_failure(f"bundle: skipped {reason} {path.name}: {type(exc).__name__}", root=root)
 
 
 def _index_concept_if_present(concept: Concept, root: Path | None) -> None:

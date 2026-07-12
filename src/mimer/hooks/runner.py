@@ -44,7 +44,10 @@ def run_hook(event_name: str, handler: HookHandler) -> int:
         payload = _read_payload()
         handler(payload)
     except Exception as exc:  # noqa: BLE001 - a hook must never crash the session
-        log_failure(f"{event_name}: {exc!r}", root=store_root())
+        # Log the exception type, never its repr: the repr can embed payload content
+        # processed before redaction ran, and log_failure's shape-based pass cannot
+        # strip non-secret memory prose or PII from the health-surfaced log (#24).
+        log_failure(f"{event_name}: {type(exc).__name__}", root=store_root())
 
     return 0
 

@@ -80,7 +80,10 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
         return CaptureResult("captured", exchange.turn_id, exchange.date)
 
     except Exception as exc:  # noqa: BLE001 - capture must never raise to the session
-        log_failure(f"capture: {exc!r}", root=root)
+        # Log the exception type, never its repr: the repr can quote the exchange
+        # being processed before redaction ran, and log_failure's shape-based pass
+        # cannot strip non-secret memory prose or PII from the health-surfaced log (#24).
+        log_failure(f"capture: {type(exc).__name__}", root=root)
         return CaptureResult("failed")
 
 

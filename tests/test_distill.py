@@ -179,6 +179,87 @@ def test_failed_promotion_keeps_entry_and_logs(
     assert "distill" in (store_root / "mimer.log").read_text().lower()
 
 
+def test_failed_promotion_logs_identifier_not_fact_content(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed promotion logs a stable identifier for the fact, never the fact's
+    content — the log is surfaced by health and must not quote memory (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    fact = f"The wombat cutover credential is {secret} for the alpha region."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    def boom(**_kwargs: object) -> None:
+        raise RuntimeError("promotion failed")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    # A failure is logged and diagnosable, but by identifier — never by quoting the
+    # fact. The exact identifier scheme (a hash, the turn id, its length) is
+    # deliberately not asserted, so changing the scheme cannot break this test while
+    # the behaviour — logged, content withheld — still holds.
+    assert "distill" in log.lower()
+    assert "wombat cutover" not in log
+    assert secret not in log
+
+
+def test_failed_promotion_keeps_secret_out_of_exception_repr(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a promotion raises an error whose repr quotes the content being
+    processed, the failure log still must not surface a secret from it. The distill
+    path never passes the exception repr to the log — it logs a hashed identifier and
+    the exception type only — so the secret the repr quoted never reaches the log at
+    all, independently of log_failure's shape-based redaction (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+    fact = f"The billing credential is {secret}."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    # An error whose repr embeds pre-redaction content — exactly the reintroduction
+    # path the hashed identifier alone cannot close.
+    def boom(**_kwargs: object) -> None:
+        raise ValueError(f"could not serialise {fact!r}")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    assert "distill" in log.lower()
+    assert secret not in log
+
+
+def test_failed_promotion_keeps_non_secret_content_out_of_exception_repr(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Content redaction cannot recognise as a secret — personal data, plain prose —
+    must not reach the log through an exception repr either. Shape-based redaction
+    cannot strip a personnummer, so the promotion path must never log a repr that
+    could quote the fact; it logs the exception type instead (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    personnummer = "19850101-1234"
+    fact = f"The client contact's national id is {personnummer} on file."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    # An error whose repr quotes the fact — the content-reintroduction path that
+    # shape-based redaction cannot close for non-secret personal data.
+    def boom(**_kwargs: object) -> None:
+        raise ValueError(f"could not serialise {fact!r}")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    assert "distill" in log.lower()
+    assert personnummer not in log
+    assert "national id" not in log
+
+
 def test_distilled_concept_body_is_stored_redacted(store_root: Path) -> None:
     """A secret in a distilled fact is stripped at the Concept-creation boundary, so
     it never reaches the permanent bundle — not the body, the title, nor the file."""
@@ -402,86 +483,6 @@ def test_digest_refreshed_working_state_is_not_promoted(
     # The digest's threads reached short-term, but none became a Concept.
     assert "refactoring the tokenizer" in read_short_term(pid, store_root)
     assert list_concepts(store_root) == []
-
-
-def test_failed_promotion_logs_identifier_not_fact_content(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A failed promotion logs a stable identifier for the fact, never the fact's
-    content — the log is surfaced by health and must not quote memory (issue #24)."""
-
-    pid = _project(store_root, project_dir)
-    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
-    fact = f"The wombat cutover credential is {secret} for the alpha region."
-    remember(fact, project_id=pid, root=store_root, durable=True)
-
-    def boom(**_kwargs: object) -> None:
-        raise RuntimeError("promotion failed")
-
-    monkeypatch.setattr(distill_module, "create_concept", boom)
-    distill_durable_entries(pid, root=store_root)
-
-    log = (store_root / "mimer.log").read_text()
-    # A failure is logged and diagnosable, but by identifier — never by quoting the
-    # fact. The exact identifier scheme (a hash, the turn id, its length) is
-    # deliberately not asserted, so changing the scheme cannot break this test while
-    # the behaviour — logged, content withheld — still holds.
-    assert "distill" in log.lower()
-    assert "wombat cutover" not in log
-    assert secret not in log
-
-
-def test_failed_promotion_redacts_secret_in_exception_repr(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When a promotion raises an error whose repr quotes the content being
-    processed, the failure log still must not surface a secret from it: the hashed
-    identifier keeps the body out, and log_failure redacts the exception repr that
-    would otherwise reintroduce it (issue #24)."""
-
-    pid = _project(store_root, project_dir)
-    secret = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
-    fact = f"The billing credential is {secret}."
-    remember(fact, project_id=pid, root=store_root, durable=True)
-
-    # An error whose repr embeds pre-redaction content — exactly the reintroduction
-    # path the hashed identifier alone cannot close.
-    def boom(**_kwargs: object) -> None:
-        raise ValueError(f"could not serialise {fact!r}")
-
-    monkeypatch.setattr(distill_module, "create_concept", boom)
-    distill_durable_entries(pid, root=store_root)
-
-    log = (store_root / "mimer.log").read_text()
-    assert "distill" in log.lower()
-    assert secret not in log
-
-
-def test_failed_promotion_keeps_non_secret_content_out_of_exception_repr(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Content redaction cannot recognise as a secret — personal data, plain prose —
-    must not reach the log through an exception repr either. Shape-based redaction
-    cannot strip a personnummer, so the promotion path must never log a repr that
-    could quote the fact; it logs the exception type instead (issue #24)."""
-
-    pid = _project(store_root, project_dir)
-    personnummer = "19850101-1234"
-    fact = f"The client contact's national id is {personnummer} on file."
-    remember(fact, project_id=pid, root=store_root, durable=True)
-
-    # An error whose repr quotes the fact — the content-reintroduction path that
-    # shape-based redaction cannot close for non-secret personal data.
-    def boom(**_kwargs: object) -> None:
-        raise ValueError(f"could not serialise {fact!r}")
-
-    monkeypatch.setattr(distill_module, "create_concept", boom)
-    distill_durable_entries(pid, root=store_root)
-
-    log = (store_root / "mimer.log").read_text()
-    assert "distill" in log.lower()
-    assert personnummer not in log
-    assert "national id" not in log
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
