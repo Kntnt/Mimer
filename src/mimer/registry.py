@@ -206,14 +206,86 @@ class Registry:
         return target
 
     def _move_project_memory(self, source_id: str, target_id: str) -> None:
-        """Move the contents of the source project's directory under the target's."""
+        """Merge the source project's on-disk memory into the target's, losslessly.
+
+        The move is recursive and collision-aware (issue #33): subdirectories are
+        merged in place rather than replaced — so a non-empty ``long-term/`` or
+        ``transcripts/`` on both sides no longer makes ``os.replace`` raise
+        ``ENOTEMPTY`` mid-loop — and a file present on both sides is combined by
+        artefact type rather than silently overwritten. The source directory is
+        drained and removed only after everything has moved, so a merge is never
+        left half-applied.
+        """
 
         source_dir = project_dir(source_id, self._root)
         if not source_dir.exists():
             return
 
-        target_dir = project_dir(target_id, self._root)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for item in source_dir.iterdir():
-            os.replace(item, target_dir / item.name)
+        _merge_directory(source_dir, project_dir(target_id, self._root), target_id)
         source_dir.rmdir()
+
+
+def _merge_directory(source_dir: Path, target_dir: Path, target_id: str) -> None:
+    """Recursively merge ``source_dir`` into ``target_dir``, emptying the source.
+
+    A leaf absent on the target is moved outright; a leaf present on both sides is
+    combined by :func:`_combine_files`; a subdirectory recurses. Each source
+    subdirectory is removed once drained, as the walk unwinds.
+    """
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Fold each source entry into the target, recursing into subdirectories and
+    # combining colliding leaf files instead of clobbering them.
+    for item in source_dir.iterdir():
+        destination = target_dir / item.name
+        if item.is_dir():
+            _merge_directory(item, destination, target_id)
+            item.rmdir()
+        elif destination.exists():
+            _combine_files(item, destination, target_id)
+            item.unlink()
+        else:
+            os.replace(item, destination)
+
+
+def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None:
+    """Combine a leaf file present on both sides of a merge, keeping every entry.
+
+    ``short-term.md`` is a structured document, so its dated entries are merged
+    section by section (duplicates dropped) under the target's id. Every other
+    project artefact — daily logs, the capture/digest/git ledgers, the distilled
+    queue, archived transcripts — is append-only, so the source's content is
+    concatenated onto the target's.
+    """
+
+    # Imported lazily: shortterm depends on this module for ``project_dir``, so a
+    # top-level import would be circular.
+    from mimer.shortterm import SHORT_TERM_FILENAME, merge_documents
+
+    if target_file.name == SHORT_TERM_FILENAME:
+        merged = merge_documents(
+            target_file.read_text(encoding="utf-8"),
+            source_file.read_text(encoding="utf-8"),
+            target_id,
+        )
+        target_file.write_text(merged, encoding="utf-8")
+        target_file.chmod(FILE_MODE)
+    else:
+        _concatenate_file(source_file, target_file)
+
+
+def _concatenate_file(source_file: Path, target_file: Path) -> None:
+    """Append the source file's content onto the target's, preserving every line.
+
+    A newline is inserted at the seam when the target does not already end with
+    one, so the target's last record and the source's first never fuse into a
+    single line.
+    """
+
+    existing = target_file.read_text(encoding="utf-8")
+    addition = source_file.read_text(encoding="utf-8")
+
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    target_file.write_text(existing + separator + addition, encoding="utf-8")
+    target_file.chmod(FILE_MODE)

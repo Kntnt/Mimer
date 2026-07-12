@@ -107,6 +107,34 @@ def _render_entry(entry: Entry) -> str:
     return f"- [{entry.date}] {entry.text}{suffix}"
 
 
+def merge_documents(target_content: str, source_content: str, target_id: str) -> str:
+    """Merge two short-term memory documents into one, losing no entry.
+
+    Used when a project merge (ADR 0008) folds a source project whose short-term
+    file collides with the target's. Entries are unioned per section in
+    target-then-source order; an entry present in both — same date, text and
+    durability — is kept once. Non-entry lines are dropped, as everywhere the
+    machine manages this file, and the result is rendered under ``target_id``.
+    """
+
+    target_sections = parse_short_term(target_content)
+    source_sections = parse_short_term(source_content)
+
+    # Union each section, preserving the target's entries first and appending the
+    # source's newcomers, so a shared entry is never duplicated.
+    merged: dict[str, list[Entry]] = {}
+    for name in SECTIONS:
+        entries = list(target_sections[name])
+        seen = set(entries)
+        for entry in source_sections[name]:
+            if entry not in seen:
+                entries.append(entry)
+                seen.add(entry)
+        merged[name] = entries
+
+    return render_short_term(target_id, merged)
+
+
 def short_term_path(project_id: str, root: Path | None = None) -> Path:
     """Path to a project's short-term memory file."""
 
