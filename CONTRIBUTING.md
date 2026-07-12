@@ -23,6 +23,7 @@ Be respectful and constructive in issues, pull requests, and discussions. Assume
 1. **Open an issue first** for anything in the *discussed* row above. For *welcomed* items, you can open a PR directly. Use the issue tracker at <https://github.com/Kntnt/Mimer/issues>.
 2. **One concern per PR.** Smaller PRs land faster.
 3. **Follow the project's coding standard.** It is materialised under [`agents.d/coding-standard/`](agents.d/coding-standard/) — read `general.md` plus the module(s) for the language or framework you touch before changing code.
+4. **Catch the CI gates locally.** CI runs `ruff check`, `ruff format --check`, `mypy`, and `pytest` on Linux and macOS. Install the pre-commit hooks with `uv run pre-commit install` to run the first three on every commit against the project's own pinned tools; the checked-in `.editorconfig` keeps your editor's line length aligned with them. Run the full suite with `uv run pytest`.
 
 ## Running the tests
 

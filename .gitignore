@@ -23,3 +23,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

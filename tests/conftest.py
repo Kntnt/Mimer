@@ -4,10 +4,30 @@ fails loudly if any test ever creates the real ``~/.mimer``.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _prefetch_embedding_model() -> None:
+    """Fetch the embedding model once, before any test body runs, then pin
+    Hugging Face to offline mode for the rest of the session (issue #46).
+
+    This makes the download deterministic — a single point at session start
+    instead of lazily inside whichever test first calls ``embed`` — and, once
+    the cache is warm, turns a cache miss into a loud failure at a known step
+    rather than a flaky mid-suite dependency on Hugging Face being reachable.
+    Subprocesses spawned by the hook harness inherit ``HF_HUB_OFFLINE`` and so
+    load the same cached model without touching the network.
+    """
+
+    from mimer.install import prefetch_embedding_model
+
+    prefetch_embedding_model()
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
 
 @pytest.fixture

@@ -42,9 +42,12 @@ packages = ["src/mimer"]
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pre-commit>=4.0",
     "ruff>=0.14",
     "mypy>=1.14",
     "types-pyyaml>=6.0.12.20260518",
+    "editorconfig>=0.17",
 ]
 
 [tool.ruff]
@@ -70,4 +73,22 @@ addopts = "-ra --strict-markers"
 markers = [
     "integration: opt-in test that drives a live `claude` binary (set MIMER_INTEGRATION=1); skipped by default",
     "packaging: opt-in smoke test that builds and installs the wheel (set MIMER_PACKAGING=1); needs no `claude` binary",
+    "embedding: the test loads the embedding model, directly or via a hook subprocess",
 ]
+
+# Coverage is measured over the package source. It is reported, not gated,
+# so a run without pytest-cov (or without the --cov flag) still works; CI
+# passes --cov explicitly (see .github/workflows/ci.yml).
+#
+# The source is the importable package, not the "src/mimer" path, so a hook
+# subprocess spawned with a different working directory still resolves it.
+# parallel mode makes each process (this one plus every hook subprocess the
+# test harness spawns) write its own data file; pytest-cov combines them, so
+# the report reflects the hook code that runs only in subprocesses.
+[tool.coverage.run]
+source = ["mimer"]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+show_missing = true

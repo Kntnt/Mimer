@@ -1,0 +1,31 @@
+# Local counterpart to the CI gates (issue #46). These hooks call the project's
+# own uv-managed ruff and mypy, so a passing `pre-commit run` means the same
+# tool versions and the same whole-repo invocations that CI runs have passed —
+# failures are caught before pushing, not after. pytest is deliberately not a
+# pre-commit hook: the full suite fetches a model and spawns subprocesses, which
+# is too heavy for every commit; CI owns that gate.
+#
+# Enable with: uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        always_run: true
