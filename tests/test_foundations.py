@@ -43,7 +43,7 @@ def test_each_hook_runs_as_noop_and_exits_zero(
 def test_first_invocation_creates_store_with_permissions(
     store_root: Path, project_dir: Path
 ) -> None:
-    """The first hook invocation creates the store, config and failure log with
+    """The first hook invocation creates the store and failure log with
     0700 directories and 0600 files."""
 
     assert not store_root.exists()
@@ -55,11 +55,8 @@ def test_first_invocation_creates_store_with_permissions(
     assert result.returncode == 0, result.stderr
     assert store_root.is_dir()
     assert stat.S_IMODE(store_root.stat().st_mode) == 0o700
-    config = store_root / "config.toml"
     log = store_root / "mimer.log"
-    assert config.is_file()
     assert log.is_file()
-    assert stat.S_IMODE(config.stat().st_mode) == 0o600
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
     assert log.read_text() == ""
 
@@ -88,16 +85,16 @@ def test_malformed_payload_logs_one_failure_line(store_root: Path, project_dir: 
     assert "Stop" in log_lines[0]
 
 
-def test_reinvocation_preserves_config(store_root: Path, project_dir: Path) -> None:
-    """A second invocation neither errors nor clobbers an edited config."""
+def test_reinvocation_preserves_failure_log(store_root: Path, project_dir: Path) -> None:
+    """A second invocation neither errors nor clobbers prior failure-log lines."""
 
     run_hook("SessionStart", session_start_payload(), store_root=store_root, cwd=project_dir)
-    config = store_root / "config.toml"
-    config.write_text("# edited by the user\n")
+    log = store_root / "mimer.log"
+    log.write_text("prior failure\n")
 
     result = run_hook(
         "SessionStart", session_start_payload(), store_root=store_root, cwd=project_dir
     )
 
     assert result.returncode == 0, result.stderr
-    assert config.read_text() == "# edited by the user\n"
+    assert log.read_text() == "prior failure\n"

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from mimer import failure_log, guard, store
-from mimer.paths import CONFIG_FILENAME, LOG_FILENAME, store_root
+from mimer.paths import LOG_FILENAME, store_root
 
 
 def test_store_root_defaults_to_home(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,7 +28,7 @@ def test_store_root_honours_env_override(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 def test_ensure_store_creates_dirs_and_files_with_permissions(tmp_path: Path) -> None:
-    """``ensure_store`` creates the root, config and log with 0700/0600 modes."""
+    """``ensure_store`` creates the root and log with 0700/0600 modes."""
 
     root = tmp_path / "store"
 
@@ -36,25 +36,20 @@ def test_ensure_store_creates_dirs_and_files_with_permissions(tmp_path: Path) ->
 
     assert result == root
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    config = root / CONFIG_FILENAME
     log = root / LOG_FILENAME
-    assert stat.S_IMODE(config.stat().st_mode) == 0o600
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
-    assert "[core]" in config.read_text()
     assert log.read_text() == ""
 
 
-def test_ensure_store_is_idempotent_and_preserves_config(tmp_path: Path) -> None:
-    """Re-running never clobbers an edited config or a non-empty log."""
+def test_ensure_store_is_idempotent_and_preserves_log(tmp_path: Path) -> None:
+    """Re-running never clobbers a non-empty log."""
 
     root = tmp_path / "store"
     store.ensure_store(root)
-    (root / CONFIG_FILENAME).write_text("# mine\n")
     (root / LOG_FILENAME).write_text("prior\n")
 
     store.ensure_store(root)
 
-    assert (root / CONFIG_FILENAME).read_text() == "# mine\n"
     assert (root / LOG_FILENAME).read_text() == "prior\n"
 
 

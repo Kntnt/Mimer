@@ -63,7 +63,6 @@ def test_run_install_creates_store_and_reports_ok(store_root: Path) -> None:
     report = run_install(store_root)
 
     assert report.ok
-    assert (store_root / "config.toml").exists()
     assert (store_root / "mimer.log").exists()
 
 
