@@ -52,7 +52,16 @@ class WriteResult:
 
 
 def _key(text: str) -> str:
-    """A normalised identity for a fact, so dedup ignores trivial wording."""
+    """Exact normalised identity of a fact, for the remember dedup only.
+
+    This is deliberately *not* the shared "same fact?" matcher (issue #18). That
+    matcher answers whether a fact has been forgotten across layers, and errs
+    toward matching so a forget stays a forget. Remember asks a narrower, opposite
+    question — is the user re-stating the one note they are editing? — where fuzzy
+    overlap is unsafe: it would silently overwrite a distinct-but-similar note. So
+    remember dedups on exact wording (up to case and whitespace) and leaves the
+    fuzzy semantics to the three forgetting sites.
+    """
 
     return " ".join(text.lower().split())
 
