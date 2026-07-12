@@ -2,9 +2,9 @@
 
 The transcript JSONL format is vendor-internal and changes between releases, so
 this adapter is deliberately forgiving: it skips lines it cannot parse, accepts
-message content as either a string or a list of blocks, and derives a stable
-turn identity from the exchange's content (for capture idempotency) rather than
-from any vendor id.
+message content as either a string or a list of blocks, and derives a turn
+identity from the exchange's content *and its own timestamp* (for capture
+idempotency) rather than from any vendor id.
 """
 
 from __future__ import annotations
@@ -70,8 +70,9 @@ def last_exchange(transcript_path: Path) -> Exchange | None:
 
     _, assistant_text, timestamp = messages[assistant_index]
     user_text = messages[user_index][1] if user_index is not None else ""
-    turn_id = hashlib.sha256(f"{user_text}\x00{assistant_text}".encode()).hexdigest()[:16]
-    return Exchange(user_text, assistant_text, timestamp, turn_id)
+    return Exchange(
+        user_text, assistant_text, timestamp, _turn_id(timestamp, user_text, assistant_text)
+    )
 
 
 def all_exchanges(transcript_path: Path) -> list[Exchange]:
@@ -89,8 +90,9 @@ def all_exchanges(transcript_path: Path) -> list[Exchange]:
             pending_user = (text, timestamp)
         elif role == "assistant" and text:
             user_text, _ = pending_user if pending_user is not None else ("", timestamp)
-            turn_id = hashlib.sha256(f"{user_text}\x00{text}".encode()).hexdigest()[:16]
-            exchanges.append(Exchange(user_text, text, timestamp, turn_id))
+            exchanges.append(
+                Exchange(user_text, text, timestamp, _turn_id(timestamp, user_text, text))
+            )
             pending_user = None
     return exchanges
 
@@ -105,6 +107,18 @@ def conversation_text(transcript_path: Path) -> str:
     messages = _parse_messages(transcript_path.read_text(encoding="utf-8"))
     labels = {"user": "User", "assistant": "Assistant"}
     return "\n\n".join(f"{labels[role]}: {text}" for role, text, _ in messages if text)
+
+
+def _turn_id(timestamp: str, user_text: str, assistant_text: str) -> str:
+    """Derive a turn's identity from its own moment and its content.
+
+    The timestamp is folded in so two genuinely distinct turns with identical
+    text get distinct ids (#38), while a re-fired identical Stop hook — the same
+    turn, hence the same timestamp — hashes to the same id and stays idempotent.
+    """
+
+    digest = hashlib.sha256(f"{timestamp}\x00{user_text}\x00{assistant_text}".encode()).hexdigest()
+    return digest[:16]
 
 
 def _parse_messages(raw: str) -> list[tuple[str, str, str]]:

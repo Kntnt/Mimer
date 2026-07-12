@@ -45,8 +45,12 @@ def test_same_text_at_different_moments_gets_distinct_identities(tmp_path: Path)
     """Identical text at two different timestamps yields distinct turn ids, so a
     genuinely repeated short exchange is not collapsed into one capture (#38)."""
 
-    early = last_exchange(write_transcript(tmp_path / "e.jsonl", [("continue", "Done.", "2026-07-11T10:00:00Z")]))
-    late = last_exchange(write_transcript(tmp_path / "l.jsonl", [("continue", "Done.", "2026-07-11T11:00:00Z")]))
+    early = last_exchange(
+        write_transcript(tmp_path / "e.jsonl", [("continue", "Done.", "2026-07-11T10:00:00Z")])
+    )
+    late = last_exchange(
+        write_transcript(tmp_path / "l.jsonl", [("continue", "Done.", "2026-07-11T11:00:00Z")])
+    )
 
     assert early is not None and late is not None
     assert early.turn_id != late.turn_id
