@@ -9,11 +9,15 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from mimer.capture import capture_from_payload
+from mimer.index import index_db_path, reindex
 from mimer.longterm import daily_log_path
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.harness import run_hook
+from tests.secret_samples import SAMPLES, Sample
 from tests.transcript_fixture import write_transcript
 
 
@@ -93,6 +97,49 @@ def test_seeded_secret_never_reaches_the_daily_log(store_root: Path, project_dir
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert "s3cr3tPassw0rd" not in log
     assert "REDACTED" in log
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
+def test_broadened_secret_class_never_reaches_the_daily_log(
+    store_root: Path, project_dir: Path, sample: Sample
+) -> None:
+    """Each broadened secret class is redacted before it lands in the daily log."""
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl",
+        [(f"here is {sample.text} thanks", "noted", "2026-07-11T10:00:00Z")],
+    )
+
+    capture_from_payload(_payload(project_dir, transcript), root=store_root)
+
+    pid = _project_id(store_root, project_dir)
+    log = daily_log_path(pid, "2026-07-11", store_root).read_text()
+    assert sample.sensitive not in log
+
+
+def test_broadened_secret_classes_never_reach_the_index(
+    store_root: Path, project_dir: Path
+) -> None:
+    """No broadened secret class survives into the derived recall index.
+
+    The index is built from the already-redacted daily logs, so capturing each
+    class and reindexing must leave every sensitive value absent from index.db.
+    """
+
+    ensure_store(store_root)
+    for offset, sample in enumerate(SAMPLES):
+        transcript = write_transcript(
+            project_dir / f"s{offset}.jsonl",
+            [(f"here is {sample.text} thanks", "noted", f"2026-07-11T10:{offset:02d}:00Z")],
+        )
+        capture_from_payload(_payload(project_dir, transcript), root=store_root)
+
+    reindex(store_root)
+
+    indexed = index_db_path(store_root).read_bytes()
+    for sample in SAMPLES:
+        assert sample.sensitive.encode() not in indexed, sample.name
 
 
 def test_turn_near_midnight_lands_in_its_own_day(store_root: Path, project_dir: Path) -> None:

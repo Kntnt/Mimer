@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from mimer.redaction import redact
+from tests.secret_samples import GIT_SHA, SAMPLES, SHORT_GIT_SHA, ULID, Sample
 
 
 def _aws_key() -> str:
@@ -71,5 +72,24 @@ def test_ordinary_prose_is_untouched() -> None:
     """Normal text is not mangled by redaction (no false positives on prose)."""
 
     text = "We decided to use sqlite-vec because it keeps the index in one file."
+
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
+def test_broadened_secret_classes_are_removed(sample: Sample) -> None:
+    """Each secret class the audit found unredacted loses its sensitive part."""
+
+    redacted = redact(f"here is the value {sample.text} use it")
+
+    assert sample.sensitive not in redacted
+    assert "REDACTED" in redacted
+
+
+@pytest.mark.parametrize("identifier", [GIT_SHA, SHORT_GIT_SHA, ULID])
+def test_provenance_identifiers_are_not_over_redacted(identifier: str) -> None:
+    """Git SHAs and ULIDs — provenance the rest of Mimer cites — survive intact."""
+
+    text = f"see commit {identifier} for the change"
 
     assert redact(text) == text
