@@ -289,6 +289,52 @@ def test_crash_between_temp_write_and_rename_preserves_previous(
     assert reloaded.status == "active"
 
 
+def test_crash_during_index_regeneration_preserves_previous_index(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault injected while regenerating index.md leaves the previous index
+    byte-for-byte intact — the derived index is written through the same atomic
+    helper as the source Concepts, so a crash mid-regenerate cannot tear it
+    (issue #17)."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="First fact",
+        body="The first durable fact, already indexed.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+    index_path = index_md_path(store_root)
+    original = index_path.read_text(encoding="utf-8")
+
+    # Fault the atomic rename only for the index write, letting the Concept file
+    # write succeed, so the crash lands squarely on index.md regeneration.
+    real_replace = os.replace
+
+    def crash_index_only(src: Path, dst: Path) -> None:
+        if Path(dst).name == bundle.INDEX_FILENAME:
+            raise OSError("simulated crash before index rename")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash_index_only)
+
+    with pytest.raises(OSError):
+        create_concept(
+            title="Second fact",
+            body="A second fact whose index regeneration crashes mid-write.",
+            concept_type="Reference",
+            origin="proj-a",
+            scope="global",
+            root=store_root,
+        )
+
+    # The previous index.md is byte-for-byte intact and still lists the first fact.
+    assert index_path.read_text(encoding="utf-8") == original
+    assert "First fact" in original
+
+
 def _create_good_concept(store_root: Path) -> Concept:
     """Create one well-formed, parseable Concept in the bundle."""
 
@@ -389,6 +435,50 @@ def test_one_bad_concept_is_logged_once_across_many_reads(store_root: Path) -> N
     ]
     assert len(log_lines) == 1
     assert "skipped" in log_lines[0].lower()
+
+
+def test_concurrent_delete_is_skipped_but_not_logged_as_unparseable(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Concept unlinked by another process between enumeration and read is a
+    concurrent delete, not corruption: it is skipped, every surviving Concept is
+    still returned, and the log names the real cause instead of blaming an
+    'unparseable' file that never was (issue #17, ADR 0011)."""
+
+    ensure_store(store_root)
+    survivor = _create_good_concept(store_root)
+    vanishing = create_concept(
+        title="Vanishing concept",
+        body="A Concept another process unlinks mid-enumeration.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+
+    # Simulate a detached writer unlinking one file after glob() but before this
+    # process reads it, which surfaces as FileNotFoundError from read_concept.
+    real_read = bundle.read_concept
+
+    def read_or_vanish(slug: str, root: Path | None = None) -> Concept:
+        if slug == vanishing.slug:
+            raise FileNotFoundError(concept_path(slug, store_root))
+        return real_read(slug, root)
+
+    monkeypatch.setattr(bundle, "read_concept", read_or_vanish)
+
+    slugs = [concept.slug for concept in list_concepts(store_root)]
+    assert survivor.slug in slugs
+    assert vanishing.slug not in slugs
+
+    # The skip is logged, but as an unreadable file, never as unparseable content.
+    log_line = next(
+        line
+        for line in (store_root / LOG_FILENAME).read_text(encoding="utf-8").splitlines()
+        if f"{vanishing.slug}.md" in line
+    )
+    assert "skipped" in log_line.lower()
+    assert "unparseable" not in log_line.lower()
 
 
 def test_session_start_injects_valid_concept_despite_one_bad_file(
