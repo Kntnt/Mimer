@@ -13,6 +13,7 @@ for the next session's announcement.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -245,7 +246,10 @@ def _promote(text: str, project_id: str, scope: str, root: Path) -> DistillResul
     try:
         return distill_fact(text=text, project_id=project_id, scope=scope, root=root)
     except Exception as exc:  # noqa: BLE001 - a failed promotion must not lose the entry
-        log_failure(f"distill: promotion failed for {text!r}: {exc!r}", root=root)
+        # Log the failure by a stable fact identifier, never the content: the log
+        # is surfaced by `mimer-manage health`, and the fact may hold a secret (#24).
+        identifier = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        log_failure(f"distill: promotion failed for fact {identifier}: {exc!r}", root=root)
         return DistillResult("failed")
 
 

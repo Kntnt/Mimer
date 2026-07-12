@@ -1,5 +1,10 @@
 """The failure log: the single place every detached process reports to, so
 "detached" never means "unobservable" (ADR 0011).
+
+The log is surfaced back to the user by ``mimer-manage health``, so it must never
+become a back door around the redaction guarantee: every message is run through
+the redaction pass here before it reaches the file, so each writer benefits
+without having to remember (issue #24).
 """
 
 from __future__ import annotations
@@ -8,14 +13,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mimer.paths import LOG_FILENAME, store_root
+from mimer.redaction import redact
 
 
 def log_failure(message: str, *, root: Path | None = None) -> None:
     """Append one timestamped line to the failure log.
 
-    Newlines in ``message`` are flattened so a single failure is always a single
-    physical line, keeping the log grep-able. Assumes the store already exists
-    (its creation is :func:`mimer.store.ensure_store`'s job).
+    The message is redacted before it is written, so a secret that reached a
+    caller — an exception repr embedding pre-redaction content, say — cannot leak
+    through the log the health command surfaces. Newlines are then flattened so a
+    single failure is always a single physical line, keeping the log grep-able.
+    Assumes the store already exists (its creation is
+    :func:`mimer.store.ensure_store`'s job).
 
     Args:
         message: A description of what went wrong.
@@ -24,8 +33,12 @@ def log_failure(message: str, *, root: Path | None = None) -> None:
 
     root = root or store_root()
 
+    # Strip recognised secrets before the message reaches the log: it is
+    # echoed back by `mimer-manage health`, so it must not quote a secret.
+    safe = redact(message)
+
     timestamp = datetime.now(UTC).isoformat()
-    line = f"{timestamp}\t{message}".replace("\n", " ").replace("\r", " ")
+    line = f"{timestamp}\t{safe}".replace("\n", " ").replace("\r", " ")
     with (root / LOG_FILENAME).open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
 
