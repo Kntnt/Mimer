@@ -52,6 +52,31 @@ def test_same_turn_captured_twice_lands_once(store_root: Path, project_dir: Path
     assert log.count("ship the parser") == 1
 
 
+def test_identical_turns_at_different_moments_are_both_captured(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Two turns with identical text but different timestamps are both recorded;
+    content-only identity would have discarded the second as a duplicate (#38)."""
+
+    ensure_store(store_root)
+    early = write_transcript(
+        project_dir / "early.jsonl", [("continue", "Done.", "2026-07-11T10:00:00Z")]
+    )
+    late = write_transcript(
+        project_dir / "late.jsonl", [("continue", "Done.", "2026-07-11T11:00:00Z")]
+    )
+
+    first = capture_from_payload(_payload(project_dir, early), root=store_root)
+    second = capture_from_payload(_payload(project_dir, late), root=store_root)
+
+    assert first.status == "captured"
+    assert second.status == "captured"
+    assert first.turn_id != second.turn_id
+    pid = _project_id(store_root, project_dir)
+    log = daily_log_path(pid, "2026-07-11", store_root).read_text()
+    assert log.count("- Assistant: Done.") == 2
+
+
 def test_seeded_secret_never_reaches_the_daily_log(store_root: Path, project_dir: Path) -> None:
     """A secret in the exchange is redacted before it is stored."""
 
