@@ -87,6 +87,27 @@ def test_tombstoned_fact_does_not_surface(store_root: Path) -> None:
     assert all("/v1/old" not in r.text for r in results)
 
 
+def test_short_tombstone_does_not_suppress_an_unrelated_longer_memory(store_root: Path) -> None:
+    """A short tombstone must not hide a longer, unrelated memory (issue #18).
+
+    Recall suppressed anything whose text merely contained the tombstone as a
+    substring, so tombstoning a short phrase silently hid unrelated memories. The
+    shared matcher, keyed on whole-fact overlap, no longer over-suppresses.
+    """
+
+    unrelated = "The analytics pipeline uses Redis Streams to buffer events before the load."
+    _seed(store_root, "2026-06-04", [("Analytics", unrelated)])
+    reindex(store_root)
+    assert search("how does the analytics pipeline buffer events?", root=store_root, project_id=PID)
+
+    write_tombstone("uses redis", project_id=PID, root=store_root)
+
+    results = search(
+        "how does the analytics pipeline buffer events?", root=store_root, project_id=PID
+    )
+    assert any("analytics pipeline" in r.text for r in results)
+
+
 def test_unanswerable_query_returns_empty(store_root: Path) -> None:
     """A query unrelated to anything stored returns an explicit empty result."""
 

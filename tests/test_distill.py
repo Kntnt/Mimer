@@ -105,6 +105,25 @@ def test_tombstoned_fact_is_never_repromoted(store_root: Path) -> None:
     assert list_concepts(store_root) == []
 
 
+def test_reworded_tombstoned_fact_is_never_repromoted(store_root: Path) -> None:
+    """A reworded restatement of a tombstoned fact stays forgotten (issue #18).
+
+    Distillation used exact string equality, so trivial rewording defeated a
+    forget and let the fact back into permanent memory. The shared matcher closes
+    that hole.
+    """
+
+    ensure_store(store_root)
+    write_tombstone("The prototype used a Redis cache.", project_id="p", root=store_root)
+
+    result = distill_fact(
+        text="We used Redis for the prototype cache", project_id="p", root=store_root
+    )
+
+    assert result.status == "rejected-tombstoned"
+    assert list_concepts(store_root) == []
+
+
 def test_successful_promotion_evicts_durable_after_verification(
     store_root: Path, project_dir: Path
 ) -> None:
