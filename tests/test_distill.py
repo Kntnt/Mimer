@@ -451,7 +451,35 @@ def test_failed_promotion_redacts_secret_in_exception_repr(
     distill_durable_entries(pid, root=store_root)
 
     log = (store_root / "mimer.log").read_text()
+    assert "distill" in log.lower()
     assert secret not in log
+
+
+def test_failed_promotion_keeps_non_secret_content_out_of_exception_repr(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Content redaction cannot recognise as a secret — personal data, plain prose —
+    must not reach the log through an exception repr either. Shape-based redaction
+    cannot strip a personnummer, so the promotion path must never log a repr that
+    could quote the fact; it logs the exception type instead (issue #24)."""
+
+    pid = _project(store_root, project_dir)
+    personnummer = "19850101-1234"
+    fact = f"The client contact's national id is {personnummer} on file."
+    remember(fact, project_id=pid, root=store_root, durable=True)
+
+    # An error whose repr quotes the fact — the content-reintroduction path that
+    # shape-based redaction cannot close for non-secret personal data.
+    def boom(**_kwargs: object) -> None:
+        raise ValueError(f"could not serialise {fact!r}")
+
+    monkeypatch.setattr(distill_module, "create_concept", boom)
+    distill_durable_entries(pid, root=store_root)
+
+    log = (store_root / "mimer.log").read_text()
+    assert "distill" in log.lower()
+    assert personnummer not in log
+    assert "national id" not in log
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:

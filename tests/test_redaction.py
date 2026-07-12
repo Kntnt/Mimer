@@ -43,6 +43,12 @@ def _google_key() -> str:
     return "AIza" + "SyDummyGoogleApiKey" + "0123456789abcdef"
 
 
+def _google_key_trailing_hyphen() -> str:
+    # A valid-shape Google key whose final (35th) character is a hyphen — the case
+    # a trailing word boundary cannot match against a following non-word character.
+    return "AIza" + "SyDummyGoogleApiKey0123456789abc" + "de-"
+
+
 def _jwt() -> str:
     return (
         "eyJ"
@@ -62,6 +68,7 @@ SECRETS = [
     _connection_string(),
     _stripe_key(),
     _google_key(),
+    _google_key_trailing_hyphen(),
     _jwt(),
 ]
 
@@ -71,6 +78,17 @@ def test_known_secret_shapes_are_removed(secret: str) -> None:
     """A message carrying a secret loses the secret to a redaction marker."""
 
     redacted = redact(f"here is the value {secret} use it")
+
+    assert secret not in redacted
+    assert "REDACTED" in redacted
+
+
+def test_google_key_ending_in_hyphen_at_end_of_string_is_removed() -> None:
+    """A hyphen-terminated Google key is redacted even with no character to its
+    right — a trailing word boundary would silently miss this shape."""
+
+    secret = _google_key_trailing_hyphen()
+    redacted = redact(f"the key is {secret}")
 
     assert secret not in redacted
     assert "REDACTED" in redacted
