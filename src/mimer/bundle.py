@@ -138,9 +138,16 @@ def create_concept(
         raise ConfirmationRequired("a pinned/profile write requires explicit confirmation")
 
     # Strip secrets from every persisted free-text field at the sink, so no
-    # caller can land one in the bundle — not the body, the title derived from
-    # it, nor the slug and index entry that follow from that title (issue #23).
+    # caller can land one in the bundle — the body, the title (and the slug and
+    # index entry derived from it), the description, the tags, and the citation
+    # sources and excerpts written verbatim into the file (issue #23).
     title, body, description = redact(title), redact(body), redact(description)
+    tags = [redact(tag) for tag in tags] if tags else tags
+    citations = (
+        [Source(redact(s.source), redact(s.excerpt), s.date) for s in citations]
+        if citations
+        else citations
+    )
 
     with project_lock(_BUNDLE_LOCK, root=root):
         concept = Concept(

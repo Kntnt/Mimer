@@ -171,6 +171,11 @@ def forget(
     root = root or store_root()
     ensure_short_term(project_id, root)
 
+    # Redact before matching and tombstoning so a forget targets the same
+    # secret-free form remember stored, and no raw secret is persisted to the
+    # durable tombstone ledger (issue #23).
+    text = redact(text)
+
     removed = 0
 
     def transform(content: str) -> str:
