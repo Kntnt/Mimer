@@ -5,12 +5,17 @@ idempotent, and the excerpt survives a history rewrite (ADR 0003).
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from mimer import gitreader
+from mimer.failure_log import fresh_failures
 from mimer.gitreader import fold_git_log
 from mimer.index import reindex, search
-from mimer.longterm import daily_log_path
+from mimer.longterm import daily_log_path, long_term_dir
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.gitutil import init_repo
@@ -29,6 +34,29 @@ def _commit(repo: Path, message: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+def _commit_dated(repo: Path, message: str, date: str) -> str:
+    """Make an empty commit whose author and committer dates are both ``date``.
+
+    Fixing the committer date lets a test control ``git log``'s default ordering,
+    which is what interleaves a merged-in branch behind mainline commits.
+    """
+
+    stamp = f"{date}T12:00:00"
+    env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", message],
+        check=True,
+        env=env,
+    )
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
 def test_commit_message_recalled_and_cited(store_root: Path, tmp_path: Path) -> None:
@@ -74,6 +102,146 @@ def test_excerpt_survives_a_history_rewrite(store_root: Path, tmp_path: Path) ->
     stored = daily_log_path(pid, _commit_date(repo), store_root)
     # The stored excerpt survives even though the SHA is unresolvable.
     assert any("xyzzy" in log.read_text() for log in stored.parent.glob("*.md"))
+
+
+def test_first_fold_backfills_full_history_beyond_100_commits(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """First adoption of a repo with >100 prior commits folds the whole history.
+
+    The reader used to consider only the most recent 100 commits, so anything
+    older was silently and permanently absent (issue #42). A first fold now pages
+    through the entire history.
+    """
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+
+    # A repository whose history is well past the old 100-commit window.
+    for n in range(150):
+        _commit(repo, f"Commit number {n:03d} marker-{n:03d}")
+    pid = _project(store_root, repo)
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # Every commit is folded, including the oldest — far beyond the last 100.
+    assert folded > 100
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert "marker-000" in stored
+    assert "marker-149" in stored
+
+    # A history that fits within the safety bound logs no truncation notice.
+    assert not fresh_failures(store_root)
+
+    # Re-running the completed fold still adds nothing.
+    assert fold_git_log(pid, repo, root=store_root) == 0
+
+
+def test_first_fold_is_bounded_and_logged(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first backfill honours a documented bound and logs the truncation.
+
+    An enormous repository must not stall a session boundary, so the first fold
+    is capped; the cap is observable in the failure log rather than silent.
+    """
+
+    # raising=False so the red demonstrates the wrong behaviour — an unbounded,
+    # unlogged fold — rather than an AttributeError on a not-yet-existing symbol.
+    monkeypatch.setattr(gitreader, "_FIRST_FOLD_LIMIT", 5, raising=False)
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    for n in range(20):
+        _commit(repo, f"Commit number {n:03d} boundmarker-{n:03d}")
+    pid = _project(store_root, repo)
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # Exactly the bound's worth of commits fold, and the truncation is logged.
+    assert folded == 5
+    assert any("backfill" in message for message in fresh_failures(store_root))
+
+    # The five retained commits are the newest five, as the bound promises.
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert all(f"boundmarker-{n:03d}" in stored for n in range(15, 20))
+    assert not any(f"boundmarker-{n:03d}" in stored for n in range(15))
+
+
+def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path) -> None:
+    """A steady-state fold folds exactly the commits added since the previous fold.
+
+    Exercises the incremental path directly: accumulate the not-yet-folded commits,
+    then stop at the already-folded boundary. Every new commit must reach long-term
+    memory and nothing that was already folded is re-added (issue #42).
+    """
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    _commit(repo, "Groundwork before the first fold")
+    pid = _project(store_root, repo)
+    fold_git_log(pid, repo, root=store_root)
+
+    # Three commits added above the already-folded boundary.
+    shas = [_commit(repo, f"Later commit {n} latermarker-{n}") for n in range(3)]
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # Exactly the three new commits fold, each landing in long-term memory.
+    assert folded == 3
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert all(f"git:{sha}" in stored for sha in shas)
+
+
+def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_path: Path) -> None:
+    """A merge that orders new commits behind an already-folded one still folds them.
+
+    A feature branch cut from an early commit, merged after main advanced, brings in
+    commits whose commit date predates a folded mainline commit — so ``git log``
+    lists them *after* it. Stopping at the first already-folded SHA would drop them
+    silently and permanently (issue #42), so the reader must keep scanning.
+    """
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    default_branch = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # A feature branch is cut from an early commit, then main advances past it.
+    _commit_dated(repo, "A groundwork alpha-marker", "2026-01-01")
+    _git(repo, "branch", "feature")
+    _commit_dated(repo, "B mainline beta-marker", "2026-01-05")
+    _commit_dated(repo, "C mainline gamma-marker", "2026-01-06")
+    pid = _project(store_root, repo)
+    fold_git_log(pid, repo, root=store_root)
+
+    # The feature branch's older-dated commits are merged back into main.
+    _git(repo, "checkout", "-q", "feature")
+    _commit_dated(repo, "F1 feature delta-marker", "2026-01-02")
+    _commit_dated(repo, "F2 feature epsilon-marker", "2026-01-03")
+    _git(repo, "checkout", "-q", default_branch)
+    merge_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2026-01-07T12:00:00",
+        "GIT_COMMITTER_DATE": "2026-01-07T12:00:00",
+    }
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "-q", "feature", "-m", "M merge omega-marker"],
+        check=True,
+        env=merge_env,
+    )
+
+    folded = fold_git_log(pid, repo, root=store_root)
+
+    # The merge commit and both feature commits fold — not just the merge commit.
+    assert folded == 3
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert "delta-marker" in stored
+    assert "epsilon-marker" in stored
+    assert "omega-marker" in stored
 
 
 def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> None:
