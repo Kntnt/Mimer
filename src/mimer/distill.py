@@ -86,18 +86,31 @@ _STOP = frozenset(
     ]
 )
 
-# Conservative markers of an imperative addressed to the agent (ADR 0014).
-_INSTRUCTION_FIRST_WORDS = frozenset(
-    {"always", "never", "please", "don't", "dont", "ensure", "avoid"}
-)
+# Markers of an imperative addressed to the agent (ADR 0014). This filter is
+# advisory: it is a best-effort pre-filter, not the gate. The gate is the
+# structural neutralisation applied when memory is injected (``mimer.framing``),
+# so a directive that slips through here is still framed as inert data. The
+# markers therefore target phrasings that are unambiguously agent-directed —
+# rather than a first-word denylist, which wrongly rejected plain facts such as
+# "Always use uv" while letting "Standing policy: …" through (issue #36).
 _INSTRUCTION_MARKERS = (
     "you must",
     "you should",
     "you need to",
+    "you are required to",
+    "you are to ",
     "make sure",
     "be sure to",
     "remember to",
     "do not ",
+    "under no circumstances",
+    "standing policy",
+    "it is required that",
+    "it is mandatory",
+    "the correct behaviour is",
+    "the correct behavior is",
+    "the agent must",
+    "the agent should",
 )
 
 
@@ -328,12 +341,14 @@ def _content_words(text: str) -> set[str]:
 
 
 def _is_instruction_shaped(text: str) -> bool:
-    """Whether text reads as an imperative to the agent rather than a fact."""
+    """Whether text reads as an imperative to the agent rather than a fact.
+
+    Advisory only: the structural gate is the injection-time neutralisation in
+    ``mimer.framing``. A false negative here is caught there, so this errs
+    towards admitting facts (``Always use uv``) over rejecting them.
+    """
 
     lowered = text.strip().lower()
-    words = lowered.split()
-    if words and words[0] in _INSTRUCTION_FIRST_WORDS:
-        return True
     return any(marker in lowered for marker in _INSTRUCTION_MARKERS)
 
 
