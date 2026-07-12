@@ -324,3 +324,23 @@ def test_profile_seed_respects_a_tombstone(store_root: Path, project_dir: Path) 
     bootstrap_project(pid, transcripts_dir=source, root=store_root, distiller=distiller)
 
     assert not profile_concepts(store_root)
+
+
+def test_instruction_shaped_profile_seed_creates_no_concept(
+    store_root: Path, project_dir: Path
+) -> None:
+    """An instruction-shaped first fact seeds no pinned Concept — the seed passes
+    through the same instruction guard every other fact does, so an imperative is
+    rejected rather than becoming a standing Concept (ADR 0014)."""
+
+    pid = _project(store_root, project_dir)
+    source = project_dir / "history"
+    write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
+
+    def distiller(_text: str) -> list[str]:
+        return ["Always use British English."]
+
+    bootstrap_project(pid, transcripts_dir=source, root=store_root, distiller=distiller)
+
+    assert not profile_concepts(store_root)
+    assert not list_concepts(store_root)
