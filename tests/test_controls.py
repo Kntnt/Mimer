@@ -100,8 +100,17 @@ def test_resume_restores_capture(store_root: Path, project_dir: Path) -> None:
     assert resumed.status == "captured"
 
 
-def test_paused_session_skips_digest_without_calling_the_model(store_root: Path) -> None:
-    """While paused, the digest returns without invoking the model or writing."""
+def test_paused_session_skips_digest_without_calling_the_model(
+    store_root: Path, project_dir: Path
+) -> None:
+    """While paused, the digest returns without sending the transcript to the model.
+
+    The transcript is real and non-empty and the project resolves, so absent the
+    pause gate the digest would flow all the way to the model call — which makes
+    ``fail_if_called`` a genuine guarantee that a paused session's (redacted)
+    conversation never reaches Haiku (AC1: #35), not decoration a missing
+    transcript would satisfy anyway.
+    """
 
     ensure_store(store_root)
     set_paused(store_root)
@@ -109,12 +118,11 @@ def test_paused_session_skips_digest_without_calling_the_model(store_root: Path)
     def fail_if_called(_prompt: str) -> str | None:
         raise AssertionError("the model must not be called while capture is paused")
 
-    payload = {
-        "session_id": "s1",
-        "cwd": "/tmp/project",
-        "transcript_path": "/tmp/transcript.jsonl",
-    }
-    result = digest_session(payload, root=store_root, haiku=fail_if_called)
+    result = digest_session(
+        _seeded_stop(project_dir, "the secret plan"),
+        root=store_root,
+        haiku=fail_if_called,
+    )
 
     assert result.status == "paused"
 
@@ -243,7 +251,14 @@ def test_capture_setting_round_trips_through_the_command(
 def test_capture_disabled_project_skips_digest_without_calling_the_model(
     store_root: Path, project_dir: Path
 ) -> None:
-    """With capture off, the digest returns without invoking the model (AC2: #35)."""
+    """With capture off, the digest returns without sending the transcript to the
+    model (AC2: #35).
+
+    The transcript is real and non-empty, so absent the capture gate the digest
+    would flow all the way to the model call — which makes ``fail_if_called`` a
+    genuine guarantee that a capture-disabled project's conversation never reaches
+    Haiku, not decoration a missing transcript would satisfy anyway.
+    """
 
     ensure_store(store_root)
     pid = _project_id(store_root, project_dir)
@@ -254,12 +269,11 @@ def test_capture_disabled_project_skips_digest_without_calling_the_model(
     def fail_if_called(_prompt: str) -> str | None:
         raise AssertionError("the model must not be called when capture is disabled")
 
-    payload = {
-        "session_id": "s1",
-        "cwd": str(project_dir),
-        "transcript_path": "/tmp/transcript.jsonl",
-    }
-    result = digest_session(payload, root=store_root, haiku=fail_if_called)
+    result = digest_session(
+        _seeded_stop(project_dir, "would-be digested"),
+        root=store_root,
+        haiku=fail_if_called,
+    )
 
     assert result.status == "capture-disabled"
 
@@ -289,6 +303,48 @@ def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
     session_end.handle(session_end_payload(cwd=str(project_dir)))
 
     assert calls == ["distill"]
+
+
+def test_health_reports_capture_disabled_projects(store_root: Path, project_dir: Path) -> None:
+    """A project with capture off is enumerated in store health (#35).
+
+    A per-project ``capture off`` is a standing, indefinite suppression, so — like
+    a pause — it must be auditable in ``mimer-manage health`` rather than a silent
+    per-project blackout discoverable only from inside that exact project.
+    """
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+    assert manage.store_health(store_root).capture_disabled_projects == []
+
+    registry = Registry.load(store_root)
+    registry.set_capture(pid, enabled=False)
+    registry.save()
+
+    assert manage.store_health(store_root).capture_disabled_projects == [pid]
+
+
+def test_session_start_announces_a_capture_disabled_project(
+    store_root: Path, project_dir: Path
+) -> None:
+    """SessionStart announces this project's standing capture-off, for parity with
+    the pause notice, so a forgotten one is visible rather than silent (#35)."""
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+    registry = Registry.load(store_root)
+    registry.set_capture(pid, enabled=False)
+    registry.save()
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(project_dir)),
+        store_root=store_root,
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "capture is OFF for this project" in result.stdout
 
 
 # --- Per-project setting: participation in widened recall --------------------
@@ -367,18 +423,33 @@ def test_manage_pause_and_resume_cli(store_root: Path, monkeypatch: pytest.Monke
 
 
 def test_manage_settings_cli_shows_and_sets(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``mimer-manage settings`` shows and updates a project's per-project settings."""
+    """``mimer-manage settings`` shows and updates a project's per-project settings.
+
+    The show path is content-asserted, not merely exit-code-checked: distill-to-global
+    must be genuinely *viewable* through the management surface (AC2: #35), so a bug
+    that dropped it from the displayed settings would fail here rather than pass.
+    """
 
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     monkeypatch.chdir(project_dir)
 
+    # The default (on) is reflected in the displayed settings, not just implied.
     assert manage.main(["settings"]) == 0
+    assert "distill-to-global on" in capsys.readouterr().out
+
     assert manage.main(["settings", "distill-to-global", "off"]) == 0
 
     pid = _project_id(store_root, project_dir)
     assert not Registry.load(store_root).distill_to_global_enabled(pid)
+
+    # The new value is viewable through the same surface that set it.
+    assert manage.main(["settings"]) == 0
+    assert "distill-to-global off" in capsys.readouterr().out
 
 
 # --- Concurrent registry safety ----------------------------------------------
