@@ -130,6 +130,9 @@ def test_first_fold_backfills_full_history_beyond_100_commits(
     assert "marker-000" in stored
     assert "marker-149" in stored
 
+    # A history that fits within the safety bound logs no truncation notice.
+    assert not fresh_failures(store_root)
+
     # Re-running the completed fold still adds nothing.
     assert fold_git_log(pid, repo, root=store_root) == 0
 
@@ -143,17 +146,25 @@ def test_first_fold_is_bounded_and_logged(
     is capped; the cap is observable in the failure log rather than silent.
     """
 
-    monkeypatch.setattr(gitreader, "_FIRST_FOLD_LIMIT", 5)
+    # raising=False so the red demonstrates the wrong behaviour — an unbounded,
+    # unlogged fold — rather than an AttributeError on a not-yet-existing symbol.
+    monkeypatch.setattr(gitreader, "_FIRST_FOLD_LIMIT", 5, raising=False)
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     for n in range(20):
-        _commit(repo, f"Commit number {n:03d}")
+        _commit(repo, f"Commit number {n:03d} boundmarker-{n:03d}")
     pid = _project(store_root, repo)
 
     folded = fold_git_log(pid, repo, root=store_root)
 
+    # Exactly the bound's worth of commits fold, and the truncation is logged.
     assert folded == 5
     assert any("backfill" in message for message in fresh_failures(store_root))
+
+    # The five retained commits are the newest five, as the bound promises.
+    stored = "".join(log.read_text() for log in long_term_dir(pid, store_root).glob("*.md"))
+    assert all(f"boundmarker-{n:03d}" in stored for n in range(15, 20))
+    assert not any(f"boundmarker-{n:03d}" in stored for n in range(15))
 
 
 def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path) -> None:
