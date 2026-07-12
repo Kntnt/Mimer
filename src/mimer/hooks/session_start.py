@@ -23,7 +23,7 @@ from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
 from mimer.pause import is_paused
-from mimer.project import resolve
+from mimer.project import confirm_hint, resolve
 from mimer.registry import Registry
 from mimer.shortterm import ensure_short_term, read_short_term
 from mimer.snapshot import DATA_FRAME_HEADER, build_snapshot
@@ -42,7 +42,7 @@ def handle(payload: Mapping[str, Any]) -> None:
     if resolution.project_id is None:
         _emit(
             f"{DATA_FRAME_HEADER}\n\nMimer: this directory's project identity needs "
-            "confirmation; no memory was injected."
+            f"confirmation; no memory was injected. {confirm_hint(resolution.candidate_id)}"
         )
         return
 

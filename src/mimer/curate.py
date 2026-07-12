@@ -23,7 +23,7 @@ from pathlib import Path
 from mimer.longterm import append_entry
 from mimer.matcher import is_same_fact
 from mimer.paths import store_root
-from mimer.project import resolve
+from mimer.project import confirm_hint, resolve
 from mimer.redaction import redact
 from mimer.shortterm import (
     SHORT_TERM_CAP,
@@ -246,7 +246,10 @@ def main(argv: list[str] | None = None) -> int:
     # never writes memory.
     resolution = resolve(Path.cwd())
     if resolution.project_id is None:
-        print("Mimer: this directory's project identity needs confirmation; no write performed.")
+        print(
+            "Mimer: this directory's project identity needs confirmation; no write "
+            f"performed. {confirm_hint(resolution.candidate_id)}"
+        )
         return 1
 
     if args.command == "forget":

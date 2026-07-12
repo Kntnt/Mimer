@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- A way to confirm a pending project identity: `mimer-manage confirm <candidate-id>` binds the current directory to a named project when resolution needs confirmation, reaching the previously unreachable link action so injection and capture proceed. The needs-confirmation refusals — at SessionStart, on a curated write, and on recall — now name the exact command and candidate id to run, and the memory skill and README document the flow.
+
 ## [0.1.0] – 2026-07-12
 
 ### Added

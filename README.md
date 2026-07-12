@@ -116,7 +116,7 @@ Mimer is a Claude Code plugin. It needs [uv](https://docs.astral.sh/uv/) (which 
    This creates the `~/.mimer/` store (owner-only), verifies the interpreter can load SQLite extensions — failing loudly with an actionable message if it cannot — and pre-fetches the local embedding model so no session ever stalls on a download.
 3. **Start working.** Open a session in any project; Mimer injects the snapshot at the start and records as you go. If the failure log has recent entries, the snapshot carries a one-line health notice so problems are visible, never silent.
 
-To import history that predates Mimer, run `mimer-bootstrap` in a project once (opt-in and resumable). Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`).
+To import history that predates Mimer, run `mimer-bootstrap` in a project once (opt-in and resumable). Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`, `confirm`).
 
 ### Coexistence with Claude Code's native auto memory
 
@@ -140,11 +140,15 @@ Most of the time you drive Mimer by talking to the agent, not by typing commands
 | `mimer-bootstrap` | Opt-in, resumable import of a project's pre-existing Claude Code session and git history into memory. Run once per project. |
 | `mimer-memory` | The curated-write engine behind "remember", "note that" and "forget about"; the memory skill calls it and echoes back the one-line result. |
 | `mimer-recall` | Semantic, cited search over memory — project-scoped by default, `--widen` to reach other projects; the skill calls it for questions about past work. |
-| `mimer-manage` | Inspect and correct permanent memory: `profile`, `recent`, `health`, and `retract <slug>`. |
+| `mimer-manage` | Inspect and correct permanent memory: `profile`, `recent`, `health`, `retract <slug>`, and `confirm <candidate-id>` to link this directory to a project when its identity needs confirmation. |
 | `mimer-reindex` | Rebuild the derived search index from memory; the index is reproducible, so running this is safe whenever it drifts. |
 | `mimer-uninstall` | Leaves your `~/.mimer/` store in place and writes a pointer note explaining how to resume or fully remove it. |
 
 Every command runs through `uv`; from the plugin directory the form is `uv run --project /path/to/Mimer <command>`.
+
+### Confirming a project identity
+
+Mimer will not silently attach a directory to memory it is unsure about. When a `.mimer` marker or a git remote would bind this directory to an *existing* project, or the directory's path and remote point at different projects, Mimer refuses to load or record and tells you so — in the SessionStart line, on a "remember", or on a recall. The message names the exact command and the candidate project id, for example `mimer-manage confirm secret-client`. Run that command from the project's working directory to link this directory to the named project; injection and capture then proceed from the next session. An unknown candidate id is rejected in one line and nothing changes, so confirming is safe to try. This is the deliberate "yes" to a safety prompt — confirm only when you actually want this directory to share that project's memory.
 
 ## Questions, bugs, and feature requests
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from mimer.index import Citation, search
 from mimer.paths import store_root
-from mimer.project import resolve
+from mimer.project import confirm_hint, resolve
 from mimer.registry import PROJECTS_DIRNAME, Registry
 
 
@@ -45,12 +45,16 @@ def recall(
 
     root = root or store_root()
 
-    # Resolve the current project from ``project_id`` or the working directory.
+    # Resolve the current project from ``project_id`` or the working directory; an
+    # identity that needs confirmation recalls nothing but names the command and
+    # candidate id that would resolve it (#34).
     if project_id is None:
         resolution = resolve(cwd or Path.cwd(), root=root)
+        if resolution.project_id is None:
+            hint = confirm_hint(resolution.candidate_id)
+            message = f"Mimer: the project identity needs confirmation. {hint}"
+            return RecallResult([], "unresolved", message)
         project_id = resolution.project_id
-    if project_id is None:
-        return RecallResult([], "unresolved", "Mimer: the project identity needs confirmation.")
 
     if widen:
         citations = search(

@@ -305,3 +305,22 @@ def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> R
         registry.add_aliases(candidate_id, remotes=signals.remotes, paths=[signals.path])
         registry.save()
     return Resolution(ResolutionStatus.RECOGNISED, candidate_id)
+
+
+def confirm_hint(candidate_id: str | None) -> str:
+    """The one-line instruction that makes a refused identity resolvable (#34).
+
+    A :data:`ResolutionStatus.NEEDS_CONFIRMATION` is a correct-by-design refusal,
+    but a refusal with no "yes" is a dead end. This names the exact command that
+    reaches :func:`confirm_link`, and the candidate project id to link to when
+    resolution identified one; where it did not (ambiguous remotes mapping to more
+    than one project), it names the command with a placeholder for the intended
+    id.
+    """
+
+    if candidate_id is not None:
+        return f"Run 'mimer-manage confirm {candidate_id}' to link this directory to that project."
+    return (
+        "Run 'mimer-manage confirm <project-id>' with the intended project id "
+        "to link this directory."
+    )

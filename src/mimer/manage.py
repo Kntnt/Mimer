@@ -18,7 +18,7 @@ from mimer.bundle import Concept, list_concepts, profile_concepts, retract_conce
 from mimer.longterm import LONG_TERM_DIRNAME
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
-from mimer.project import REGISTRY_LOCK, resolve
+from mimer.project import REGISTRY_LOCK, confirm_link, resolve
 from mimer.redaction import redact
 from mimer.registry import PROJECTS_DIRNAME, Registry
 from mimer.storeio import project_lock
@@ -123,6 +123,30 @@ def _read_settings(registry: Registry, project_id: str) -> ProjectSettings:
     )
 
 
+def confirm_identity(
+    candidate_id: str, *, cwd: Path | None = None, root: Path | None = None
+) -> str:
+    """Bind the current directory to ``candidate_id`` after the user confirms it.
+
+    This is the reachable "yes" for a :data:`ResolutionStatus.NEEDS_CONFIRMATION`:
+    it wraps :func:`mimer.project.confirm_link` so the identity a hook refused to
+    bind silently can be settled from the management surface, after which
+    injection and capture proceed (#34).
+
+    Returns:
+        The bound project id.
+
+    Raises:
+        ValueError: When no registered project carries ``candidate_id``.
+    """
+
+    root = root or store_root()
+
+    resolution = confirm_link(cwd or Path.cwd(), candidate_id, root=root)
+    assert resolution.project_id is not None
+    return resolution.project_id
+
+
 def profile(root: Path | None = None) -> list[Concept]:
     """The pinned profile Concepts, with their citations."""
 
@@ -218,6 +242,10 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("health", help="report store health")
     retract = subparsers.add_parser("retract", help="retract a Concept by slug")
     retract.add_argument("slug")
+    confirm = subparsers.add_parser(
+        "confirm", help="confirm this directory's project identity by candidate id"
+    )
+    confirm.add_argument("candidate_id")
     subparsers.add_parser("pause", help="pause capture for this session")
     subparsers.add_parser("resume", help="resume capture")
     settings = subparsers.add_parser("settings", help="show or change per-project settings")
@@ -242,6 +270,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Mimer: {exc}")
             return 1
         print(f'Mimer: retracted "{concept.title}" — it will no longer surface.')
+    elif args.command == "confirm":
+        # An unknown candidate id is rejected deep in confirm_link; turn that
+        # ValueError into a clean one-line rejection with a non-zero exit rather
+        # than leaking a stack trace for user input (#34).
+        try:
+            project_id = confirm_identity(args.candidate_id, root=root)
+        except ValueError as exc:
+            print(f"Mimer: {exc}")
+            return 1
+        print(
+            f'Mimer: linked this directory to "{project_id}" — '
+            "memory will now load and record here."
+        )
     elif args.command == "pause":
         set_paused(root)
         print("Mimer: capture paused — nothing is recorded, store-wide, until you resume.")
