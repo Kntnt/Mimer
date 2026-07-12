@@ -15,7 +15,13 @@ import mimer.distill as distill_module
 from mimer.bundle import concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.digest import digest_session
-from mimer.distill import distill_durable_entries, distill_fact, distill_session, drain_distilled
+from mimer.distill import (
+    DistillResult,
+    distill_durable_entries,
+    distill_fact,
+    distill_session,
+    drain_distilled,
+)
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
 from mimer.project import resolve
@@ -260,6 +266,27 @@ def test_durable_remembered_secret_stays_redacted_through_distillation(
     assert all(secret not in c.body and secret not in c.title for c in concepts)
     assert any("deploy key" in c.body for c in concepts)
     assert secret not in read_short_term(pid, store_root)
+
+
+def test_unclassified_distillation_status_fails_loud_not_stranded(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal status the eviction classifier does not recognise must fail
+    loudly rather than fall through to "kept": a new never-promotable status
+    added to ``distill_fact`` without classification would otherwise strand its
+    durable entry in short-term forever, re-rejected every session end and never
+    cap-evicted — reintroducing exactly the bug issue #27 fixes, silently."""
+
+    pid = _project(store_root, project_dir)
+    remember("A durable fact to promote.", project_id=pid, root=store_root, durable=True)
+
+    def unclassified(**_kwargs: object) -> DistillResult:
+        return DistillResult("some-future-terminal-status")
+
+    monkeypatch.setattr(distill_module, "distill_fact", unclassified)
+
+    with pytest.raises(RuntimeError):
+        distill_durable_entries(pid, root=store_root)
 
 
 def test_permanently_rejected_durable_entry_is_evicted_not_stranded(

@@ -106,6 +106,12 @@ _PROMOTED_STATUSES = frozenset({"created", "superseded", "duplicate"})
 # is aged out to the daily log instead.
 _REJECTED_STATUSES = frozenset({"rejected-instruction", "rejected-tombstoned"})
 
+# The one non-terminal status: distillation raised (logged by _promote) and the
+# durable entry stays for a retry next session. Every other status distill_fact
+# returns is terminal — promoted or rejected — so the three sets above and this
+# one must jointly exhaust its outcomes; the classifier fails loud on any other.
+_TRANSIENT_STATUS = "failed"
+
 
 def distill_fact(
     *,
@@ -207,7 +213,14 @@ def distill_durable_entries(
                 if result.status in _REJECTED_STATUSES:
                     rejected.append(entry)
                     continue
-                kept.append(entry)
+                if result.status == _TRANSIENT_STATUS:
+                    kept.append(entry)
+                    continue
+
+                # A status none of the sets recognise means distill_fact grew a new
+                # terminal outcome without classifying it here — fail loud rather
+                # than fall through to "kept" and silently strand the entry.
+                raise RuntimeError(f"unclassified distillation status: {result.status!r}")
             sections[name] = kept
 
         # Age the rejected entries out to the daily log before short-term is
