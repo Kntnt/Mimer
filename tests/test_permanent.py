@@ -26,6 +26,7 @@ from mimer.bundle import (
     mark_superseded,
     read_concept,
     rename_concept,
+    retract_concept,
 )
 from mimer.index import reindex, search
 from mimer.manage import store_health
@@ -588,3 +589,39 @@ def test_session_start_injects_valid_concept_despite_one_bad_file(
         if "broken.md" in line
     ]
     assert len(log_lines) == 1
+
+
+@pytest.mark.parametrize(
+    "malicious",
+    ["../evil", "../../etc/passwd", "a/b", "..", ".", "foo.md", "with space", "UPPER"],
+)
+def test_concept_path_rejects_traversal_slug(malicious: str, store_root: Path) -> None:
+    """The path-building chokepoint refuses any slug that is not a bare identifier,
+    so a traversal-shaped slug never resolves outside the bundle (#25)."""
+
+    with pytest.raises(ValueError):
+        concept_path(malicious, store_root)
+
+
+def test_retract_rejects_traversal_slug_without_deleting_the_target(store_root: Path) -> None:
+    """Retract validates the slug before it reads or unlinks anything, so a
+    concept-shaped file one level above the bundle survives a traversal slug (#25)."""
+
+    ensure_store(store_root)
+    concept = create_concept(
+        title="Real concept",
+        body="A genuine, concept-shaped file.",
+        concept_type="Note",
+        origin="proj-a",
+        root=store_root,
+    )
+
+    # Plant a concept-shaped decoy one level above the bundle — the file a
+    # ``../victim`` slug would resolve to and, unguarded, delete.
+    decoy = bundle_dir(store_root).parent / "victim.md"
+    decoy.write_text(concept_path(concept.slug, store_root).read_text(encoding="utf-8"))
+
+    with pytest.raises(ValueError):
+        retract_concept("../victim", root=store_root)
+
+    assert decoy.exists()

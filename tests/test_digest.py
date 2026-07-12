@@ -20,7 +20,7 @@ import pytest
 
 from mimer.capture import capture_from_payload
 from mimer.digest import digest_session
-from mimer.longterm import daily_log_path
+from mimer.longterm import daily_log_path, transcripts_dir
 from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
@@ -133,6 +133,29 @@ def test_broadened_secret_class_reaches_neither_prompt_nor_archive(
     assert sample.sensitive not in seen["prompt"]
     assert result.archive_path is not None
     assert sample.sensitive not in result.archive_path.read_text()
+
+
+def test_digest_rejects_traversal_session_id(store_root: Path, project_dir: Path) -> None:
+    """A session id shaped like a path traversal never writes the archive outside
+    the project's transcripts directory (#25)."""
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl", [("q", "traversal attempt", "2026-07-11T15:00:00Z")]
+    )
+
+    result = digest_session(
+        _payload(project_dir, transcript, session_id="../evil"),
+        root=store_root,
+        haiku=lambda _: DIGEST_REPLY,
+        today=TODAY,
+    )
+
+    pid = _project_id(store_root, project_dir)
+    escaped = transcripts_dir(pid, store_root).parent / "evil.jsonl"
+    assert not escaped.exists()
+    assert result.status != "digested"
+    assert result.archive_path is None
 
 
 def test_digest_is_idempotent_per_session(store_root: Path, project_dir: Path) -> None:
