@@ -12,6 +12,7 @@ SessionEnd hook.
 
 from __future__ import annotations
 
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -118,6 +119,48 @@ def test_digest_is_idempotent_per_session(store_root: Path, project_dir: Path) -
     assert second.status == "duplicate"
     pid = _project_id(store_root, project_dir)
     assert daily_log_path(pid, "2026-07-11", store_root).read_text().count("## Session digest") == 1
+
+
+def test_concurrent_digests_of_one_session_write_one_block(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Two SessionEnd runs racing on the same session digest it exactly once.
+
+    A barrier inside the injected Haiku call releases both threads together, so
+    each is past the ledger gate and holding a reply before either records the
+    session — the precise window the project lock must close. Without the lock
+    both threads append a digest block; with it, one wins and the other sees the
+    session already digested. (The barrier would also deadlock if the Haiku call
+    were moved inside the lock, so this pins the call outside it too.)
+    """
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl",
+        [("how should we index?", "use sqlite-vec", "2026-07-11T15:00:00Z")],
+    )
+    payload = _payload(project_dir, transcript, session_id="sess-race")
+
+    barrier = threading.Barrier(2, timeout=10)
+
+    def haiku(_: str) -> str:
+        barrier.wait()
+        return DIGEST_REPLY
+
+    results: dict[int, str] = {}
+
+    def digest(index: int) -> None:
+        results[index] = digest_session(payload, root=store_root, haiku=haiku, today=TODAY).status
+
+    threads = [threading.Thread(target=digest, args=(i,)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    pid = _project_id(store_root, project_dir)
+    assert daily_log_path(pid, "2026-07-11", store_root).read_text().count("## Session digest") == 1
+    assert sorted(results.values()) == ["digested", "duplicate"]
 
 
 def test_digest_defers_when_haiku_unavailable(store_root: Path, project_dir: Path) -> None:
