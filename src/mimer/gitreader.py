@@ -13,6 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.longterm import append_entry, long_term_dir
 from mimer.paths import store_root
@@ -21,8 +22,15 @@ from mimer.storeio import append_text, project_lock
 
 GIT_LEDGER_FILENAME = ".git-ledger"
 
-# How many recent commits to consider each run.
-_COMMIT_LIMIT = 100
+# How many commits to read from git per page while walking history.
+_PAGE_SIZE = 100
+
+# Upper bound on a first backfill. Folding runs synchronously at a session
+# boundary (SessionEnd), so an enormous repo's whole history must not stall it;
+# the most recent commits up to this bound are folded and the truncation is
+# logged rather than dropped silently (issue #42). Steady-state runs are not
+# bounded here — they stop naturally at the first already-folded commit.
+_FIRST_FOLD_LIMIT = 2000
 
 # ASCII unit/record separators keep multi-line commit bodies unambiguous.
 _UNIT = "\x1f"
@@ -39,25 +47,24 @@ class Commit:
     date: str
 
 
-def git_commits(cwd: Path, *, limit: int = _COMMIT_LIMIT) -> list[Commit]:
-    """Return recent commits for the repository at ``cwd``, or [] outside a repo."""
+def git_commits(cwd: Path, *, limit: int | None = _PAGE_SIZE, skip: int = 0) -> list[Commit]:
+    """Return commits for the repository at ``cwd``, newest first, or [] outside a repo.
+
+    ``limit`` caps how many commits are returned (``None`` reads to the end of
+    history); ``skip`` offsets into history, so a caller can page through a large
+    history one window at a time.
+    """
+
+    # Build the log command; a None limit omits -n so the whole history is read.
+    args = ["git", "-C", str(cwd), "log"]
+    if limit is not None:
+        args.append(f"-n{limit}")
+    if skip:
+        args.append(f"--skip={skip}")
+    args += ["--no-color", f"--format=%H{_UNIT}%aI{_UNIT}%s{_UNIT}%b{_RECORD}"]
 
     try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(cwd),
-                "log",
-                f"-n{limit}",
-                "--no-color",
-                f"--format=%H{_UNIT}%aI{_UNIT}%s{_UNIT}%b{_RECORD}",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        result = subprocess.run(args, check=True, capture_output=True, text=True, timeout=15)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return []
 
@@ -74,32 +81,66 @@ def git_commits(cwd: Path, *, limit: int = _COMMIT_LIMIT) -> list[Commit]:
 def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
     """Fold new commit messages into long-term memory; return the count folded.
 
-    Idempotent: a commit already folded (recorded in the git ledger) is skipped,
-    so re-running adds nothing.
+    On first adoption — an empty ledger — the whole history is folded, paging
+    through ``git log`` until it is exhausted or the :data:`_FIRST_FOLD_LIMIT`
+    safety bound is reached (a truncation is logged, never silent). On later runs
+    only commits newer than the last folded one are read: paging stops at the
+    first already-folded SHA, so re-running adds nothing. Non-git projects fold
+    nothing.
     """
 
     root = root or store_root()
-    commits = git_commits(cwd)
-    if not commits:
-        return 0
 
-    folded = 0
+    # Decide and apply under the lock so two boundaries cannot double-fold.
     folded_days: set[str] = set()
     with project_lock(project_id, root=root):
         seen = _folded_shas(project_id, root)
+        commits, truncated = _commits_to_fold(cwd, seen, first_fold=not seen)
         for commit in commits:
-            if commit.sha in seen:
-                continue
             append_entry(project_id, commit.date, _render(commit), root)
             append_text(_ledger_path(project_id, root), commit.sha)
-            seen.add(commit.sha)
-            folded += 1
             folded_days.add(commit.date)
+
+    # A truncated first backfill stays observable in the failure log (issue #42).
+    if truncated:
+        log_failure(
+            f"git backfill for project {project_id} stopped at the "
+            f"{_FIRST_FOLD_LIMIT}-commit safety bound; older history was left unfolded",
+            root=root,
+        )
 
     # Index the days that gained entries, when an index exists.
     for day in folded_days:
         index_if_present(project_id, day, root)
-    return folded
+    return len(commits)
+
+
+def _commits_to_fold(cwd: Path, seen: set[str], *, first_fold: bool) -> tuple[list[Commit], bool]:
+    """Collect the not-yet-folded commits to fold, newest first.
+
+    Pages through history stopping at the first already-folded SHA (steady state)
+    or at history's end. A first fold is capped at :data:`_FIRST_FOLD_LIMIT`; the
+    returned flag reports whether that bound truncated the walk (there was older,
+    unfolded history), which the caller turns into a logged notice.
+    """
+
+    to_fold: list[Commit] = []
+    skip = 0
+    while True:
+        # Read the next page; an empty page means history is exhausted.
+        page = git_commits(cwd, limit=_PAGE_SIZE, skip=skip)
+        if not page:
+            return to_fold, False
+
+        # Take commits until an already-folded SHA or the first-fold bound.
+        for commit in page:
+            if commit.sha in seen:
+                return to_fold, False
+            if first_fold and len(to_fold) >= _FIRST_FOLD_LIMIT:
+                return to_fold, True
+            to_fold.append(commit)
+
+        skip += len(page)
 
 
 def _render(commit: Commit) -> str:
