@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import mimer.distill as distill_module
-from mimer.bundle import list_concepts
+from mimer.bundle import concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.distill import distill_durable_entries, distill_fact, drain_distilled
 from mimer.index import reindex, search
@@ -141,6 +141,27 @@ def test_failed_promotion_keeps_entry_and_logs(
 
     assert "A durable fact to promote." in read_short_term(pid, store_root)
     assert "distill" in (store_root / "mimer.log").read_text().lower()
+
+
+def test_distilled_concept_body_is_stored_redacted(store_root: Path) -> None:
+    """A secret in a distilled fact is stripped at the Concept-creation boundary, so
+    it never reaches the permanent bundle — not the body, the title, nor the file."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+    result = distill_fact(
+        text=f"The production deploy key is {secret}.",
+        project_id="p",
+        scope="global",
+        root=store_root,
+    )
+
+    assert result.slug is not None
+    concept = read_concept(result.slug, store_root)
+    assert secret not in concept.body
+    assert secret not in concept.title
+    assert secret not in concept_path(result.slug, store_root).read_text(encoding="utf-8")
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:

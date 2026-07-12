@@ -104,6 +104,20 @@ def test_tombstoned_fact_stays_gone_across_reload(store_root: Path, project_dir:
     assert len(load_tombstones(store_root)) == 1
 
 
+def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:
+    """A secret passed to remember is stripped before it lands in short-term memory
+    (ADR-level guarantee: redaction is enforced at the sink, not by agent judgment)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+    remember(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
+
+    stored = read_short_term(pid, store_root)
+    assert secret not in stored
+    assert "REDACTED" in stored
+
+
 def test_remember_persists_for_a_new_session(store_root: Path, project_dir: Path) -> None:
     """A remembered fact is present when short-term memory is read afresh (the
     automated proxy for the manual restart residue)."""
