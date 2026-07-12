@@ -4,8 +4,9 @@ Every write reads the whole of short-term memory first (so a re-``remember``
 updates rather than duplicates), then adds, replaces or removes an entry under
 the per-project store lock, and echoes what happened in one line. ``forget`` is
 the soft tier of ADR 0012 — removal plus a tombstone; the raw long-term record
-is untouched. The cap only warns at this stage; eviction arrives with capture
-(ADR 0017).
+is untouched. An over-cap write drives distillation: durable entries are
+promoted into permanent memory before transient entries age out to the daily log
+— promote-then-evict (ADR 0017).
 
 The judgment of *when* to call each operation — salience, durability, and
 disambiguation such as "forget about X for now" (defer, do not delete) — lives
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from mimer.distill import distill_durable_entries
 from mimer.longterm import append_entry
 from mimer.matcher import is_same_fact
 from mimer.paths import store_root
@@ -42,13 +44,15 @@ CURATED_SECTION = "Notes"
 
 @dataclass(frozen=True)
 class WriteResult:
-    """The outcome of one curated write: what happened, the echo, a warning, and
-    any entries that aged out to the daily log."""
+    """The outcome of one curated write: what happened, the echo, a warning, the
+    slugs of any durable entries the cap promoted into permanent memory, and any
+    transient entries that aged out to the daily log."""
 
     action: str
     echo: str
     warning: str | None = None
     aged_out: tuple[str, ...] = ()
+    promoted: tuple[str, ...] = ()
 
 
 def _key(text: str) -> str:
@@ -80,16 +84,17 @@ def remember(
 
     A curated write is ``durable`` by default: the user explicitly asked Mimer to
     remember it and it passed the skill's salience judgment, so it is knowledge
-    worth promoting to permanent memory. The cap keeps durable entries until
-    session-end distillation promotes-then-evicts them; only ``durable=False``
-    entries — the digest's auto-refreshed working state and bootstrap's
-    orientation note — age out into the daily log (ADR 0017).
+    worth promoting to permanent memory. Only ``durable=False`` entries — the
+    digest's auto-refreshed working state and bootstrap's orientation note — age
+    out into the daily log (ADR 0017).
 
-    A write that exceeds the cap ages out transient entries (oldest first) into
-    the daily log; durable entries are kept, and if the cap cannot be met with
-    transient evictions alone the write warns and keeps everything. The whole
-    read-modify-write plus the daily-log append happen under one lock, so an
-    evicted entry is never absent from both places.
+    When a write pushes short-term over the cap, the cap drives distillation
+    (ADR 0017): durable entries are promoted into permanent Concepts *first* —
+    each evicted only after its Concept is verified on disk — and only then are
+    transient entries aged out (oldest first) into the daily log to reach the cap.
+    Promoting before evicting frees room, so a transient entry an evict-first path
+    would have dropped survives. Only when a durable promotion fails and transient
+    eviction alone cannot clear the cap does the write warn and keep everything.
 
     A secret the user or agent asks to remember is stripped here at the sink, so
     the redaction guarantee holds independently of the agent's judgment.
@@ -105,6 +110,9 @@ def remember(
     ensure_short_term(project_id, root)
     path = short_term_path(project_id, root)
 
+    # Add or update the entry under the lock. The cap-driven promote-then-evict
+    # runs afterwards, outside this lock: distillation takes the same per-project
+    # lock and flock is not re-entrant across separate open descriptions.
     with project_lock(project_id, root=root):
         sections = parse_short_term(path.read_text(encoding="utf-8"))
         entries = sections[section]
@@ -120,26 +128,44 @@ def remember(
             entries[index] = entry
             action = "updated"
 
-        # Age transient entries out; each eviction is itself a write to the log,
-        # done before short-term is rewritten so nothing is lost by a crash.
-        evicted = _evict_transient(sections, cap)
-        if evicted:
-            append_entry(project_id, today.isoformat(), _aged_out_block(evicted, today), root)
         write_atomic(path, render_short_term(project_id, sections))
-
         total = sum(len(section_entries) for section_entries in sections.values())
-        warning = (
-            f"short-term memory is over its cap ({total}/{cap}) with only durable entries; "
-            "nothing was evicted (durable entries are promoted by distillation, not aged out)."
-            if total > cap
-            else None
+        has_durable = any(
+            e.durable for section_entries in sections.values() for e in section_entries
         )
+
+    # Promote-then-evict when the write went over the cap: distil durable entries
+    # into permanent memory (each removed only once its Concept is on disk), then
+    # age transient entries out under the lock until short-term is back at the cap.
+    promoted: tuple[str, ...] = ()
+    evicted: list[Entry] = []
+    warning: str | None = None
+    if total > cap:
+        if has_durable:
+            results = distill_durable_entries(project_id, root=root, today=today)
+            promoted = tuple(result.slug for result in results if result.slug is not None)
+        with project_lock(project_id, root=root):
+            sections = parse_short_term(path.read_text(encoding="utf-8"))
+            evicted = _evict_transient(sections, cap)
+            if evicted:
+                append_entry(project_id, today.isoformat(), _aged_out_block(evicted, today), root)
+            write_atomic(path, render_short_term(project_id, sections))
+            remaining = sum(len(section_entries) for section_entries in sections.values())
+            warning = (
+                f"short-term memory is over its cap ({remaining}/{cap}); one or more durable "
+                "entries could not be promoted (their distillation failed and was logged), and "
+                "transient eviction alone could not clear the cap."
+                if remaining > cap
+                else None
+            )
 
     verb = "remembered" if action == "added" else "updated"
     echo = f'Mimer: {verb} "{text}" in short-term memory (project "{project_id}").'
+    if promoted:
+        echo += f" Promoted {len(promoted)} durable entry(ies) to permanent memory."
     if evicted:
         echo += f" Aged out {len(evicted)} transient entry(ies) to the daily log."
-    return WriteResult(action, echo, warning, tuple(e.text for e in evicted))
+    return WriteResult(action, echo, warning, tuple(e.text for e in evicted), promoted)
 
 
 def _evict_transient(sections: dict[str, list[Entry]], cap: int) -> list[Entry]:

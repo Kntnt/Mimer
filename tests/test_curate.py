@@ -59,9 +59,7 @@ def test_remember_duplicate_updates_not_duplicates(store_root: Path, project_dir
     assert notes[0].date == "2026-07-11"
 
 
-def test_over_cap_durable_write_promotes_to_permanent(
-    store_root: Path, project_dir: Path
-) -> None:
+def test_over_cap_durable_write_promotes_to_permanent(store_root: Path, project_dir: Path) -> None:
     """An over-cap write drives distillation: durable entries are promoted into
     permanent Concepts and leave short-term, rather than being warned about and
     kept (ADR 0017's cap-driven promote-then-evict, issue #28)."""
@@ -74,11 +72,21 @@ def test_over_cap_durable_write_promotes_to_permanent(
     )
     for index, fact in enumerate(facts):
         remember(
-            fact, project_id=pid, root=store_root, cap=3, durable=True, today=date(2026, 7, index + 1)
+            fact,
+            project_id=pid,
+            root=store_root,
+            cap=3,
+            durable=True,
+            today=date(2026, 7, index + 1),
         )
 
     result = remember(
-        "the staging box runs Ubuntu", project_id=pid, root=store_root, cap=3, durable=True, today=TODAY
+        "the staging box runs Ubuntu",
+        project_id=pid,
+        root=store_root,
+        cap=3,
+        durable=True,
+        today=TODAY,
     )
 
     assert result.warning is None

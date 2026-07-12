@@ -65,9 +65,7 @@ def test_over_cap_evicts_oldest_transient_to_daily_log(store_root: Path, project
     assert "aged out" in result.echo.lower()
 
 
-def test_over_cap_durables_are_promoted_to_permanent(
-    store_root: Path, project_dir: Path
-) -> None:
+def test_over_cap_durables_are_promoted_to_permanent(store_root: Path, project_dir: Path) -> None:
     """When only durable entries remain, an over-cap write promotes them into
     permanent Concepts rather than warning and keeping them — the cap is the
     engine that feeds distillation (ADR 0017, issue #28)."""
@@ -80,7 +78,12 @@ def test_over_cap_durables_are_promoted_to_permanent(
     )
     for index, fact in enumerate(facts):
         remember(
-            fact, project_id=pid, root=store_root, cap=3, durable=True, today=date(2026, 7, index + 1)
+            fact,
+            project_id=pid,
+            root=store_root,
+            cap=3,
+            durable=True,
+            today=date(2026, 7, index + 1),
         )
 
     result = remember(
