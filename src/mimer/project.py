@@ -290,7 +290,13 @@ def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> R
     """Bind ``cwd``'s signals to ``candidate_id`` after the user confirms it.
 
     This is the deliberate act that honours a marker or resolves a conflict that
-    :func:`resolve` refused to bind silently.
+    :func:`resolve` refused to bind silently. Confirming makes ``candidate_id`` the
+    sole owner of this directory's signals: every *other* project that currently
+    owns one of the signal remotes or the signal path is folded into the candidate
+    via :meth:`Registry.merge` (ADR 0008 reconciliation, made lossless by #33). A
+    bare additive alias would leave those records competing, so the next
+    :func:`resolve` would surface the same NEEDS_CONFIRMATION forever — the dead
+    end this fixes (#34).
     """
 
     root = root or store_root()
@@ -302,9 +308,37 @@ def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> R
         if registry.find_by_id(candidate_id) is None:
             raise ValueError(f"unknown project id: {candidate_id}")
 
+        # Fold each competing project into the candidate, then record the signals,
+        # so the candidate alone owns this directory's remotes and path and
+        # resolution stops asking.
+        for conflicting_id in _conflicting_ids(registry, signals, candidate_id):
+            registry.merge(conflicting_id, candidate_id)
         registry.add_aliases(candidate_id, remotes=signals.remotes, paths=[signals.path])
         registry.save()
+
     return Resolution(ResolutionStatus.RECOGNISED, candidate_id)
+
+
+def _conflicting_ids(registry: Registry, signals: Signals, candidate_id: str) -> list[str]:
+    """The ids of projects, other than the candidate, that currently own one of
+    this directory's signals — the records that must fold into the candidate for
+    resolution to stop returning NEEDS_CONFIRMATION (#34).
+
+    Order-preserving and de-duplicated: two signals owned by the same competitor
+    yield that competitor once.
+    """
+
+    owners: dict[str, None] = {}
+    for remote in signals.remotes:
+        record = registry.find_by_remote(remote)
+        if record is not None and record.id != candidate_id:
+            owners[record.id] = None
+
+    path_record = registry.find_by_path(signals.path)
+    if path_record is not None and path_record.id != candidate_id:
+        owners[path_record.id] = None
+
+    return list(owners)
 
 
 def confirm_hint(candidate_id: str | None) -> str:

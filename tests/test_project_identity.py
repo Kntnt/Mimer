@@ -273,6 +273,79 @@ def test_confirm_command_links_pending_identity_so_memory_proceeds(
     assert after.project_id == "shared"
 
 
+def test_confirm_resolves_path_remote_conflict_so_resolution_binds(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """When a path-keyed project acquires a remote already owned by another
+    project, confirming the candidate must fold the path-keyed record into it, so
+    the next resolution binds rather than looping back to NEEDS_CONFIRMATION — a
+    bare additive alias would leave the old path owner competing forever (#34)."""
+
+    # A path-keyed project is created first, at the app directory.
+    app = tmp_path / "app"
+    app.mkdir()
+    path_keyed = resolve(app, root=store_root)
+    assert path_keyed.status is ResolutionStatus.CREATED
+
+    # A separate repo establishes the candidate project, owning the remote.
+    candidate_clone = init_repo(
+        tmp_path / "candidate", remotes={"origin": "git@github.com:x/api.git"}
+    )
+    candidate = resolve(candidate_clone, root=store_root)
+    assert candidate.project_id is not None
+
+    # The app directory acquires that same remote, so its path (owned by the
+    # path-keyed project) and its remote (owned by the candidate) now disagree.
+    init_repo(app, remotes={"origin": "git@github.com:x/api.git"})
+    conflict = resolve(app, root=store_root)
+    assert conflict.status is ResolutionStatus.NEEDS_CONFIRMATION
+    assert conflict.candidate_id == candidate.project_id
+
+    confirm_link(app, candidate.project_id, root=store_root)
+
+    after = resolve(app, root=store_root)
+    assert after.status is not ResolutionStatus.NEEDS_CONFIRMATION
+    assert after.project_id == candidate.project_id
+
+
+def test_confirm_resolves_ambiguous_remotes_so_resolution_binds(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """When a repo's remotes map to two projects (no single candidate), confirming
+    the intended id must fold the competing project into it, so the next
+    resolution binds rather than looping back to NEEDS_CONFIRMATION — adding both
+    remotes to the chosen project while the other keeps its remote leaves the
+    ambiguity intact (#34)."""
+
+    # Two projects, each owning one remote; the first-created one is the competitor
+    # that must precede the intended project to reproduce the loop.
+    other_clone = init_repo(tmp_path / "other", remotes={"origin": "git@github.com:x/other.git"})
+    resolve(other_clone, root=store_root)
+    intended_clone = init_repo(
+        tmp_path / "intended", remotes={"origin": "git@github.com:x/intended.git"}
+    )
+    intended = resolve(intended_clone, root=store_root)
+    assert intended.project_id is not None
+
+    # A repo carrying both remotes resolves to neither — an ambiguous conflict.
+    both = init_repo(
+        tmp_path / "both",
+        remotes={
+            "origin": "git@github.com:x/intended.git",
+            "upstream": "git@github.com:x/other.git",
+        },
+    )
+    ambiguous = resolve(both, root=store_root)
+    assert ambiguous.status is ResolutionStatus.NEEDS_CONFIRMATION
+    assert ambiguous.candidate_id is None
+
+    confirm_link(both, intended.project_id, root=store_root)
+
+    after = resolve(both, root=store_root)
+    assert after.status is not ResolutionStatus.NEEDS_CONFIRMATION
+    assert after.project_id == intended.project_id
+
+
 def test_confirm_command_rejects_unknown_candidate_with_clean_message(
     store_root: Path,
     tmp_path: Path,

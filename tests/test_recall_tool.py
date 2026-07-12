@@ -177,6 +177,29 @@ def test_unanswerable_recall_states_nothing_found(store_root: Path) -> None:
     assert "nothing" in result.message.lower()
 
 
+def test_recall_refusal_names_confirm_command_and_candidate(
+    store_root: Path, tmp_path: Path
+) -> None:
+    """When identity needs confirmation, recall returns nothing but names the
+    confirm command and candidate id, so the refusal is a resolvable state rather
+    than a dead end (#34)."""
+
+    ensure_store(store_root)
+    registry = Registry.load(store_root)
+    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
+    registry.save()
+
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+
+    result = recall("anything at all", root=store_root, cwd=clone)
+
+    assert result.is_empty()
+    assert result.scope == "unresolved"
+    assert "mimer-manage confirm secret-client" in result.message
+
+
 def test_recall_cli_is_scoped_and_honestly_empty(store_root: Path, project_dir: Path) -> None:
     """The mimer-recall command (the agent tool) scopes to the cwd's project and
     reports honestly when nothing is found."""

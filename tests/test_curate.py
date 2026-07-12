@@ -11,9 +11,13 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from mimer.curate import forget, remember
+import pytest
+
+from mimer.curate import forget, main, remember
 from mimer.project import resolve
+from mimer.registry import Registry
 from mimer.shortterm import parse_short_term, read_short_term
+from mimer.store import ensure_store
 from mimer.tombstones import is_tombstoned, load_tombstones
 
 TODAY = date(2026, 7, 11)
@@ -258,3 +262,33 @@ def test_cli_note_stores_redacted(store_root: Path, project_dir: Path) -> None:
     stored = read_short_term(pid, store_root)
     assert secret not in stored
     assert "deploy key" in stored
+
+
+def test_curated_write_refusal_names_confirm_command_and_candidate(
+    store_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A curated write refuses when identity needs confirmation, and the refusal
+    names the confirm command and the candidate id so the user has a way forward,
+    not just a dead end (#34)."""
+
+    ensure_store(store_root)
+    registry = Registry.load(store_root)
+    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
+    registry.save()
+
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(clone)
+    exit_code = main(["remember", "something worth keeping"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "mimer-manage confirm secret-client" in out
+    # Nothing was written: the clone acquired no short-term memory.
+    assert not (tmp_path / "clone" / "short-term.md").exists()
