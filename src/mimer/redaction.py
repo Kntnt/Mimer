@@ -1,5 +1,6 @@
 """The redaction pass: strip secrets before anything is stored, summarised or
-indexed. Capture, the digest and the transcript archive all run through it.
+indexed. Capture, the digest, the transcript archive, curated short-term writes
+and the Concept-creation boundary all run through it.
 
 Redaction is deliberately conservative — it targets well-known secret shapes and
 credential-in-URL forms rather than blanket high-entropy stripping, so it does

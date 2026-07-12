@@ -22,6 +22,7 @@ import yaml
 
 from mimer.failure_log import log_failure
 from mimer.paths import store_root
+from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
 from mimer.store import ensure_store
 from mimer.storeio import project_lock, write_atomic
@@ -131,12 +132,28 @@ def create_concept(
 
     A pinned/profile write requires explicit confirmation. Creation regenerates
     the bundle index and updates the search index when one exists.
+
+    Redaction is enforced here at the Concept-creation boundary: a secret in the
+    incoming text is stripped before it is ever persisted, so the guarantee holds
+    for every store path that mints a Concept (issue #23).
     """
 
     root = root or store_root()
     ensure_store(root)
     if pinned and not confirmed:
         raise ConfirmationRequired("a pinned/profile write requires explicit confirmation")
+
+    # Strip secrets from every persisted free-text field at the sink, so no
+    # caller can land one in the bundle — the body, the title (and the slug and
+    # index entry derived from it), the description, the tags, and the citation
+    # sources and excerpts written verbatim into the file (issue #23).
+    title, body, description = redact(title), redact(body), redact(description)
+    tags = [redact(tag) for tag in tags] if tags else tags
+    citations = (
+        [Source(redact(s.source), redact(s.excerpt), s.date) for s in citations]
+        if citations
+        else citations
+    )
 
     with project_lock(_BUNDLE_LOCK, root=root):
         concept = Concept(

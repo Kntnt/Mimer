@@ -21,6 +21,7 @@ from pathlib import Path
 from mimer.bundle import Concept, Source, create_concept, list_concepts, mark_superseded
 from mimer.failure_log import log_failure
 from mimer.paths import store_root
+from mimer.redaction import redact
 from mimer.registry import project_dir
 from mimer.shortterm import parse_short_term, render_short_term, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
@@ -116,6 +117,12 @@ def distill_fact(
     """
 
     root = root or store_root()
+
+    # Redact up front so every check and the stored Concept share one secret-free
+    # form: the dedup and tombstone lookups compare like with like, and the title
+    # is derived from redacted text rather than truncated raw — where a token
+    # straddling the title cut could otherwise leave a fragment (issue #23).
+    text = redact(text)
 
     if _is_instruction_shaped(text):
         return DistillResult("rejected-instruction")

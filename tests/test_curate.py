@@ -104,6 +104,43 @@ def test_tombstoned_fact_stays_gone_across_reload(store_root: Path, project_dir:
     assert len(load_tombstones(store_root)) == 1
 
 
+def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:
+    """A secret passed to remember is stripped before it lands in short-term memory
+    (ADR-level guarantee: redaction is enforced at the sink, not by agent judgment)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+    remember(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
+
+    stored = read_short_term(pid, store_root)
+    assert secret not in stored
+    assert "REDACTED" in stored
+    # Redaction removes the secret without destroying the surrounding fact.
+    assert "deploy key" in stored
+
+
+def test_forget_by_the_full_secret_removes_the_redacted_entry(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Forgetting by the exact secret string still removes the entry that remember
+    stored in redacted form, and no raw secret is persisted to the tombstone
+    ledger (forget runs the same redacting sink as remember — issue #23)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    remember(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
+
+    result = forget(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
+
+    assert result.action == "removed"
+    assert parse_short_term(read_short_term(pid, store_root))["Notes"] == []
+    tombstones = load_tombstones(store_root)
+    assert tombstones and all(
+        secret not in t["text"] and secret not in t["key"] for t in tombstones
+    )
+
+
 def test_remember_persists_for_a_new_session(store_root: Path, project_dir: Path) -> None:
     """A remembered fact is present when short-term memory is read afresh (the
     automated proxy for the manual restart residue)."""
@@ -134,3 +171,27 @@ def test_cli_remember_writes_and_echoes(store_root: Path, project_dir: Path) -> 
     assert "remembered" in result.stdout.lower()
     pid = _project(store_root, project_dir)
     assert "the CLI path works end to end" in read_short_term(pid, store_root)
+
+
+def test_cli_note_stores_redacted(store_root: Path, project_dir: Path) -> None:
+    """The ``note`` CLI verb runs the same redacting sink as remember, so a secret
+    noted at the command line is stored redacted (AC1 names remember and note)."""
+
+    executable = Path(sys.executable).parent / "mimer-memory"
+    env = {**os.environ, "MIMER_HOME": str(store_root)}
+    env.pop("MIMER_GUARD", None)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+    result = subprocess.run(
+        [str(executable), "note", f"the deploy key is {secret}"],
+        cwd=str(project_dir),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    pid = _project(store_root, project_dir)
+    stored = read_short_term(pid, store_root)
+    assert secret not in stored
+    assert "deploy key" in stored
