@@ -490,10 +490,10 @@ def _allowed_projects(
 def _suppressed(text: str, project_id: str, tombstones: list[dict[str, str]]) -> bool:
     """Whether a tombstone for this project covers this chunk's text.
 
-    Uses the shared matcher, whose directional containment suppresses a chunk that
-    carries a forgotten fact even when the chunk bundles many other facts, yet its
-    specificity guard keeps a short tombstone from suppressing a longer, unrelated
-    chunk that merely contains its words.
+    Uses the shared matcher, whose quotation test suppresses a chunk that quotes a
+    forgotten fact verbatim even when the chunk bundles many other facts, yet whose
+    specificity guard keeps a short tombstone from over-suppressing a longer,
+    unrelated chunk that merely scatters its words.
     """
 
     return any(

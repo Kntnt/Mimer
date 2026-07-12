@@ -147,7 +147,7 @@ def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
 def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
     store_root: Path, project_dir: Path
 ) -> None:
-    """A forget phrase past the specificity guard must not over-remove an unrelated entry (issue #18).
+    """A forget phrase past the guard must not over-remove an unrelated entry (issue #18).
 
     ``test_forget_short_phrase_keeps_an_unrelated_longer_entry`` uses a two-word
     phrase the guard rejects before the containment path runs. This phrase carries

@@ -127,7 +127,9 @@ def test_tombstone_whose_words_scatter_in_a_longer_memory_does_not_suppress_it(
     )
     _seed(store_root, "2026-06-07", [("Ops", unrelated)])
     reindex(store_root)
-    assert search("when is the office celebration and deploy schedule?", root=store_root, project_id=PID)
+    assert search(
+        "when is the office celebration and deploy schedule?", root=store_root, project_id=PID
+    )
 
     write_tombstone("deploy window friday", project_id=PID, root=store_root)
 
