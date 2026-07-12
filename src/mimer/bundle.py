@@ -177,9 +177,17 @@ def list_concepts(root: Path | None = None) -> list[Concept]:
 
 
 def profile_concepts(root: Path | None = None) -> list[Concept]:
-    """The pinned Concepts that form the profile."""
+    """The active pinned Concepts that form the profile.
 
-    return [concept for concept in list_concepts(root) if concept.pinned]
+    A superseded pinned Concept is no longer current, so — as recall already
+    does — it is excluded, leaving exactly the pinned Concepts in force. Without
+    the status filter a reworded re-derivation would leave both the superseded
+    predecessor and its successor pinned, duplicating the profile (ADR 0015).
+    """
+
+    return [
+        concept for concept in list_concepts(root) if concept.pinned and concept.status == "active"
+    ]
 
 
 def concept_headlines(root: Path | None = None, *, project_id: str | None = None) -> list[str]:
