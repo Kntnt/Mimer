@@ -34,10 +34,13 @@ def connect(path: Path, *, busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> sq
     """Open ``path`` as a WAL-mode SQLite database with a busy timeout.
 
     The index is the single most concentrated copy of every project's memory, so
-    the database and its WAL/SHM sidecars are pinned owner-only (ADR 0013). The
-    main file is chmod-ed before the WAL pragma materialises the sidecars —
-    SQLite copies the main file's mode onto them — and any sidecar predating this
-    connection is corrected too, so the invariant holds regardless of order.
+    the database and its WAL/SHM sidecars are pinned owner-only (ADR 0013). SQLite
+    creates the -wal/-shm sidecars lazily — on the first write, not when the
+    connection opens — and copies the main file's mode onto them at that point.
+    The main file is therefore chmod-ed to :data:`~mimer.store.FILE_MODE` before
+    the connection is opened, so whenever SQLite eventually materialises the
+    sidecars they inherit that mode even under a permissive umask; any sidecar a
+    prior session already left at a looser mode is corrected too.
 
     Args:
         path: The database file; its parent directory is created owner-only if
@@ -49,8 +52,8 @@ def connect(path: Path, *, busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> sq
         A configured :class:`sqlite3.Connection`; use it as a context manager.
     """
 
-    # Ensure the parent exists owner-only, then create the database file at the
-    # store file mode so the sidecars SQLite makes next inherit it.
+    # Ensure the parent exists owner-only, then pin the database file to the store
+    # file mode so any sidecar SQLite later creates on first write inherits it.
     ensure_dir(path.parent)
     if not path.exists():
         path.touch(mode=FILE_MODE)

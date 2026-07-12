@@ -19,7 +19,8 @@ import sqlite_vec
 from mimer.embedding import MODEL_NAME, embed
 from mimer.index import reindex
 from mimer.paths import store_root
-from mimer.store import ensure_store
+from mimer.store import ensure_store, heal_permissions
+from mimer.storeio import write_atomic
 
 UNINSTALL_POINTER_FILENAME = "MIMER-UNINSTALLED.md"
 
@@ -75,6 +76,10 @@ def run_install(root: Path | None = None) -> InstallReport:
     root = root or store_root()
     ensure_store(root)
 
+    # Re-pin an older store's whole tree owner-only: install is also the upgrade
+    # path, and subdirectories from a pre-fix version are never healed otherwise.
+    heal_permissions(root)
+
     # Fail early when the interpreter cannot load SQLite extensions — the
     # sqlite-vec index cannot work without them.
     problem = check_sqlite_extensions()
@@ -120,14 +125,16 @@ def write_uninstall_pointer(root: Path | None = None) -> Path:
     root = root or store_root()
     ensure_store(root)
 
+    # Write through the shared atomic writer so the note is owner-only from
+    # creation, consistent with every other file Mimer creates (issue #26).
     pointer = root / UNINSTALL_POINTER_FILENAME
-    pointer.write_text(
+    write_atomic(
+        pointer,
         "# Mimer was uninstalled\n\n"
         "The Mimer plugin's hooks have been removed, but your memory store was "
         "left here on purpose — nothing was deleted. This directory holds your "
         "short-term, long-term and permanent memory. To resume, reinstall the "
         "Mimer plugin; to remove your memory entirely, delete this directory.\n",
-        encoding="utf-8",
     )
     return pointer
 

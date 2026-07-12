@@ -23,6 +23,7 @@ from __future__ import annotations
 import fcntl
 import os
 import re
+import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -114,17 +115,26 @@ def append_fold(path: Path, content: str) -> None:
 
 
 def write_atomic(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` atomically (temp file then ``os.replace``).
+    """Write ``content`` to ``path`` atomically and owner-only from creation.
 
-    A reader never sees a half-written file. Callers that need mutual exclusion
-    must already hold the relevant :func:`project_lock`.
+    A reader never sees a half-written file, and the file is never momentarily
+    world-readable: the content lands in a uniquely-named temp file in the target
+    directory that ``mkstemp`` creates at 0600 from birth — closing the window a
+    ``write_text``-then-``chmod`` would open (issue #26) — before an atomic
+    ``os.replace`` swaps it in. Callers that need mutual exclusion must already
+    hold the relevant :func:`project_lock`.
     """
 
     ensure_dir(path.parent)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.chmod(FILE_MODE)
-    os.replace(tmp, path)
+
+    # Stage the content in a temp file that is owner-only from creation, then
+    # replace the target atomically; the unique name also stops two concurrent
+    # writers colliding on a shared temp path.
+    handle, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
+        tmp_file.write(content)
+    os.chmod(tmp_name, FILE_MODE)
+    os.replace(tmp_name, path)
 
 
 def update_file(

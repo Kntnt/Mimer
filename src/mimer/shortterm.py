@@ -20,7 +20,7 @@ from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.registry import project_dir
-from mimer.store import FILE_MODE, ensure_dir
+from mimer.storeio import write_atomic
 
 SHORT_TERM_FILENAME = "short-term.md"
 
@@ -157,9 +157,7 @@ def ensure_short_term(project_id: str, root: Path | None = None) -> Path:
     path = short_term_path(project_id, root)
 
     if not path.exists():
-        ensure_dir(path.parent)
-        path.write_text(empty_short_term(project_id), encoding="utf-8")
-        path.chmod(FILE_MODE)
+        write_atomic(path, empty_short_term(project_id))
 
     return path
 

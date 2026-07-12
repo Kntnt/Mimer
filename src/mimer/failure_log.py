@@ -12,11 +12,13 @@ recognised secret shape.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.redaction import redact
+from mimer.store import FILE_MODE
 
 
 def log_failure(message: str, *, root: Path | None = None) -> None:
@@ -44,8 +46,16 @@ def log_failure(message: str, *, root: Path | None = None) -> None:
 
     timestamp = datetime.now(UTC).isoformat()
     line = f"{timestamp}\t{safe}".replace("\n", " ").replace("\r", " ")
-    with (root / LOG_FILENAME).open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
+
+    # Append with an explicit owner-only creation mode. ensure_store normally
+    # seeds mimer.log at FILE_MODE first, but this runs from capture's last-resort
+    # handler, which can fire before ensure_store — a recreated log must still be
+    # 0600, never the umask default (issue #26).
+    fd = os.open(root / LOG_FILENAME, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
+    try:
+        os.write(fd, (line + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
 
 
 def fresh_failures(root: Path | None = None, *, within_hours: int = 24) -> list[str]:

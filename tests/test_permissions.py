@@ -32,6 +32,7 @@ from mimer.install import write_uninstall_pointer
 from mimer.longterm import append_entry
 from mimer.paths import LOG_FILENAME
 from mimer.store import ensure_store, heal_permissions
+from mimer.storeio import write_atomic
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +153,22 @@ def test_heal_permissions_repins_a_preexisting_loose_tree(store_root: Path) -> N
     for directory in loose_dirs:
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700, directory
     assert stat.S_IMODE(loose_file.stat().st_mode) == 0o600, loose_file
+
+
+def test_write_atomic_produces_an_owner_only_file(store_root: Path) -> None:
+    """The shared atomic writer yields a 0600 file even under a loose umask.
+
+    Every short-term, long-term and Concept write goes through ``write_atomic``,
+    so the temp file it stages must be owner-only from creation — the replaced
+    target is never world-readable, whatever the umask.
+    """
+
+    ensure_store(store_root)
+    target = store_root / "sensitive.md"
+
+    write_atomic(target, "secret")
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 def test_uninstall_pointer_is_owner_only(store_root: Path) -> None:

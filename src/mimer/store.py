@@ -67,8 +67,28 @@ def ensure_store(root: Path | None = None) -> Path:
 def heal_permissions(root: Path | None = None) -> None:
     """Re-pin every existing file and directory under the store to owner-only.
 
-    Not yet implemented: the sweep that heals a tree an older install left loose.
+    :func:`ensure_store` and :func:`ensure_dir` pin only what they create, so a
+    store first written by a version predating the owner-only invariant keeps its
+    subdirectories world-traversable (0755) and any pre-fix files world-readable
+    forever — the 0700 root masks this only until the store is synced or backed up
+    without that mode (ADR 0013, issue #26). This sweep, run at install/upgrade,
+    corrects the whole tree in place: the migration that reaches what per-write
+    pinning cannot, since directories are never rewritten. Idempotent and a no-op
+    when the store does not yet exist.
+
+    Args:
+        root: Store root to heal; defaults to :func:`mimer.paths.store_root`.
     """
+
+    root = root or store_root()
+    if not root.exists():
+        return
+
+    # Pin the root, then every descendant: directories to 0700 and files to 0600,
+    # so the invariant holds on its own rather than only via the root's mode.
+    root.chmod(DIR_MODE)
+    for path in root.rglob("*"):
+        path.chmod(DIR_MODE if path.is_dir() else FILE_MODE)
 
 
 def ensure_dir(directory: Path) -> None:
