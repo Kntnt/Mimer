@@ -20,10 +20,11 @@ from pathlib import Path
 
 import yaml
 
+from mimer.failure_log import log_failure
 from mimer.paths import store_root
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
-from mimer.store import FILE_MODE, ensure_store
-from mimer.storeio import project_lock
+from mimer.store import ensure_store
+from mimer.storeio import project_lock, write_atomic
 from mimer.tombstones import write_tombstone
 
 BUNDLE_DIRNAME = "permanent"
@@ -36,6 +37,11 @@ PINNED_CAP = 10
 
 # One store-level lock serialises all bundle mutations.
 _BUNDLE_LOCK = "__bundle__"
+
+# Concept files already reported as unparseable in this process, so a single bad
+# file logs one actionable line rather than one per list_concepts call — and
+# list_concepts is called many times per session (recall, manifest, injection).
+_LOGGED_SKIPS: set[Path] = set()
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _CITATION_RE = re.compile(r'^\[\d+\]\s+\[.*?\]\((.*?)\)\s+—\s+"(.*?)"\s+\((.*?)\)', re.MULTILINE)
@@ -164,16 +170,36 @@ def read_concept(slug: str, root: Path | None = None) -> Concept:
 
 
 def list_concepts(root: Path | None = None) -> list[Concept]:
-    """Every Concept in the bundle, sorted by slug."""
+    """Every parseable Concept in the bundle, sorted by slug.
+
+    ``list_concepts`` sits under recall reindex, distillation, the manifest,
+    ``mimer-manage`` and session-start injection, so a single truncated or
+    hand-mangled file must not take all of those down at once. A file that is
+    unparseable, or that a concurrent writer has removed or left transiently
+    unreadable, is skipped and logged rather than allowed to propagate (issue
+    #17); a direct :func:`read_concept` on a named slug still raises.
+    """
 
     directory = bundle_dir(root)
     if not directory.exists():
         return []
-    return [
-        read_concept(path.stem, root)
-        for path in sorted(directory.glob("*.md"))
-        if path.name != INDEX_FILENAME
-    ]
+
+    concepts = []
+    for path in sorted(directory.glob("*.md")):
+        if path.name == INDEX_FILENAME:
+            continue
+        # Contain a per-file failure so one bad Concept never denies every valid
+        # one to every caller. Separate the two causes: an OSError means the file
+        # was concurrently removed or is transiently unreadable — readers hold no
+        # lock and ADR 0011 allows detached writers to unlink underneath us — so
+        # it is not corruption and must not be blamed on unparseable content.
+        try:
+            concepts.append(read_concept(path.stem, root))
+        except OSError as exc:
+            _log_skip(path, "unreadable Concept", exc, root)
+        except Exception as exc:  # noqa: BLE001 - any failure to parse one file must stay contained
+            _log_skip(path, "unparseable Concept", exc, root)
+    return concepts
 
 
 def profile_concepts(root: Path | None = None) -> list[Concept]:
@@ -279,17 +305,21 @@ def regenerate_index(root: Path | None = None) -> None:
     )
     path = index_md_path(root)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    path.chmod(FILE_MODE)
+    write_atomic(path, "\n".join(lines) + "\n")
 
 
 def _write(concept: Concept, root: Path | None) -> None:
-    """Serialise and write a Concept file with owner-only permissions."""
+    """Serialise and write a Concept file atomically, with owner-only permissions.
+
+    Routed through :func:`storeio.write_atomic` (temp file then ``os.replace``)
+    so a crash mid-write can never corrupt the previous Concept — a reader sees
+    either the old file or the new, never a torn one (issue #17). Callers already
+    hold the bundle lock, which serialises concurrent writers.
+    """
 
     path = concept_path(concept.slug, root)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.write_text(_serialise(concept), encoding="utf-8")
-    path.chmod(FILE_MODE)
+    write_atomic(path, _serialise(concept))
 
 
 def _serialise(concept: Concept) -> str:
@@ -380,6 +410,19 @@ def _first_line(body: str) -> str:
         if stripped:
             return stripped[:100]
     return ""
+
+
+def _log_skip(path: Path, reason: str, exc: Exception, root: Path | None) -> None:
+    """Log a skipped Concept file once per process, so the store is hand-editable
+    and a concurrently-removed or unreadable file stays observable — without a
+    single bad file silently emptying injected memory. ``reason`` names the cause
+    (an unparseable content error versus an unreadable file) so a reader is not
+    sent hunting for a corruption that never happened."""
+
+    if path in _LOGGED_SKIPS:
+        return
+    _LOGGED_SKIPS.add(path)
+    log_failure(f"bundle: skipped {reason} {path.name}: {exc!r}", root=root)
 
 
 def _index_concept_if_present(concept: Concept, root: Path | None) -> None:
