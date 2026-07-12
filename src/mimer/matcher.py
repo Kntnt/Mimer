@@ -14,7 +14,12 @@ Two texts are the same fact when any of three tests holds:
 * **Restatement** — they share at least half of the *larger* text's content
   words. Dividing by the larger set means this fires only for two texts of
   comparable size that overlap heavily — a reworded fact — and never for a small
-  phrase whose words happen to scatter across a much larger, unrelated text.
+  phrase whose words happen to scatter across a much larger, unrelated text. One
+  case is deliberately excluded: two facts of equal length that differ by exactly
+  one content word are a *value substitution* (``port 8080`` → ``port 9090``,
+  ``monday`` → ``tuesday``), not a rewording — they contradict. Matching them
+  would tombstone the old fact and suppress its correction, the over-suppression
+  ADR 0012 forbids, so a lone swapped word is never treated as a restatement.
 * **Quotation** — the smaller text occurs verbatim, as a contiguous run, inside
   the larger. This is what lets a forgotten fact be recognised inside a much
   larger recall chunk that bundles many facts (a captured turn, an aged-out
@@ -190,7 +195,9 @@ def is_same_fact(a: str, b: str) -> bool:
     forgotten fact quoted inside a much larger, multi-fact chunk). A text carrying
     fewer than :data:`_MIN_CONTENT_WORDS` content words is too generic to match on
     anything but exact identity, so a short phrase never over-suppresses a longer,
-    unrelated text.
+    unrelated text. Two equal-length facts differing by a single content word are a
+    value substitution, not a restatement, so they are *not* the same fact — matching
+    them would suppress a fact's own correction (see the module docstring).
 
     Args:
         a: One text (a candidate fact, a stored memory, a recall chunk or a tombstone).
@@ -211,10 +218,16 @@ def is_same_fact(a: str, b: str) -> bool:
     if len(smaller) < _MIN_CONTENT_WORDS:
         return False
 
-    # Restatement: comparable-size texts that share most of their content words. The
-    # larger set as denominator keeps a small phrase scattered across a big text below
-    # the bar while a genuine rewording clears it.
-    if len(smaller & larger) / len(larger) >= _OVERLAP_THRESHOLD:
+    # Restatement: comparable-size texts that share most of their content words — a
+    # reworded fact. The larger set as denominator keeps a small phrase scattered
+    # across a big text below the bar while a genuine rewording clears it. But two
+    # facts of equal length differing by exactly one content word are a value
+    # substitution ("port 8080" → "port 9090"), not a rewording: they contradict.
+    # Matching them would tombstone the old fact and suppress its correction — the
+    # over-suppression ADR 0012 forbids — so a lone swapped word is never a restatement.
+    shared = len(smaller & larger)
+    is_value_substitution = len(smaller) == len(larger) and shared == len(smaller) - 1
+    if not is_value_substitution and shared / len(larger) >= _OVERLAP_THRESHOLD:
         return True
 
     # Quotation: the smaller text quoted verbatim inside the larger — a forgotten

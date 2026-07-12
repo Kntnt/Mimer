@@ -113,6 +113,23 @@ def test_generic_phrase_does_not_match_a_contradictory_longer_text() -> None:
     )
 
 
+def test_same_subject_different_value_is_not_the_same_fact() -> None:
+    """Two comparable facts differing only in the distinguishing value contradict (issue #18).
+
+    Both texts carry three or more content words and share subject and verb, so the
+    old substring test never matched them and token overlap alone clears the 50 %
+    bar (``port`` 8080 vs 9090 shares three of four content words). Treating them as
+    the same fact would tombstone the old value and hide the corrected one — the
+    over-suppression ADR 0012 exists to prevent. A lone swapped content word is a
+    value substitution, not a rewording, so these are distinct facts.
+    """
+
+    assert not is_same_fact("The API runs on port 8080", "The API runs on port 9090")
+    assert not is_same_fact("the meeting is on monday at noon", "the meeting is on tuesday at noon")
+    assert not is_same_fact("backup runs nightly at 2am", "backup runs weekly at 2am")
+    assert not is_same_fact("deploy uses docker", "the deploy uses podman")
+
+
 def test_stopword_heavy_phrase_does_not_match_a_longer_text_containing_it() -> None:
     """A phrase that is almost all function words is too generic to be a fact (issue #18).
 
