@@ -215,36 +215,57 @@ def test_harness_adds_no_coverage_env_when_not_measuring(
     assert harness.subprocess_coverage_env() == {}
 
 
-def test_hook_subprocess_code_is_measured_by_coverage(tmp_path: Path) -> None:
+def test_run_hook_wires_child_coverage_from_the_active_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC2/finding #1: coverage counts code that runs only inside the hook
-    subprocesses the harness spawns — most of Mimer's real behaviour. Without
-    child-process coverage the report marks the hook modules as unrun even though
-    the suite drives them heavily.
+    subprocesses the harness spawns — most of Mimer's real behaviour. The lone
+    ``env.update(subprocess_coverage_env())`` line in ``run_hook`` is what wires
+    that up; delete it and every hook subprocess runs unmeasured, silently
+    understating the report for the hook modules the suite drives heavily.
+
+    This is the *load-bearing* test for that line. The hook is driven with **no**
+    coverage variables in ``extra_env``, so — unlike a test that hands the child
+    ``COVERAGE_PROCESS_START`` itself and thereby only exercises coverage's own
+    process-startup ``.pth`` — the child can become measured *only* if
+    ``run_hook`` forwarded ``subprocess_coverage_env()``. A truthy
+    ``Coverage.current()`` is forced (and any inherited ``COVERAGE_PROCESS_START``
+    cleared) so the wiring is the single possible source, making the check hold
+    identically under a plain ``pytest`` run and under ``pytest --cov``.
 
     The hook is driven with the re-entrancy guard set, so it exercises the
-    runner's guarded early-return path — executed only in the child, never in
-    this test process — without loading the embedding model. ``runner.py``
-    appearing in the combined data therefore proves child-process coverage is
-    active."""
+    runner's guarded early-return path — executed only in the child, never in this
+    test process — without loading the embedding model. ``runner.py`` appearing in
+    the combined data therefore proves the harness's child-process coverage wiring
+    is live."""
 
     import contextlib
 
     import coverage
     from coverage.exceptions import NoDataError
 
+    from tests import harness
     from tests.harness import run_hook, session_end_payload
 
+    # Force an "under coverage" parent and route the child's data at an isolated
+    # file, with no COVERAGE_PROCESS_START in the environment — so the only path to
+    # a measured child is run_hook forwarding subprocess_coverage_env().
+    class _ActiveCoverage:
+        @classmethod
+        def current(cls) -> object:
+            return object()
+
     data_file = tmp_path / ".coverage"
+    monkeypatch.setattr(harness, "Coverage", _ActiveCoverage)
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    monkeypatch.setenv("COVERAGE_FILE", str(data_file))
+
     result = run_hook(
         "SessionEnd",
         session_end_payload(),
         store_root=tmp_path / "store",
         cwd=tmp_path,
         guard=True,
-        extra_env={
-            "COVERAGE_PROCESS_START": str(PYPROJECT),
-            "COVERAGE_FILE": str(data_file),
-        },
     )
     assert result.returncode == 0
 
@@ -254,8 +275,8 @@ def test_hook_subprocess_code_is_measured_by_coverage(tmp_path: Path) -> None:
     measured = {Path(path).name for path in combiner.get_data().measured_files()}
 
     assert "runner.py" in measured, (
-        "the hook runner runs only in the child process, so measuring it proves "
-        "the harness enables child-process coverage"
+        "with no coverage env in extra_env, only run_hook's own "
+        "env.update(subprocess_coverage_env()) can make the child measured"
     )
 
 
