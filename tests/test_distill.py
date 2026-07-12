@@ -14,12 +14,21 @@ import pytest
 import mimer.distill as distill_module
 from mimer.bundle import concept_path, list_concepts, read_concept
 from mimer.curate import remember
-from mimer.distill import distill_durable_entries, distill_fact, drain_distilled
+from mimer.distill import distill_durable_entries, distill_fact, distill_session, drain_distilled
 from mimer.index import reindex, search
 from mimer.project import resolve
-from mimer.shortterm import read_short_term
+from mimer.shortterm import (
+    Entry,
+    ensure_short_term,
+    parse_short_term,
+    read_short_term,
+    render_short_term,
+    short_term_path,
+)
 from mimer.store import ensure_store
+from mimer.storeio import write_atomic
 from mimer.tombstones import write_tombstone
+from tests.harness import run_hook
 
 
 def _project(store_root: Path, cwd: Path) -> str:
@@ -249,6 +258,72 @@ def test_durable_remembered_secret_stays_redacted_through_distillation(
     assert all(secret not in c.body and secret not in c.title for c in concepts)
     assert any("deploy key" in c.body for c in concepts)
     assert secret not in read_short_term(pid, store_root)
+
+
+def test_ordinary_remember_is_promoted_at_session_end(store_root: Path, project_dir: Path) -> None:
+    """A plain ``remember`` — no ``--durable`` flag typed by the user — becomes a
+    permanent Concept once the session-boundary distillation runs.
+
+    This is the automatic-distillation promise: the user files nothing by hand,
+    yet durable knowledge they asked Mimer to remember lands in permanent memory.
+    """
+
+    pid = _project(store_root, project_dir)
+    fact = "The project's primary datastore is PostgreSQL 16."
+    remember(fact, project_id=pid, root=store_root, today=date(2026, 7, 12))
+
+    distill_session(pid, root=store_root)
+
+    assert any(fact in concept.body for concept in list_concepts(store_root))
+    # Promote-then-evict: once its Concept is verified on disk, the entry leaves
+    # short-term memory (ADR 0017).
+    assert fact not in read_short_term(pid, store_root)
+
+
+def test_session_end_hook_promotes_a_remembered_fact(store_root: Path, project_dir: Path) -> None:
+    """The fully wired session-end flow: after a plain remember, running the real
+    SessionEnd hook leaves a permanent Concept — with no flag typed by the user.
+
+    The digest defers (no transcript, no reachable Claude), so only the
+    deterministic distillation runs, exercising the hook's promotion path.
+    """
+
+    pid = _project(store_root, project_dir)
+    fact = "The team ships releases every second Tuesday."
+    remember(fact, project_id=pid, root=store_root, today=date(2026, 7, 12))
+
+    payload = {
+        "session_id": "sess-distill",
+        "hook_event_name": "SessionEnd",
+        "reason": "other",
+        "cwd": str(project_dir),
+        "transcript_path": str(project_dir / "missing.jsonl"),
+    }
+    result = run_hook(
+        "SessionEnd",
+        payload,
+        store_root=store_root,
+        cwd=project_dir,
+        extra_env={"MIMER_CLAUDE_BIN": "/nonexistent/claude-binary"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert any(fact in concept.body for concept in list_concepts(store_root))
+
+
+def test_transient_working_state_is_not_promoted(store_root: Path, project_dir: Path) -> None:
+    """Transient short-term working state — the digest's auto-refreshed threads,
+    not a curated write — is never distilled into a Concept."""
+
+    pid = _project(store_root, project_dir)
+    ensure_short_term(pid, store_root)
+    sections = parse_short_term(read_short_term(pid, store_root))
+    sections["Active threads"] = [Entry("2026-07-12", "poking at a flaky integration test")]
+    write_atomic(short_term_path(pid, store_root), render_short_term(pid, sections))
+
+    distill_session(pid, root=store_root)
+
+    assert list_concepts(store_root) == []
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
