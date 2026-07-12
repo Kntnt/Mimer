@@ -263,6 +263,32 @@ def test_merge_leaves_combined_files_owner_only(tmp_path: Path) -> None:
     assert stat.S_IMODE(canonical_ledger.stat().st_mode) == 0o600
 
 
+def test_merge_creates_target_subdirs_owner_only(tmp_path: Path) -> None:
+    """A subdirectory the merge creates on the target — present only on the orphan
+    — is 0700, and a target subdirectory loosened beforehand is re-tightened, so a
+    merge never widens the store's owner-only directory invariant (ADR 0013)."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+    reg.save()
+
+    # transcripts/ exists only on the orphan, so the merge creates it fresh on the
+    # target; long-term/ exists on both but is loosened on the target, so the merge
+    # must re-tighten it rather than leave it group/world-traversable.
+    transcripts_dir("orphan", tmp_path).mkdir(parents=True, exist_ok=True)
+    (transcripts_dir("orphan", tmp_path) / "sess-orphan.jsonl").write_text("{}\n", encoding="utf-8")
+    _seed_git_ledger("orphan", tmp_path, "shaorphan")
+    _seed_git_ledger("canonical", tmp_path, "shacanonical")
+    long_term_dir("canonical", tmp_path).chmod(0o755)
+
+    reg.merge("orphan", "canonical")
+
+    assert stat.S_IMODE(transcripts_dir("canonical", tmp_path).stat().st_mode) == 0o700
+    assert stat.S_IMODE(long_term_dir("canonical", tmp_path).stat().st_mode) == 0o700
+
+
 def test_merge_inserts_seam_newline_when_target_lacks_one(tmp_path: Path) -> None:
     """Concatenating onto a target whose last record has no trailing newline keeps
     the target's last line and the source's first line distinct rather than fusing

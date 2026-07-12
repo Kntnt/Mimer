@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.store import FILE_MODE, ensure_store
+from mimer.store import DIR_MODE, FILE_MODE, ensure_store
 from mimer.storeio import append_fold, project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
@@ -260,7 +260,12 @@ def _merge_directory(source_dir: Path, target_dir: Path, target_id: str) -> None
     subdirectory is removed once drained, as the walk unwinds.
     """
 
-    target_dir.mkdir(parents=True, exist_ok=True)
+    # Create the target with owner-only access, re-tightening the mode even when it
+    # pre-existed under a looser umask, so a merge never widens the store's 0700
+    # directory invariant (ADR 0013) — mirroring both :func:`mimer.store.ensure_store`
+    # for directories and the fold's re-chmod of combined files.
+    target_dir.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
+    target_dir.chmod(DIR_MODE)
 
     # Fold each source entry into the target, recursing into subdirectories and
     # combining colliding leaf files instead of clobbering them.
@@ -315,6 +320,16 @@ def _concatenate_file(source_file: Path, target_file: Path) -> None:
     appender. A newline is inserted at the seam when the target does not already
     end with one, so the target's last record and the source's first never fuse
     into a single line.
+
+    Collision semantics (deliberate). This concatenates unconditionally, so a
+    same-named ``transcripts/<name>.jsonl`` on both sides — whose name encodes the
+    session, i.e. the identical session archived under both project ids, hence
+    byte-identical files — has its events written twice. No data is lost, but a
+    downstream reader that replays or indexes the transcript would double-count the
+    duplicated events. This is accepted while merge has no live caller; a
+    keep-target-when-identical or dedup-by-line policy must be weighed before a UI
+    exposes the action, alongside the other residuals noted on
+    :meth:`Registry._move_project_memory`.
     """
 
     # Read the target only to decide the seam; it is never written back, so a
