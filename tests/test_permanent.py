@@ -133,6 +133,28 @@ def test_description_secret_is_redacted_at_the_sink(store_root: Path) -> None:
     assert "summary mentioning" in loaded.description
 
 
+def test_tag_secret_is_redacted_at_the_sink(store_root: Path) -> None:
+    """A secret carried in a tag is stripped at the Concept-creation sink, so it
+    never lands in the frontmatter, while a clean tag survives (issue #23)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    concept = create_concept(
+        title="Tagged note",
+        body="A note carrying a tagged secret.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        tags=["deploy", f"key-{secret}"],
+        root=store_root,
+    )
+
+    loaded = read_concept(concept.slug, root=store_root)
+    assert all(secret not in tag for tag in loaded.tags)
+    assert secret not in concept_path(concept.slug, store_root).read_text(encoding="utf-8")
+    assert "deploy" in loaded.tags
+
+
 def test_pinned_write_without_confirmation_is_refused(store_root: Path) -> None:
     """A pinned/profile write without explicit confirmation is refused."""
 

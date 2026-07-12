@@ -200,7 +200,10 @@ def test_secret_straddling_the_title_cut_is_not_leaked(store_root: Path) -> None
     concept = read_concept(result.slug, store_root)
     fragment = secret[:12]
     assert fragment not in concept.title
-    assert fragment not in result.slug
+    # The slug is lowercased from the title, so compare against the lowered
+    # fragment — otherwise an uppercase credential could never match and the
+    # assertion would pass regardless of whether the secret leaked (issue #23).
+    assert fragment.lower() not in result.slug
     assert fragment not in concept_path(result.slug, store_root).read_text(encoding="utf-8")
 
 
