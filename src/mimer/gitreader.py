@@ -29,7 +29,7 @@ _PAGE_SIZE = 100
 # boundary (SessionEnd), so an enormous repo's whole history must not stall it;
 # the most recent commits up to this bound are folded and the truncation is
 # logged rather than dropped silently (issue #42). Steady-state runs are not
-# bounded here — they stop naturally at the first already-folded commit.
+# bounded here — they stop once a whole page is already folded.
 _FIRST_FOLD_LIMIT = 2000
 
 # ASCII unit/record separators keep multi-line commit bodies unambiguous.
@@ -84,9 +84,10 @@ def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
     On first adoption — an empty ledger — the whole history is folded, paging
     through ``git log`` until it is exhausted or the :data:`_FIRST_FOLD_LIMIT`
     safety bound is reached (a truncation is logged, never silent). On later runs
-    only commits newer than the last folded one are read: paging stops at the
-    first already-folded SHA, so re-running adds nothing. Non-git projects fold
-    nothing.
+    only the not-yet-folded commits are folded; paging stops once a whole page is
+    already folded, so re-running adds nothing, while a commit a merge orders
+    behind an already-folded one is still picked up (issue #42). Non-git projects
+    fold nothing.
     """
 
     root = root or store_root()
@@ -118,10 +119,15 @@ def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
 def _commits_to_fold(cwd: Path, seen: set[str], *, first_fold: bool) -> tuple[list[Commit], bool]:
     """Collect the not-yet-folded commits to fold, newest first.
 
-    Pages through history stopping at the first already-folded SHA (steady state)
-    or at history's end. A first fold is capped at :data:`_FIRST_FOLD_LIMIT`; the
-    returned flag reports whether that bound truncated the walk (there was older,
-    unfolded history), which the caller turns into a logged notice.
+    Pages through history folding every commit not already in the ledger. A first
+    fold has an empty ledger and folds the whole history, capped at
+    :data:`_FIRST_FOLD_LIMIT`; the returned flag reports whether that bound
+    truncated the walk (older, unfolded history remained), which the caller turns
+    into a logged notice. A steady-state run stops once a whole page holds nothing
+    new — deliberately *not* at the first already-folded SHA: a merge can bring in
+    commits whose commit date predates an already-folded one, so ``git log`` lists
+    them after it, and stopping early would drop them silently and permanently
+    (issue #42).
     """
 
     to_fold: list[Commit] = []
@@ -132,13 +138,20 @@ def _commits_to_fold(cwd: Path, seen: set[str], *, first_fold: bool) -> tuple[li
         if not page:
             return to_fold, False
 
-        # Take commits until an already-folded SHA or the first-fold bound.
+        # Fold every not-yet-folded commit on the page; a first fold stops the
+        # moment it reaches its safety bound.
+        new_on_page = 0
         for commit in page:
-            if commit.sha in seen:
-                return to_fold, False
             if first_fold and len(to_fold) >= _FIRST_FOLD_LIMIT:
                 return to_fold, True
+            if commit.sha in seen:
+                continue
             to_fold.append(commit)
+            new_on_page += 1
+
+        # A steady-state page with nothing new means everything older is folded too.
+        if not first_fold and not new_on_page:
+            return to_fold, False
 
         skip += len(page)
 

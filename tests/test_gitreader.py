@@ -43,9 +43,12 @@ def _commit_dated(repo: Path, message: str, date: str) -> str:
     which is what interleaves a merged-in branch behind mainline commits.
     """
 
-    env = {**os.environ, "GIT_AUTHOR_DATE": f"{date}T12:00:00", "GIT_COMMITTER_DATE": f"{date}T12:00:00"}
+    stamp = f"{date}T12:00:00"
+    env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
     subprocess.run(
-        ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", message], check=True, env=env
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", message],
+        check=True,
+        env=env,
     )
     return subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
@@ -178,9 +181,7 @@ def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path)
     assert all(f"git:{sha}" in stored for sha in shas)
 
 
-def test_merge_folds_commits_ordered_behind_a_folded_one(
-    store_root: Path, tmp_path: Path
-) -> None:
+def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_path: Path) -> None:
     """A merge that orders new commits behind an already-folded one still folds them.
 
     A feature branch cut from an early commit, merged after main advanced, brings in
