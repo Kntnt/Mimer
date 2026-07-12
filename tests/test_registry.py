@@ -431,3 +431,52 @@ def test_merge_concatenates_colliding_distilled_queues(tmp_path: Path) -> None:
     titles = canonical_queue.read_text().splitlines()
     assert "orphan title" in titles
     assert "canonical title" in titles
+
+
+def test_merge_carries_source_settings_and_import_state_when_target_has_none(
+    tmp_path: Path,
+) -> None:
+    """A source's per-project settings and bootstrap import state survive the merge
+    when the target has not set its own: a capture the user paused on the source
+    stays paused, and the source's import progress is not reset (#34)."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+
+    # The user paused capture on the orphan and it carries bootstrap progress; the
+    # canonical record has neither, so the merge must adopt the orphan's.
+    reg.set_capture("orphan", enabled=False)
+    reg.set_import_state("orphan", {"cursor": "abc123", "done": False})
+
+    reg.merge("orphan", "canonical")
+
+    assert reg.capture_enabled("canonical") is False
+    assert reg.import_state("canonical") == {"cursor": "abc123", "done": False}
+
+
+def test_merge_prefers_target_settings_and_import_state_on_conflict(tmp_path: Path) -> None:
+    """When both sides set the same control or both carry import state, the target's
+    explicitly-set values win — a deliberate binding is never silently overridden by
+    a retired orphan's stale value (#34)."""
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create("orphan", remotes=[], paths=["/old/path"])
+    reg.create("canonical", remotes=[], paths=["/new/path"])
+
+    # Both sides set capture, and both carry import state; the target's values must
+    # survive. The orphan additionally excludes itself from widening, a control the
+    # target never set, so that one is adopted.
+    reg.set_capture("orphan", enabled=False)
+    reg.set_widening("orphan", participate=False)
+    reg.set_import_state("orphan", {"cursor": "orphan"})
+    reg.set_capture("canonical", enabled=True)
+    reg.set_import_state("canonical", {"cursor": "canonical"})
+
+    reg.merge("orphan", "canonical")
+
+    assert reg.capture_enabled("canonical") is True
+    assert reg.is_widenable("canonical") is False
+    assert reg.import_state("canonical") == {"cursor": "canonical"}
