@@ -63,6 +63,12 @@ def digest_session(
         transcript_path = payload.get("transcript_path")
         session_id = str(payload.get("session_id") or "")
 
+        # Reject a traversal- or otherwise malformed session id before any store
+        # write, so a bad id fails the whole digest cleanly instead of first
+        # mutating the daily log and short-term and only tripping later when it
+        # would become the archive path (#25).
+        safe_identifier(session_id or "session", kind="session id")
+
         resolution = resolve(cwd, root=root)
         project_id = resolution.project_id
         if project_id is None:
@@ -185,16 +191,16 @@ def _refresh_short_term(
 
 
 def _archive_transcript(project_id: str, session_id: str, transcript: Path, root: Path) -> Path:
-    """Archive the redacted transcript as provenance (not indexed)."""
+    """Archive the redacted transcript as provenance (not indexed).
 
-    # Validate the session id as a bare slug before it becomes a filename, so a
-    # traversal-shaped id cannot land the archive outside the transcripts dir (#25).
-    archive_name = safe_identifier(session_id or "session", kind="session id")
+    ``session_id`` is already validated as a bare identifier by ``digest_session``
+    before any store write, so it is a safe filename component here (#25).
+    """
 
     archive_dir = transcripts_dir(project_id, root)
     archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-    archive_path = archive_dir / f"{archive_name}.jsonl"
+    archive_path = archive_dir / f"{session_id or 'session'}.jsonl"
     archive_path.write_text(redact(transcript.read_text(encoding="utf-8")), encoding="utf-8")
     archive_path.chmod(FILE_MODE)
     return archive_path

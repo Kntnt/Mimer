@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mimer.bundle import Source, create_concept, retract_concept
 from mimer.failure_log import log_failure
 from mimer.index import reindex, search
-from mimer.manage import profile, recent_concepts, store_health
+from mimer.manage import main, profile, recent_concepts, store_health
 from mimer.store import ensure_store
 
 
@@ -148,3 +150,22 @@ def test_retracted_concept_stops_surfacing(store_root: Path) -> None:
 
     assert not search("deployment window claim", root=store_root, project_id="p")
     assert concept.title not in [c.title for c in profile(store_root)]
+
+
+def test_retract_cli_rejects_traversal_slug_with_clean_message(
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``mimer-manage retract`` answers a traversal slug with a one-line rejection
+    and a non-zero exit, never a raw traceback (#25)."""
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    ensure_store(store_root)
+
+    exit_code = main(["retract", "../evil"])
+
+    assert exit_code != 0
+    out = capsys.readouterr().out
+    assert out.startswith("Mimer: invalid slug")
+    assert "Traceback" not in out

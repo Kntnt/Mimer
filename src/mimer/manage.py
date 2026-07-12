@@ -127,7 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "health":
         _print_health(store_health(root))
     else:
-        concept = retract_concept(args.slug, root)
+        # A traversal-shaped slug is refused by safe_identifier deep inside
+        # retract; turn that ValueError into a clear one-line rejection with a
+        # non-zero exit rather than leaking a stack trace for user input (#25).
+        try:
+            concept = retract_concept(args.slug, root)
+        except ValueError as exc:
+            print(f"Mimer: {exc}")
+            return 1
         print(f'Mimer: retracted "{concept.title}" — it will no longer surface.')
     return 0
 

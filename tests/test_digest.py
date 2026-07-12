@@ -157,6 +157,10 @@ def test_digest_rejects_traversal_session_id(store_root: Path, project_dir: Path
     assert result.status != "digested"
     assert result.archive_path is None
 
+    # No partial write: the malformed id fails the whole digest before the daily
+    # log or short-term are touched, so nothing was appended for the day (#25).
+    assert not daily_log_path(pid, "2026-07-11", store_root).exists()
+
 
 def test_digest_is_idempotent_per_session(store_root: Path, project_dir: Path) -> None:
     """Re-firing the digest for the same session adds nothing."""
