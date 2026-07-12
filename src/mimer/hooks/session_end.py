@@ -35,7 +35,12 @@ def handle(payload: Mapping[str, Any]) -> None:
     # A paused session records nothing at the boundary either — neither the git
     # fold nor distillation runs. The pause is store-wide, so a session ending
     # never lifts it (that would suppress and then silently resume an unrelated
-    # concurrent session); only an explicit "resume" does (#35).
+    # concurrent session); only an explicit "resume" does (#35). A session already
+    # running when the pause was set therefore drops its own boundary work here;
+    # that specific loss is not surfaced to that session (its SessionStart fired
+    # before the pause existed), but the standing pause is announced at the next
+    # SessionStart and in `mimer-manage health`, so the drop is observable going
+    # forward rather than silent.
     if is_paused(root):
         return
 

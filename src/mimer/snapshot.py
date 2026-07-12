@@ -61,6 +61,7 @@ def build_snapshot(
     distilled: list[str] | None = None,
     health: str = "",
     paused: str = "",
+    capture_off: str = "",
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -75,6 +76,9 @@ def build_snapshot(
         health: A one-line health warning when the failure log is fresh.
         paused: A one-line notice when a store-wide capture pause is in effect, so
             a standing pause is announced every session rather than silent (#35).
+        capture_off: A one-line notice when this project's per-project capture is
+            switched off, so a standing per-project suppression is announced every
+            session rather than silent, for parity with the pause notice (#35).
     """
 
     count = count_dated_items(short_term_text)
@@ -96,6 +100,8 @@ def build_snapshot(
     lines = []
     if paused:
         lines.append(paused)
+    if capture_off:
+        lines.append(capture_off)
     if health:
         lines.append(health)
     lines.append(announcement)

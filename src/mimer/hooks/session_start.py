@@ -24,6 +24,7 @@ from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
 from mimer.pause import is_paused
 from mimer.project import resolve
+from mimer.registry import Registry
 from mimer.shortterm import ensure_short_term, read_short_term
 from mimer.snapshot import DATA_FRAME_HEADER, build_snapshot
 
@@ -59,6 +60,7 @@ def handle(payload: Mapping[str, Any]) -> None:
         distilled=drain_distilled(resolution.project_id, root),
         health=_health_notice(root),
         paused=_pause_notice(root),
+        capture_off=_capture_notice(resolution.project_id, root),
     )
     _emit(snapshot)
 
@@ -75,6 +77,22 @@ def _pause_notice(root: Path) -> str:
     return (
         "⏸ Mimer: capture is PAUSED store-wide — nothing is being recorded this "
         'session. Say "resume capture" to lift it.'
+    )
+
+
+def _capture_notice(project_id: str, root: Path) -> str:
+    """A one-line notice when this project's per-project capture is off (#35).
+
+    A per-project ``capture off`` is a standing, indefinite suppression just like
+    a pause; announcing it every session — for parity with the pause notice —
+    keeps a forgotten one from silently swallowing this project's memory.
+    """
+
+    if Registry.load(root).capture_enabled(project_id):
+        return ""
+    return (
+        "⏹ Mimer: capture is OFF for this project — nothing is being recorded here. "
+        'Say "turn capture on" to re-enable it.'
     )
 
 
