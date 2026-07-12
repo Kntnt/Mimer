@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from mimer.framing import frame
 from mimer.index import Citation, search
 from mimer.paths import store_root
 from mimer.project import confirm_hint, resolve
@@ -30,6 +31,25 @@ class RecallResult:
         """Whether recall found nothing."""
 
         return not self.citations
+
+    def rendered(self) -> str:
+        """The full terminal output for the ``mimer-recall`` command.
+
+        Mimer's own message is its trusted voice and stays outside the frame;
+        the cited excerpts are recalled from untrusted memory, so they are
+        wrapped in the data frame (ADR 0014). The advisory distiller filter is
+        not the gate — a directive that slips past it into a Concept surfaces
+        here as inert, fenced data rather than a bare command a future session
+        might obey.
+        """
+
+        if self.is_empty():
+            return self.message
+
+        excerpts = "\n".join(
+            f"[{c.source} · {c.date} · {c.heading}] {c.excerpt}" for c in self.citations
+        )
+        return f"{self.message}\n{frame(excerpts)}"
 
 
 def recall(
@@ -109,7 +129,5 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     result = recall(" ".join(args.query), root=store_root(), widen=args.widen)
-    print(result.message)
-    for citation in result.citations:
-        print(f"[{citation.source} · {citation.date} · {citation.heading}] {citation.excerpt}")
+    print(result.rendered())
     return 0

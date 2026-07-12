@@ -88,8 +88,10 @@ _STOP = frozenset(
 
 # Markers of an imperative addressed to the agent (ADR 0014). This filter is
 # advisory: it is a best-effort pre-filter, not the gate. The gate is the
-# structural neutralisation applied when memory is injected (``mimer.framing``),
-# so a directive that slips through here is still framed as inert data. The
+# structural framing in ``mimer.framing``, applied on every surface that
+# re-presents memory — the session-start snapshot, ``mimer-recall`` and the
+# ``mimer-manage`` inspection surface — so a directive that slips through here
+# is still shown as inert, fenced data rather than a command to obey. The
 # markers therefore target phrasings that are unambiguously agent-directed —
 # rather than a first-word denylist, which wrongly rejected plain facts such as
 # "Always use uv" while letting "Standing policy: …" through (issue #36).
@@ -343,8 +345,9 @@ def _content_words(text: str) -> set[str]:
 def _is_instruction_shaped(text: str) -> bool:
     """Whether text reads as an imperative to the agent rather than a fact.
 
-    Advisory only: the structural gate is the injection-time neutralisation in
-    ``mimer.framing``. A false negative here is caught there, so this errs
+    Advisory only: the structural gate is the framing in ``mimer.framing``,
+    applied on every surface that re-presents memory — snapshot injection,
+    recall and inspection. A false negative here is caught there, so this errs
     towards admitting facts (``Always use uv``) over rejecting them.
     """
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept
+from mimer.framing import frame
 from mimer.longterm import LONG_TERM_DIRNAME
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
@@ -337,10 +338,18 @@ def _print_concepts(heading: str, concepts: list[Concept]) -> None:
     if not concepts:
         print(f"Mimer: {heading.lower()} — nothing yet.")
         return
+
+    # Mimer's heading is its trusted voice and stays outside the frame; the
+    # concept bodies and their cited excerpts are recalled from untrusted
+    # memory, so they are wrapped in the data frame (ADR 0014) — a directive
+    # that reached a Concept is echoed back here as inert, fenced data rather
+    # than a command to obey.
     print(f"Mimer: {heading}:")
+    lines = []
     for concept in concepts:
         cites = f" [cited: {concept.citations[0].excerpt}]" if concept.citations else ""
-        print(f"- {concept.title}: {concept.body}{cites}")
+        lines.append(f"- {concept.title}: {concept.body}{cites}")
+    print(frame("\n".join(lines)))
 
 
 def _print_health(report: HealthReport) -> None:
