@@ -239,9 +239,7 @@ def test_unknown_transcript_format_degrades_gracefully(store_root: Path, project
     assert "unrecognised" in log or "unrecognized" in log
 
 
-def test_bootstrapped_facts_default_to_project_scope(
-    store_root: Path, project_dir: Path
-) -> None:
+def test_bootstrapped_facts_default_to_project_scope(store_root: Path, project_dir: Path) -> None:
     """Every distilled fact but the deliberate profile seed defaults to project
     scope, so a client project's facts stay confined to it (ADR 0013)."""
 
@@ -279,10 +277,12 @@ def test_project_scoped_bootstrap_fact_is_not_recallable_elsewhere(
     bootstrap_project(pid_a, transcripts_dir=dir_a / "h", root=store_root, distiller=distiller)
     reindex(store_root)
 
-    assert any("zephyr" in hit.text for hit in search("zephyr deploy script", root=store_root, project_id=pid_a))
-    assert not any(
-        "zephyr" in hit.text for hit in search("zephyr deploy script", root=store_root, project_id=pid_b)
-    )
+    def finds_zephyr(project_id: str) -> bool:
+        hits = search("zephyr deploy script", root=store_root, project_id=project_id)
+        return any("zephyr" in hit.text for hit in hits)
+
+    assert finds_zephyr(pid_a)
+    assert not finds_zephyr(pid_b)
 
 
 def test_rerun_with_more_history_does_not_duplicate_pinned_profile(

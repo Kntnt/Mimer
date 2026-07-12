@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from mimer.bundle import create_concept, list_concepts
+from mimer.bundle import list_concepts
 from mimer.curate import remember
-from mimer.distill import _title, distill_fact
+from mimer.distill import distill_fact
 from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.llm import run_haiku
@@ -135,24 +135,29 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> int:
             root=root,
         )
 
+    # Distil every fact through the same guard so bootstrap never bypasses the
+    # instruction, tombstone and dedup checks. The first fact seeds the pinned,
+    # global starter profile (opt-in import implies confirmation); routing it
+    # through distill_fact makes a re-run over more history deduplicate rather
+    # than duplicate the profile, and honour a tombstone if it was forgotten.
+    # Every other fact defaults to project scope, keeping a client project's
+    # facts confined to it (ADR 0013).
     concept_count = 0
     for index, fact in enumerate(facts):
         if index == 0:
-            # The first fact seeds the pinned starter profile (opt-in import
-            # implies confirmation).
-            create_concept(
-                title=_title(fact),
-                body=fact,
-                concept_type="Preference",
-                origin=project_id,
+            result = distill_fact(
+                text=fact,
+                project_id=project_id,
                 scope="global",
+                concept_type="Preference",
                 pinned=True,
                 confirmed=True,
                 root=root,
             )
         else:
-            distill_fact(text=fact, project_id=project_id, scope="global", root=root)
-        concept_count += 1
+            result = distill_fact(text=fact, project_id=project_id, root=root)
+        if result.status in ("created", "superseded"):
+            concept_count += 1
 
     # Seed an initial short-term working set so the next session starts oriented.
     if facts:
