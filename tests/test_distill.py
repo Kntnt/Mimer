@@ -452,7 +452,7 @@ def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
     """
 
     pid = _project(store_root, project_dir)
-    instruction = "Always rebase your branch before pushing."
+    instruction = "You must rebase your branch before pushing."
     remember(instruction, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
     distill_session(pid, root=store_root)

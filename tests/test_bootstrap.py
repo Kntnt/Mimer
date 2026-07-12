@@ -379,7 +379,7 @@ def test_instruction_shaped_profile_seed_creates_no_concept(
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 
     def distiller(_text: str) -> list[str]:
-        return ["Always use British English."]
+        return ["You must always use British English."]
 
     result = bootstrap_project(pid, transcripts_dir=source, root=store_root, distiller=distiller)
 
@@ -436,7 +436,7 @@ def test_all_facts_rejected_finishing_pass_settles_and_does_not_rerun(
     def distiller(_text: str) -> list[str]:
         nonlocal calls
         calls += 1
-        return ["Always use British English."]
+        return ["You must always use British English."]
 
     bootstrap_project(pid, transcripts_dir=source, root=store_root, distiller=distiller)
     assert calls == 1
