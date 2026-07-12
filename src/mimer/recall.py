@@ -54,7 +54,11 @@ def recall(
 
     if widen:
         citations = search(
-            query, root=root, projects=_widenable_projects(root, current=project_id), limit=limit
+            query,
+            root=root,
+            project_id=project_id,
+            projects=_widenable_projects(root, current=project_id),
+            limit=limit,
         )
         scope = "widened across projects"
     else:

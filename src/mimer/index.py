@@ -33,6 +33,10 @@ from mimer.tombstones import load_tombstones
 
 INDEX_FILENAME = "index.db"
 
+# Source prefix that marks a chunk as a permanent-memory Concept rather than a
+# long-term log; Concepts obey a stricter confidentiality rule (ADR 0013).
+_PERMANENT_SOURCE_PREFIX = "permanent/"
+
 # Retrieval breadth and fusion/rerank tuning — the simplest values that work.
 _CANDIDATES = 20
 _RRF_K = 60
@@ -243,7 +247,7 @@ def concept_chunk(
 ) -> _Chunk:
     """Build an index chunk from a permanent-memory Concept's fields."""
 
-    source = f"permanent/{slug}.md"
+    source = f"{_PERMANENT_SOURCE_PREFIX}{slug}.md"
     text = f"{title}\n{body}".strip()
     key = sha256(f"{origin}\x00{source}\x00{text}".encode()).hexdigest()[:16]
     return _Chunk(key, origin, source, (timestamp or "")[:10], title, text, scope)
@@ -324,11 +328,14 @@ def search(
     projects: Sequence[str] | None = None,
     limit: int = 10,
 ) -> list[Citation]:
-    """Hybrid, cited, tombstone-filtered search over long-term memory.
+    """Hybrid, cited, tombstone-filtered search over long-term and permanent memory.
 
-    Restrict to ``project_id`` (or an explicit ``projects`` set) when scoping;
-    otherwise search every indexed project. Returns an empty list when nothing is
-    relevant.
+    ``project_id`` is the home project the search runs from: it governs which
+    project-scoped Concepts are visible (only the home project's own, plus every
+    global one — ADR 0013). ``projects`` widens which projects' *logs* are
+    reached, and defaults to the home project alone; passing it never widens
+    Concept visibility. With neither, logs from every project are searched and
+    only global Concepts show. Returns an empty list when nothing is relevant.
     """
 
     root = root or store_root()
@@ -349,19 +356,29 @@ def search(
     results = [
         _cite(row, candidates[row["id"]], query_date=date.today())
         for row in rows
-        if _in_scope(row, allowed) and not _suppressed(row["text"], row["project_id"], tombstones)
+        if _in_scope(row, allowed, home=project_id)
+        and not _suppressed(row["text"], row["project_id"], tombstones)
     ]
     results.sort(key=lambda citation: citation.score, reverse=True)
     return results[:limit]
 
 
-def _in_scope(row: sqlite3.Row, allowed: frozenset[str] | None) -> bool:
-    """Whether a chunk is visible: a global Concept is visible everywhere; every
-    other chunk only within an allowed project (ADR 0013)."""
+def _in_scope(row: sqlite3.Row, allowed: frozenset[str] | None, *, home: str | None) -> bool:
+    """Whether a chunk is visible from the ``home`` project given the ``allowed``
+    log set (ADR 0013).
 
-    if row["scope"] == "global":
-        return True
-    return allowed is None or row["project_id"] in allowed
+    A permanent-memory Concept obeys a stricter rule than a log chunk: it is
+    visible only when it is global or its origin is the home project itself —
+    never merely because widening reached its origin. Log chunks participate in
+    the (possibly widened) project set, so widening reaches other projects' logs
+    without ever exposing their private Concepts.
+    """
+
+    scope: str = row["scope"]
+    origin: str = row["project_id"]
+    if row["source"].startswith(_PERMANENT_SOURCE_PREFIX):
+        return scope == "global" or origin == home
+    return allowed is None or origin in allowed
 
 
 def _fuse(connection: sqlite3.Connection, query: str) -> dict[int, float]:
