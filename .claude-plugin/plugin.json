@@ -10,6 +10,5 @@
   "homepage": "https://github.com/Kntnt/Mimer",
   "repository": "https://github.com/Kntnt/Mimer",
   "license": "Apache-2.0",
-  "keywords": ["memory", "knowledge", "claude-code", "okf", "second-brain"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["memory", "knowledge", "claude-code", "okf", "second-brain"]
 }

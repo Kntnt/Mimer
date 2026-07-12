@@ -106,7 +106,7 @@ Claude Cowork is not yet supported: Cowork runs sessions in a sandboxed VM that 
 
 Mimer is a Claude Code plugin. It needs [uv](https://docs.astral.sh/uv/) (which provisions its Python environment) and a Python that can load SQLite extensions — the uv-managed CPython qualifies; some system Pythons have extension loading compiled out.
 
-1. **Add the plugin.** Point Claude Code at this repository as a plugin — for local development, `claude --plugin-dir /path/to/Mimer`; once published, install it from its marketplace. This registers the `SessionStart`, `Stop` and `SessionEnd` hooks and the memory skill.
+1. **Add the plugin.** Point Claude Code at this repository as a plugin — for local development, `claude --plugin-dir /path/to/Mimer`, or add the checkout as a local marketplace with `/plugin marketplace add /path/to/Mimer` followed by `/plugin install mimer@mimer`; once published, install it from its public marketplace. This registers the `SessionStart`, `Stop` and `SessionEnd` hooks and the memory skill.
 2. **Provision and check.** Run the first-run install once, from the plugin directory:
 
    ```bash
