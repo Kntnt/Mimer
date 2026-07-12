@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from mimer.capture import capture_from_payload
 from mimer.digest import digest_session
 from mimer.longterm import daily_log_path
@@ -22,6 +24,7 @@ from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
 from tests.harness import run_hook
+from tests.secret_samples import SAMPLES, Sample
 from tests.transcript_fixture import write_transcript
 
 TODAY = date(2026, 7, 11)
@@ -102,6 +105,33 @@ def test_digest_redacts_secret_from_prompt_and_archive(store_root: Path, project
     assert secret not in seen["prompt"]
     assert result.archive_path is not None
     assert secret not in result.archive_path.read_text()
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
+def test_broadened_secret_class_reaches_neither_prompt_nor_archive(
+    store_root: Path, project_dir: Path, sample: Sample
+) -> None:
+    """Each broadened secret class is stripped from both the Haiku prompt (which
+    leaves the machine) and the archived transcript."""
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl",
+        [(f"here is {sample.text} thanks", "noted", "2026-07-11T15:00:00Z")],
+    )
+    seen: dict[str, str] = {}
+
+    def stub(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return DIGEST_REPLY
+
+    result = digest_session(
+        _payload(project_dir, transcript), root=store_root, haiku=stub, today=TODAY
+    )
+
+    assert sample.sensitive not in seen["prompt"]
+    assert result.archive_path is not None
+    assert sample.sensitive not in result.archive_path.read_text()
 
 
 def test_digest_is_idempotent_per_session(store_root: Path, project_dir: Path) -> None:
