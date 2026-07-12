@@ -109,6 +109,11 @@ def test_run_install_reports_gracefully_on_index_build_failure(
 ) -> None:
     """An index-build failure yields an actionable report, not a traceback."""
 
+    # Isolate the index-build path: stub the prefetch so this test reaches the
+    # reindex failure deterministically, never a real model download that would
+    # fail first offline and report the wrong step.
+    monkeypatch.setattr("mimer.install.prefetch_embedding_model", lambda: None)
+
     def broken(_root: Path) -> int:
         raise RuntimeError("disk I/O error building the index")
 
@@ -120,6 +125,33 @@ def test_run_install_reports_gracefully_on_index_build_failure(
     joined = " ".join(report.messages).lower()
     assert "index" in joined
     assert "re-run" in joined
+
+
+def test_run_install_is_resumable_after_a_failure(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed install leaves a resumable state: the store survives the failure
+    and a re-run, once the cause is fixed, completes cleanly — the load-bearing
+    promise run_install's docstring and its failure messages make."""
+
+    from mimer.index import index_db_path
+
+    # First run fails at the model-download step (no network); the store is
+    # created before that step, so the failure loses nothing.
+    def offline(_texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("Failed to connect to huggingface.co")
+
+    monkeypatch.setattr("mimer.install.embed", offline)
+    first = run_install(store_root)
+    assert not first.ok
+    assert (store_root / "config.toml").exists()
+
+    # Fix the cause (network restored) and re-run the same store: the install
+    # now completes and ends with a built index.
+    monkeypatch.undo()
+    second = run_install(store_root)
+    assert second.ok
+    assert index_db_path(store_root).exists()
 
 
 def test_fresh_failures_are_recent_only(store_root: Path) -> None:
