@@ -20,10 +20,11 @@ from pathlib import Path
 
 from mimer.bundle import Concept, Source, create_concept, list_concepts, mark_superseded
 from mimer.failure_log import log_failure
+from mimer.longterm import append_entry
 from mimer.paths import store_root
 from mimer.redaction import redact
 from mimer.registry import project_dir
-from mimer.shortterm import parse_short_term, render_short_term, short_term_path
+from mimer.shortterm import Entry, parse_short_term, render_short_term, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
 from mimer.tombstones import is_tombstoned
 
@@ -95,6 +96,17 @@ class DistillResult:
     slug: str | None = None
 
 
+# The fact now lives on disk as a Concept, so its durable short-term entry has
+# done its job and can leave.
+_PROMOTED_STATUSES = frozenset({"created", "superseded", "duplicate"})
+
+# The fact will never become a Concept — an imperative (ADR 0014) or a forgotten
+# fact re-remembered (ADR 0012). Keeping its durable entry would strand it in
+# short-term forever, re-rejected every session end and never cap-evicted, so it
+# is aged out to the daily log instead.
+_REJECTED_STATUSES = frozenset({"rejected-instruction", "rejected-tombstoned"})
+
+
 def distill_fact(
     *,
     text: str,
@@ -161,9 +173,17 @@ def distill_durable_entries(
     project_id: str, root: Path | None = None, *, scope: str = "project", today: date | None = None
 ) -> list[DistillResult]:
     """Promote durable short-term entries, evicting each only once its Concept is
-    verified on disk; a failed promotion leaves the entry and is logged."""
+    verified on disk; a failed promotion leaves the entry and is logged.
+
+    An entry distillation *permanently* rejects — an imperative, or a forgotten
+    fact re-remembered — will never become a Concept, so it is evicted too and
+    aged out verbatim to today's daily log rather than stranded in short-term to
+    be re-rejected on every session end (the cap never evicts a durable entry
+    either). Only a transient failure keeps the entry, for a later retry.
+    """
 
     root = root or store_root()
+    today = today or date.today()
     path = short_term_path(project_id, root)
     if not path.exists():
         return []
@@ -171,6 +191,7 @@ def distill_durable_entries(
     results: list[DistillResult] = []
     with project_lock(project_id, root=root):
         sections = parse_short_term(path.read_text(encoding="utf-8"))
+        rejected: list[Entry] = []
         for name, entries in sections.items():
             kept = []
             for entry in entries:
@@ -179,12 +200,30 @@ def distill_durable_entries(
                     continue
                 result = _promote(entry.text, project_id, scope, root)
                 results.append(result)
-                # Evict only a fact that is now verifiably a Concept on disk.
-                if result.status not in ("created", "superseded", "duplicate"):
-                    kept.append(entry)
+                # Promoted entries are gone (their Concept is on disk); permanently
+                # rejected ones are aged out below; a transient failure is retried.
+                if result.status in _PROMOTED_STATUSES:
+                    continue
+                if result.status in _REJECTED_STATUSES:
+                    rejected.append(entry)
+                    continue
+                kept.append(entry)
             sections[name] = kept
+
+        # Age the rejected entries out to the daily log before short-term is
+        # rewritten, so a crash never leaves one absent from both places (ADR 0017).
+        if rejected:
+            append_entry(project_id, today.isoformat(), _rejected_block(rejected, today), root)
         write_atomic(path, render_short_term(project_id, sections))
     return results
+
+
+def _rejected_block(rejected: list[Entry], today: date) -> str:
+    """Render a daily-log block holding entries distillation permanently rejected."""
+
+    lines = [f"## Rejected by distillation ({today.isoformat()})"]
+    lines.extend(f"- [{entry.date}] {entry.text}" for entry in rejected)
+    return "\n".join(lines) + "\n"
 
 
 def _promote(text: str, project_id: str, scope: str, root: Path) -> DistillResult:
