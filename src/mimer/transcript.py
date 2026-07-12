@@ -90,8 +90,9 @@ def all_exchanges(transcript_path: Path) -> list[Exchange]:
             pending_user = (text, timestamp)
         elif role == "assistant" and text:
             user_text, _ = pending_user if pending_user is not None else ("", timestamp)
-            turn_id = hashlib.sha256(f"{user_text}\x00{text}".encode()).hexdigest()[:16]
-            exchanges.append(Exchange(user_text, text, timestamp, turn_id))
+            exchanges.append(
+                Exchange(user_text, text, timestamp, _turn_id(timestamp, user_text, text))
+            )
             pending_user = None
     return exchanges
 
