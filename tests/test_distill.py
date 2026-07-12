@@ -6,6 +6,7 @@ the next-session announcement queue (ADRs 0013, 0014, 0015, 0017).
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 
@@ -69,6 +70,84 @@ def test_changed_fact_supersedes_and_recall_returns_one_current(store_root: Path
     # The predecessor is kept but marked superseded (identity preserved).
     superseded = [c for c in list_concepts(store_root) if c.status == "superseded"]
     assert len(superseded) == 1 and "Friday" in superseded[0].body
+
+
+def test_supersession_never_exposes_two_active_concepts(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replacing a changed fact never leaves a window with both Concepts active.
+
+    Create-new and supersede-old are one atomic unit under a single bundle-lock
+    acquisition, and the two file writes are ordered so no durable filesystem
+    state a lockless reader could observe ever carries two active Concepts on the
+    subject (issue #30).
+    """
+
+    ensure_store(store_root)
+    distill_fact(text="The deploy day is Friday.", project_id="p", scope="global", root=store_root)
+
+    # Stand a concurrent reader between every atomic step: os.replace is the only
+    # way a new state becomes visible, so snapshotting the active set after each
+    # replace samples exactly the states a lockless reader could observe.
+    real_replace = os.replace
+    observed_active_counts: list[int] = []
+
+    def observing_replace(src: str | Path, dst: str | Path) -> None:
+        real_replace(src, dst)
+        active = [c for c in list_concepts(store_root) if c.status == "active"]
+        observed_active_counts.append(len(active))
+
+    monkeypatch.setattr(os, "replace", observing_replace)
+
+    result = distill_fact(
+        text="The deploy day is now Monday.", project_id="p", scope="global", root=store_root
+    )
+
+    assert result.status == "superseded"
+    assert observed_active_counts, "the transition wrote nothing to observe"
+    assert max(observed_active_counts) == 1
+
+
+def test_failure_mid_supersession_leaves_no_two_active(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash mid-transition never strands two active Concepts on the subject.
+
+    The predecessor is retired before the successor is written, so a fault on the
+    predecessor's write raises before any second Concept becomes active — the
+    partial-failure path can leave at most one active Concept, never the live
+    pair the two-step design left behind (issue #30).
+    """
+
+    ensure_store(store_root)
+    first = distill_fact(
+        text="The deploy day is Friday.", project_id="p", scope="global", root=store_root
+    )
+    assert first.slug is not None
+    predecessor_path = concept_path(first.slug, store_root)
+
+    # Fault the atomic rename onto the predecessor's file, simulating a crash at
+    # the supersede step of the transition.
+    real_replace = os.replace
+
+    def crash_on_predecessor(src: str | Path, dst: str | Path) -> None:
+        if Path(dst) == predecessor_path:
+            raise OSError("simulated crash superseding the predecessor")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash_on_predecessor)
+
+    with pytest.raises(OSError):
+        distill_fact(
+            text="The deploy day is now Monday.",
+            project_id="p",
+            scope="global",
+            root=store_root,
+        )
+
+    monkeypatch.undo()
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert len(active) <= 1
 
 
 def test_rerunning_mints_no_duplicates(store_root: Path) -> None:
