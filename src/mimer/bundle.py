@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 
 from mimer.failure_log import log_failure
-from mimer.paths import store_root
+from mimer.paths import safe_identifier, store_root
 from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
 from mimer.store import ensure_store
@@ -90,9 +90,14 @@ def bundle_dir(root: Path | None = None) -> Path:
 
 
 def concept_path(slug: str, root: Path | None = None) -> Path:
-    """The file backing a Concept."""
+    """The file backing a Concept.
 
-    return bundle_dir(root) / f"{slug}.md"
+    Every Concept read, write, rename and retract funnels through here, so the
+    slug is validated as a bare, path-safe identifier before it is joined into
+    the path — closing traversal via an attacker-directed slug (#25).
+    """
+
+    return bundle_dir(root) / f"{safe_identifier(slug, kind='slug')}.md"
 
 
 def index_md_path(root: Path | None = None) -> Path:

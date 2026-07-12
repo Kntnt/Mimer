@@ -20,7 +20,7 @@ from mimer import llm
 from mimer.failure_log import log_failure
 from mimer.index import index_if_present
 from mimer.longterm import append_entry, is_digested, record_digested, transcripts_dir
-from mimer.paths import store_root
+from mimer.paths import safe_identifier, store_root
 from mimer.project import resolve
 from mimer.redaction import redact
 from mimer.shortterm import (
@@ -187,10 +187,14 @@ def _refresh_short_term(
 def _archive_transcript(project_id: str, session_id: str, transcript: Path, root: Path) -> Path:
     """Archive the redacted transcript as provenance (not indexed)."""
 
+    # Validate the session id as a bare slug before it becomes a filename, so a
+    # traversal-shaped id cannot land the archive outside the transcripts dir (#25).
+    archive_name = safe_identifier(session_id or "session", kind="session id")
+
     archive_dir = transcripts_dir(project_id, root)
     archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-    archive_path = archive_dir / f"{session_id or 'session'}.jsonl"
+    archive_path = archive_dir / f"{archive_name}.jsonl"
     archive_path.write_text(redact(transcript.read_text(encoding="utf-8")), encoding="utf-8")
     archive_path.chmod(FILE_MODE)
     return archive_path
