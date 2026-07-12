@@ -84,9 +84,7 @@ def test_supersession_never_exposes_two_active_concepts(
     """
 
     ensure_store(store_root)
-    distill_fact(
-        text="The deploy day is Friday.", project_id="p", scope="global", root=store_root
-    )
+    distill_fact(text="The deploy day is Friday.", project_id="p", scope="global", root=store_root)
 
     # Stand a concurrent reader between every atomic step: os.replace is the only
     # way a new state becomes visible, so snapshotting the active set after each
@@ -94,7 +92,7 @@ def test_supersession_never_exposes_two_active_concepts(
     real_replace = os.replace
     observed_active_counts: list[int] = []
 
-    def observing_replace(src: object, dst: object) -> None:
+    def observing_replace(src: str | Path, dst: str | Path) -> None:
         real_replace(src, dst)
         active = [c for c in list_concepts(store_root) if c.status == "active"]
         observed_active_counts.append(len(active))
@@ -132,7 +130,7 @@ def test_failure_mid_supersession_leaves_no_two_active(
     # the supersede step of the transition.
     real_replace = os.replace
 
-    def crash_on_predecessor(src: object, dst: object) -> None:
+    def crash_on_predecessor(src: str | Path, dst: str | Path) -> None:
         if Path(dst) == predecessor_path:
             raise OSError("simulated crash superseding the predecessor")
         return real_replace(src, dst)

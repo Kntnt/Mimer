@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from mimer.bundle import Concept, Source, create_concept, list_concepts, mark_superseded
+from mimer.bundle import Concept, Source, create_concept, list_concepts
 from mimer.failure_log import log_failure
 from mimer.longterm import append_entry
 from mimer.paths import store_root
@@ -186,6 +186,10 @@ def distill_fact(
     if predecessor is not None and _normalise(predecessor.body) == _normalise(text):
         return DistillResult("duplicate", predecessor.slug)
 
+    # Create the successor and retire the predecessor as one atomic unit: when the
+    # fact has changed, create_concept flips the old Concept to superseded and writes
+    # the new one under a single bundle-lock acquisition, so recall never sees two
+    # current answers on the subject and a failure cannot strand a live pair (#30).
     concept = create_concept(
         title=_title(text),
         body=text,
@@ -195,16 +199,11 @@ def distill_fact(
         pinned=pinned,
         confirmed=confirmed,
         citations=citations,
-        supersedes=predecessor.id if predecessor is not None else None,
+        supersede=predecessor,
         root=root,
     )
 
-    if predecessor is not None:
-        mark_superseded(predecessor.slug, concept.id, root)
-        status = "superseded"
-    else:
-        status = "created"
-
+    status = "superseded" if predecessor is not None else "created"
     _record_distilled(project_id, concept.title, root)
     return DistillResult(status, concept.slug)
 

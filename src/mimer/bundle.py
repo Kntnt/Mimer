@@ -130,7 +130,7 @@ def create_concept(
     pinned: bool = False,
     confirmed: bool = False,
     citations: list[Source] | None = None,
-    supersedes: str | None = None,
+    supersede: Concept | None = None,
     timestamp: str | None = None,
     root: Path | None = None,
 ) -> Concept:
@@ -138,6 +138,12 @@ def create_concept(
 
     A pinned/profile write requires explicit confirmation. Creation regenerates
     the bundle index and updates the search index when one exists.
+
+    When ``supersede`` is given, this replaces a changed fact: the predecessor is
+    retired and the successor created as one atomic unit under a single bundle-lock
+    acquisition, and the two writes are ordered so no reader ever observes both as
+    active — closing the two-answer window the former two-step path opened
+    (issue #30, ADR 0015).
 
     Redaction is enforced here at the Concept-creation boundary: a secret in the
     incoming text is stripped before it is ever persisted, so the guarantee holds
@@ -174,9 +180,19 @@ def create_concept(
             pinned=pinned,
             origin=origin,
             scope=scope,
-            supersedes=supersedes,
+            supersedes=supersede.id if supersede is not None else None,
             citations=list(citations or []),
         )
+
+        # Retire the predecessor before the successor is written. Each write is a
+        # single atomic os.replace, so ordering the retirement first means the only
+        # state a lockless reader can observe between the two is "predecessor
+        # superseded, successor not yet present" — never both active — and a crash
+        # between them leaves at most the predecessor retired, never a live pair
+        # (issue #30).
+        if supersede is not None:
+            _supersede_in_place(supersede.slug, concept.id, root)
+
         _write(concept, root)
         if pinned:
             _enforce_pin_cap(root)
@@ -320,16 +336,30 @@ def retract_concept(slug: str, root: Path | None = None) -> Concept:
 
 
 def mark_superseded(slug: str, superseded_by: str, root: Path | None = None) -> None:
-    """Mark a Concept superseded by another; recall then drops it (ADR 0015)."""
+    """Mark a Concept superseded by another; recall then drops it (ADR 0015).
+
+    This is the standalone retirement of an already-persisted Concept. A changed
+    fact's replacement does not go through here — :func:`create_concept` retires the
+    predecessor and mints the successor atomically instead, so no window leaves both
+    active (issue #30).
+    """
 
     with project_lock(_BUNDLE_LOCK, root=root):
-        concept = read_concept(slug, root)
-        concept.status = "superseded"
-        concept.superseded_by = superseded_by
-        _write(concept, root)
+        _supersede_in_place(slug, superseded_by, root)
         regenerate_index(root)
 
     _reindex_if_present(root)
+
+
+def _supersede_in_place(slug: str, superseded_by: str, root: Path | None) -> None:
+    """Flip a Concept to superseded and persist it; the caller holds the bundle lock
+    and regenerates the index. Shared by :func:`mark_superseded` and the atomic
+    create-and-supersede path so both retire a predecessor identically (issue #30)."""
+
+    concept = read_concept(slug, root)
+    concept.status = "superseded"
+    concept.superseded_by = superseded_by
+    _write(concept, root)
 
 
 def regenerate_index(root: Path | None = None) -> None:
