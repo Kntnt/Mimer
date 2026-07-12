@@ -6,27 +6,50 @@ pinned profile, curated-write routing, and scope-enforced recall over Concepts
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
+import mimer.bundle as bundle
 from mimer.bundle import (
     PINNED_CAP,
+    Concept,
     ConfirmationRequired,
     Source,
+    bundle_dir,
+    concept_headlines,
     concept_path,
     create_concept,
     index_md_path,
     list_concepts,
+    mark_superseded,
     read_concept,
     rename_concept,
 )
 from mimer.index import reindex, search
+from mimer.manage import store_health
+from mimer.paths import LOG_FILENAME
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload
 
 OKF_SPEC = Path(__file__).resolve().parent.parent / "docs" / "okf" / "SPEC.md"
+
+
+@pytest.fixture(autouse=True)
+def _reset_bundle_skip_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test a fresh copy of the process-global skip-dedup ledger.
+
+    ``bundle._LOGGED_SKIPS`` deduplicates the "skipped unparseable Concept" log
+    line to once per process. Left un-reset it leaks across tests, so a later
+    bad-file test that skips a file at a path an earlier test already skipped
+    would find it pre-deduped and log zero new lines — making the load-bearing
+    "logged exactly once" assertions pass or fail on test order rather than on
+    the behaviour under test (issue #17).
+    """
+
+    monkeypatch.setattr(bundle, "_LOGGED_SKIPS", set(), raising=False)
 
 
 def test_okf_spec_is_vendored() -> None:
@@ -228,3 +251,180 @@ def test_snapshot_carries_profile_and_headlines(store_root: Path, project_dir: P
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "prefers concise answers" in context
     assert "Uses sqlite-vec" in context
+
+
+def test_crash_between_temp_write_and_rename_preserves_previous(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault injected between temp-write and rename leaves the previous Concept
+    intact and readable — permanent memory is the one layer nothing can rebuild
+    (issue #17)."""
+
+    ensure_store(store_root)
+    concept = create_concept(
+        title="Durable fact",
+        body="The one source of truth that must survive a crashed write.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+    path = concept_path(concept.slug, store_root)
+    original = path.read_text(encoding="utf-8")
+
+    # Fault the atomic rename so any bundle write crashes with the temp file
+    # written but the live file not yet replaced.
+    def crash(_src: object, _dst: object) -> None:
+        raise OSError("simulated crash before rename")
+
+    monkeypatch.setattr(os, "replace", crash)
+
+    with pytest.raises(OSError):
+        mark_superseded(concept.slug, "01OTHERCONCEPTID0000000000", root=store_root)
+
+    # The previous file is byte-for-byte intact and still parses.
+    assert path.read_text(encoding="utf-8") == original
+    reloaded = read_concept(concept.slug, root=store_root)
+    assert reloaded.id == concept.id
+    assert reloaded.status == "active"
+
+
+def _create_good_concept(store_root: Path) -> Concept:
+    """Create one well-formed, parseable Concept in the bundle."""
+
+    return create_concept(
+        title="Valid concept",
+        body="A well-formed, parseable Concept.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+
+
+def _write_bad_concept(store_root: Path) -> None:
+    """Drop a botched hand-edit — a Concept file with no frontmatter at all — into
+    the bundle, the case that today bricks every reader (issue #17)."""
+
+    (bundle_dir(store_root) / "broken.md").write_text(
+        "just some prose, no frontmatter here\n", encoding="utf-8"
+    )
+
+
+# One unparseable Concept must degrade to "that file is skipped and logged", not
+# "the whole bundle is unusable". Each reader that iterates the bundle is asserted
+# on its own so a regression confined to any single surface is pinpointed, rather
+# than masked behind whichever assertion happens to run first (issue #17).
+
+
+def test_list_concepts_skips_one_bad_concept(store_root: Path) -> None:
+    """list_concepts returns every valid Concept and drops the unparseable file,
+    rather than letting the parse failure propagate to every caller (issue #17)."""
+
+    ensure_store(store_root)
+    good = _create_good_concept(store_root)
+    _write_bad_concept(store_root)
+
+    slugs = [concept.slug for concept in list_concepts(store_root)]
+    assert good.slug in slugs
+    assert "broken" not in slugs
+
+
+def test_reindex_indexes_the_valid_concept_despite_one_bad_file(store_root: Path) -> None:
+    """reindex not only survives the bad file but lands the valid Concept in the
+    derived index: a post-reindex search finds it (issue #17)."""
+
+    ensure_store(store_root)
+    good = _create_good_concept(store_root)
+    _write_bad_concept(store_root)
+
+    reindex(store_root)
+
+    hits = search("Valid concept parseable", root=store_root)
+    assert any(hit.source == f"permanent/{good.slug}.md" for hit in hits)
+
+
+def test_concept_headlines_survive_one_bad_file(store_root: Path) -> None:
+    """The manifest's Concept headlines still list every valid Concept when one
+    file in the bundle is unparseable (issue #17)."""
+
+    ensure_store(store_root)
+    _create_good_concept(store_root)
+    _write_bad_concept(store_root)
+
+    assert any("Valid concept" in headline for headline in concept_headlines(store_root))
+
+
+def test_store_health_counts_only_the_valid_concepts(store_root: Path) -> None:
+    """mimer-manage's health surface counts the valid Concepts and does not choke
+    on an unparseable file (issue #17)."""
+
+    ensure_store(store_root)
+    _create_good_concept(store_root)
+    _write_bad_concept(store_root)
+
+    assert store_health(store_root).concept_count == 1
+
+
+def test_one_bad_concept_is_logged_once_across_many_reads(store_root: Path) -> None:
+    """A single unparseable Concept yields exactly one actionable log line however
+    many readers iterate the bundle in a process — recall reindex, the manifest and
+    the health surface all skip the same file without re-logging it (issue #17)."""
+
+    ensure_store(store_root)
+    _create_good_concept(store_root)
+    _write_bad_concept(store_root)
+
+    # Exercise every in-process reader that iterates the bundle, several times over.
+    for _ in range(3):
+        list_concepts(store_root)
+    reindex(store_root)
+    concept_headlines(store_root)
+    store_health(store_root)
+
+    log_lines = [
+        line
+        for line in (store_root / LOG_FILENAME).read_text(encoding="utf-8").splitlines()
+        if "broken.md" in line
+    ]
+    assert len(log_lines) == 1
+    assert "skipped" in log_lines[0].lower()
+
+
+def test_session_start_injects_valid_concept_despite_one_bad_file(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Session-start injection survives one bad Concept file: the valid Concept is
+    still injected instead of the session getting no memory at all (issue #17)."""
+
+    ensure_store(store_root)
+    resolution = resolve(project_dir, root=store_root)
+    assert resolution.project_id is not None
+    create_concept(
+        title="Uses sqlite-vec",
+        body="Mimer indexes with sqlite-vec.",
+        concept_type="Reference",
+        origin=resolution.project_id,
+        scope="global",
+        root=store_root,
+    )
+    _write_bad_concept(store_root)
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(project_dir)),
+        store_root=store_root,
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "Uses sqlite-vec" in context
+
+    # The bad file is logged once for the whole injection, not once per read.
+    log_lines = [
+        line
+        for line in (store_root / LOG_FILENAME).read_text(encoding="utf-8").splitlines()
+        if "broken.md" in line
+    ]
+    assert len(log_lines) == 1
