@@ -64,6 +64,13 @@ def ensure_store(root: Path | None = None) -> Path:
     return root
 
 
+def heal_permissions(root: Path | None = None) -> None:
+    """Re-pin every existing file and directory under the store to owner-only.
+
+    Not yet implemented: the sweep that heals a tree an older install left loose.
+    """
+
+
 def ensure_dir(directory: Path) -> None:
     """Create ``directory`` and any missing ancestors, each pinned to 0700.
 
