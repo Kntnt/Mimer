@@ -193,3 +193,93 @@ def test_failure_log_recreated_owner_only_when_absent(store_root: Path) -> None:
 
     log = store_root / LOG_FILENAME
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_heal_permissions_tolerates_a_path_removed_mid_sweep(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file removed after ``rglob`` yields it must not abort the whole sweep.
+
+    ``heal_permissions`` runs at install — which is also Claude Code's plugin
+    reload path — while other sessions' detached capture may be deleting a spool
+    file or ``os.replace``-ing a ``write_atomic`` temp. A path that vanishes
+    between ``rglob`` yielding it and the ``chmod`` must be skipped, not surface as
+    a spurious install failure (issue #26).
+    """
+
+    ensure_store(store_root)
+
+    # Loosen a real seeded file so the sweep has genuine work, proving it still
+    # pins the survivors after stepping over the vanished path.
+    log = store_root / LOG_FILENAME
+    log.chmod(0o644)
+
+    # Stand in for a concurrent deletion: rglob yields the real entries plus one
+    # path that no longer exists by the time chmod reaches it.
+    real_entries = list(store_root.rglob("*"))
+    phantom = store_root / "projects" / "proj-a" / "long-term" / "vanished.md"
+
+    def rglob_with_phantom(
+        self: Path, pattern: str, *args: object, **kwargs: object
+    ) -> Iterator[Path]:
+        yield from real_entries
+        yield phantom
+
+    monkeypatch.setattr(Path, "rglob", rglob_with_phantom)
+
+    heal_permissions(store_root)
+
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_write_atomic_cleans_up_its_temp_when_the_replace_fails(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure before ``os.replace`` must not leave an orphan ``.tmp`` behind.
+
+    ``write_atomic`` stages content in a uniquely-named temp file; if the process
+    fails between staging and the atomic swap, that temp must be removed rather
+    than accumulate beside the real files (e.g. next to ``short-term.md``) on
+    repeated failures (issue #26).
+    """
+
+    ensure_store(store_root)
+    target = store_root / "short-term.md"
+
+    def failing_replace(src: object, dst: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    with pytest.raises(OSError):
+        write_atomic(target, "secret")
+
+    assert list(store_root.glob("*.tmp")) == []
+
+
+def test_ensure_store_seeds_files_owner_only_from_creation(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The config and failure log are owner-only from creation, not chmod-ed after.
+
+    Pinning the final mode hides a brief exposure: ``write_text``/``touch`` create
+    at the umask default (``0644`` here) and only the following ``chmod`` narrows
+    it, leaving a window where the seeded file is world-readable. This records the
+    mode each seeded file has at the instant ``chmod`` is called and requires it to
+    be owner-only already, so creation — not the chmod — established it (issue #26).
+    """
+
+    observed: dict[str, int] = {}
+    real_chmod = Path.chmod
+
+    def recording_chmod(self: Path, mode: int) -> None:
+        if self.is_file():
+            observed[self.name] = stat.S_IMODE(self.stat().st_mode)
+        real_chmod(self, mode)
+
+    monkeypatch.setattr(Path, "chmod", recording_chmod)
+
+    ensure_store(store_root)
+
+    assert observed, "ensure_store must pin the seeded files"
+    assert all(mode == 0o600 for mode in observed.values()), observed
