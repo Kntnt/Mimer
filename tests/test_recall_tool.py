@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mimer.bundle import create_concept
 from mimer.index import reindex
 from mimer.longterm import daily_log_path
 from mimer.project import resolve
@@ -69,6 +70,51 @@ def test_widening_is_explicit_and_excluded_project_never_surfaces(store_root: Pa
     assert "alpha" in projects
     assert "charlie" in projects
     assert "bravo" not in projects
+
+
+def test_widened_recall_never_leaks_project_scoped_concept(store_root: Path) -> None:
+    """A project-scoped Concept from project A must never surface in a widened
+    recall run from project B, while a global Concept still crosses (ADR 0013;
+    the confirmed leak in issue #20)."""
+
+    _register(store_root, "client-a", "client-b")
+
+    # A confidential, project-scoped Concept living in client A's project.
+    create_concept(
+        title="Client A secret rule",
+        body="Client A's private API base path is internal-only and confidential.",
+        concept_type="Decision",
+        origin="client-a",
+        scope="project",
+        root=store_root,
+    )
+
+    # A client-neutral, global Concept that is allowed to travel across projects.
+    create_concept(
+        title="Global technique",
+        body="Prefer dependency injection to keep seams testable across projects.",
+        concept_type="Technique",
+        origin="client-a",
+        scope="global",
+        root=store_root,
+    )
+    reindex(store_root)
+
+    scoped = recall(
+        "client A private API base path internal-only",
+        root=store_root,
+        project_id="client-b",
+        widen=True,
+    )
+    globaled = recall(
+        "dependency injection testable seams",
+        root=store_root,
+        project_id="client-b",
+        widen=True,
+    )
+
+    assert all("internal-only" not in citation.text for citation in scoped.citations)
+    assert any("dependency injection" in citation.text for citation in globaled.citations)
 
 
 def test_unanswerable_recall_states_nothing_found(store_root: Path) -> None:
