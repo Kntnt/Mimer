@@ -11,6 +11,7 @@ import pytest
 
 from mimer.bootstrap import bootstrap_project
 from mimer.bundle import list_concepts, profile_concepts, render_profile, retract_concept
+from mimer.distill import distill_session
 from mimer.index import reindex, search
 from mimer.longterm import daily_log_path
 from mimer.project import resolve
@@ -194,6 +195,35 @@ def test_finishing_distillation_is_retryable(store_root: Path, project_dir: Path
         pid, transcripts_dir=source, root=store_root, distiller=lambda _t: ["The project uses uv."]
     )
     assert any("uv" in c.body for c in list_concepts(store_root))
+
+
+def test_orientation_note_is_not_promoted_at_session_end(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Bootstrap's short-term orientation note is transient orientation, not durable
+    knowledge: session-end distillation must not promote it into a Concept (AC2).
+
+    Guards the ``durable=False`` on that write — since ``remember`` now defaults
+    durable, dropping the flag would turn the note into a standing Concept.
+    """
+
+    pid = _project(store_root, project_dir)
+    source = project_dir / "history"
+    write_transcript(source / "a.jsonl", [("q", "durable content", "2026-06-01T10:00:00Z")])
+
+    bootstrap_project(
+        pid,
+        transcripts_dir=source,
+        root=store_root,
+        distiller=lambda _t: ["The project standardised on uv.", "Deploys happen on Fridays."],
+    )
+    # The note is present in short-term after bootstrap …
+    assert "Bootstrapped prior history" in read_short_term(pid, store_root)
+
+    distill_session(pid, root=store_root)
+
+    # … yet distillation promotes none of it into a Concept.
+    assert not any("Bootstrapped prior history" in c.body for c in list_concepts(store_root))
 
 
 def test_haiku_distiller_extracts_bullets_despite_preamble(monkeypatch: pytest.MonkeyPatch) -> None:

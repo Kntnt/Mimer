@@ -14,22 +14,16 @@ import pytest
 import mimer.distill as distill_module
 from mimer.bundle import concept_path, list_concepts, read_concept
 from mimer.curate import remember
+from mimer.digest import digest_session
 from mimer.distill import distill_durable_entries, distill_fact, distill_session, drain_distilled
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
 from mimer.project import resolve
-from mimer.shortterm import (
-    Entry,
-    ensure_short_term,
-    parse_short_term,
-    read_short_term,
-    render_short_term,
-    short_term_path,
-)
+from mimer.shortterm import read_short_term
 from mimer.store import ensure_store
-from mimer.storeio import write_atomic
 from mimer.tombstones import write_tombstone
 from tests.harness import run_hook
+from tests.transcript_fixture import write_transcript
 
 
 def _project(store_root: Path, cwd: Path) -> str:
@@ -345,18 +339,41 @@ def test_session_end_hook_promotes_a_remembered_fact(store_root: Path, project_d
     assert any(fact in concept.body for concept in list_concepts(store_root))
 
 
-def test_transient_working_state_is_not_promoted(store_root: Path, project_dir: Path) -> None:
-    """Transient short-term working state — the digest's auto-refreshed threads,
-    not a curated write — is never distilled into a Concept."""
+def test_digest_refreshed_working_state_is_not_promoted(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Transient working state written by the *real* producer — the session
+    digest refreshing short-term's auto-maintained sections — is never distilled
+    into a Concept (AC2).
+
+    This drives the genuine risk surface after ``remember`` defaults durable:
+    were the digest to emit durable entries, session-end distillation would
+    promote its Active threads and Pending decisions into standing Concepts.
+    """
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl", [("what did we do?", "refactored", "2026-07-12T15:00:00Z")]
+    )
+    reply = (
+        "## Digest\nWe refactored the tokenizer.\n\n"
+        "## Active threads\n- refactoring the tokenizer\n\n"
+        "## Pending decisions\n- whether to drop Python 3.11 support\n"
+    )
+    payload = {
+        "session_id": "sess-transient",
+        "hook_event_name": "SessionEnd",
+        "reason": "other",
+        "cwd": str(project_dir),
+        "transcript_path": str(transcript),
+    }
+    digest_session(payload, root=store_root, haiku=lambda _: reply, today=date(2026, 7, 12))
 
     pid = _project(store_root, project_dir)
-    ensure_short_term(pid, store_root)
-    sections = parse_short_term(read_short_term(pid, store_root))
-    sections["Active threads"] = [Entry("2026-07-12", "poking at a flaky integration test")]
-    write_atomic(short_term_path(pid, store_root), render_short_term(pid, sections))
-
     distill_session(pid, root=store_root)
 
+    # The digest's threads reached short-term, but none became a Concept.
+    assert "refactoring the tokenizer" in read_short_term(pid, store_root)
     assert list_concepts(store_root) == []
 
 
