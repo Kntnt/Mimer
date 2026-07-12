@@ -221,9 +221,19 @@ class Registry:
     def merge(self, source_id: str, target_id: str) -> ProjectRecord:
         """Merge an orphaned project into its recognised identity.
 
-        The source's aliases fold into the target, its memory directory's
+        The source's aliases fold into the target, its per-project settings and
+        bootstrap import state reconcile into the target, its memory directory's
         contents move under the target, and the source entry is removed. This is
-        the link/merge reconciliation action of ADR 0008.
+        the link/merge reconciliation action of ADR 0008, made a live action by
+        #34 (``mimer-manage confirm``).
+
+        Settings/import-state policy. The target's explicitly-set values win: a
+        deliberate binding on the recognised identity is never overridden by a
+        retired orphan's stale value. Where the target has not set a control, the
+        source's value is adopted — so a capture the user paused on the orphan
+        (#35) stays paused rather than silently re-enabling. Bootstrap import
+        state (#15) is carried over only when the target has none, so the
+        orphan's import progress is not reset.
         """
 
         source = self._records[source_id]
@@ -232,6 +242,16 @@ class Registry:
         # Fold the orphan's aliases into the canonical record.
         self.add_aliases(target_id, remotes=source.remotes, paths=source.paths)
 
+        # Reconcile per-project settings, target-wins: a control the target set
+        # explicitly is kept, one it never set adopts the source's value so a
+        # paused capture is not silently re-enabled (#35).
+        target.settings = {**source.settings, **target.settings}
+
+        # Carry the orphan's bootstrap import state only when the target has none,
+        # so confirming an identity does not reset import progress (#15).
+        if not target.import_state:
+            target.import_state = dict(source.import_state)
+
         # Move any on-disk memory from the orphan's directory into the target's.
         self._move_project_memory(source_id, target_id)
 
@@ -239,7 +259,8 @@ class Registry:
         return target
 
     def _move_project_memory(self, source_id: str, target_id: str) -> None:
-        """Merge the source project's on-disk memory into the target's, losslessly.
+        """Merge the source project's on-disk memory into the target's, keeping
+        every entry under nominal operation.
 
         The move is recursive and collision-aware (issue #33): subdirectories are
         merged in place rather than replaced — so a non-empty ``long-term/`` or
@@ -267,9 +288,10 @@ class Registry:
         and removed before the caller persists the registry, and only the target is
         locked: a crash between the drain and ``save`` leaves the registry still
         naming an emptied source, and a stray writer still resolving to the retired
-        source id is not serialised against the drain. These residuals are
-        acceptable while merge has no live caller; they must be revisited before a
-        UI exposes the action.
+        source id is not serialised against the drain. These residuals became live
+        exposure once #34 made merge a user-invokable action (``mimer-manage
+        confirm``); they are known and accepted for now, and remain the candidates
+        to harden as the action's usage grows.
         """
 
         source_dir = project_dir(source_id, self._root)
@@ -358,9 +380,10 @@ def _concatenate_file(source_file: Path, target_file: Path) -> None:
     session, i.e. the identical session archived under both project ids, hence
     byte-identical files — has its events written twice. No data is lost, but a
     downstream reader that replays or indexes the transcript would double-count the
-    duplicated events. This is accepted while merge has no live caller; a
-    keep-target-when-identical or dedup-by-line policy must be weighed before a UI
-    exposes the action, alongside the other residuals noted on
+    duplicated events. This became live exposure once #34 made merge a
+    user-invokable action; it is known and accepted for now, and a
+    keep-target-when-identical or dedup-by-line policy remains a candidate to weigh
+    as usage grows, alongside the other residuals noted on
     :meth:`Registry._move_project_memory`.
     """
 
