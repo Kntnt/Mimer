@@ -20,7 +20,14 @@ import pytest
 
 from mimer.capture import capture_from_payload
 from mimer.digest import digest_session
-from mimer.longterm import daily_log_path, transcripts_dir
+from mimer.longterm import (
+    DIGEST_LEDGER_FILENAME,
+    daily_log_path,
+    is_digested,
+    long_term_dir,
+    record_digested,
+    transcripts_dir,
+)
 from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
@@ -315,6 +322,57 @@ def test_concurrent_digests_of_one_session_write_one_block(
     pid = _project_id(store_root, project_dir)
     assert daily_log_path(pid, "2026-07-11", store_root).read_text().count("## Session digest") == 1
     assert sorted(results.values()) == ["digested", "duplicate"]
+
+
+def test_concurrent_digests_record_every_session(store_root: Path, project_dir: Path) -> None:
+    """Concurrent digests of distinct sessions each land in the digest ledger: the
+    per-project lock around the ledger's read-modify-write loses none of them (#41)."""
+
+    ensure_store(store_root)
+    transcript = write_transcript(project_dir / "t.jsonl", [("q", "a", "2026-07-11T15:00:00Z")])
+    session_ids = [f"sess-{i:03d}" for i in range(24)]
+
+    def digest(session_id: str) -> None:
+        digest_session(
+            _payload(project_dir, transcript, session_id=session_id),
+            root=store_root,
+            haiku=lambda _: DIGEST_REPLY,
+            today=TODAY,
+        )
+
+    threads = [threading.Thread(target=digest, args=(sid,)) for sid in session_ids]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    pid = _project_id(store_root, project_dir)
+    missing = [sid for sid in session_ids if not is_digested(pid, sid, store_root)]
+    assert not missing, f"digest ledger lost sessions {missing}"
+
+
+def test_digest_ledger_stays_bounded_over_many_sessions(
+    store_root: Path, project_dir: Path
+) -> None:
+    """The digest ledger holds a bounded window, not one id per session forever —
+    yet a recently digested session still dedups, so idempotency holds (#41)."""
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+
+    # Record far more sessions than any bounded window could hold.
+    total = 4000
+    for i in range(total):
+        record_digested(pid, f"sess-{i:08d}", store_root)
+
+    # The ledger is read in full on every digest, so its line count is the
+    # per-write cost — it must stay well below one line per session.
+    ledger = long_term_dir(pid, store_root) / DIGEST_LEDGER_FILENAME
+    line_count = len(ledger.read_text().split())
+    assert line_count <= 2000, f"digest ledger grew to {line_count} lines over {total} sessions"
+
+    # A recently recorded session still re-fires as a duplicate (idempotency holds).
+    assert is_digested(pid, f"sess-{total - 1:08d}", store_root)
 
 
 def test_digest_defers_when_haiku_unavailable(store_root: Path, project_dir: Path) -> None:

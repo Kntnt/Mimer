@@ -15,10 +15,11 @@ from pathlib import Path
 
 from mimer.failure_log import log_failure
 from mimer.index import index_if_present
+from mimer.ledger import Ledger
 from mimer.longterm import append_entry, long_term_dir
 from mimer.paths import store_root
 from mimer.redaction import redact
-from mimer.storeio import append_text, project_lock
+from mimer.storeio import project_lock
 
 GIT_LEDGER_FILENAME = ".git-ledger"
 
@@ -92,11 +93,21 @@ def fold_git_log(project_id: str, cwd: Path, root: Path | None = None) -> int:
     # Decide and apply under the lock so two boundaries cannot double-fold.
     folded_days: set[str] = set()
     with project_lock(project_id, root=root):
-        seen = _folded_shas(project_id, root)
+        # The git ledger is a bounded dedup window (#41). Fold oldest-first,
+        # recording each sha immediately after its entry: an interrupted fold then
+        # re-duplicates at most the one in-flight commit, never the whole batch, and
+        # each record trims the window to its bound. Oldest-first recording keeps the
+        # most recent shas in the window — and under reachability exclusion (#42) a
+        # retained tip sha's ``^``-exclude reaches every ancestor, so a still-reachable
+        # commit is not re-folded. Only branch switching that folds more than a
+        # window's worth of other commits can evict a reachable sha and re-fold it
+        # once — a duplicate, never a loss.
+        ledger = Ledger(_ledger_path(project_id, root))
+        seen = ledger.snapshot()
         commits, truncated = _commits_to_fold(cwd, seen, first_fold=not seen)
-        for commit in commits:
+        for commit in reversed(commits):
             append_entry(project_id, commit.date, _render(commit), root)
-            append_text(_ledger_path(project_id, root), commit.sha)
+            ledger.record(commit.sha)
             folded_days.add(commit.date)
 
     # A truncated first backfill stays observable in the failure log (issue #42).
@@ -212,8 +223,3 @@ def _render(commit: Commit) -> str:
 
 def _ledger_path(project_id: str, root: Path) -> Path:
     return long_term_dir(project_id, root) / GIT_LEDGER_FILENAME
-
-
-def _folded_shas(project_id: str, root: Path) -> set[str]:
-    path = _ledger_path(project_id, root)
-    return set(path.read_text(encoding="utf-8").split()) if path.exists() else set()

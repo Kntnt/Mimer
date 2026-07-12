@@ -13,7 +13,13 @@ import pytest
 
 from mimer.capture import capture_from_payload
 from mimer.index import index_db_path, reindex
-from mimer.longterm import daily_log_path
+from mimer.longterm import (
+    CAPTURE_LEDGER_FILENAME,
+    daily_log_path,
+    is_captured,
+    long_term_dir,
+    record_captured,
+)
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.harness import run_hook
@@ -212,6 +218,28 @@ def test_concurrent_captures_lose_nothing(store_root: Path, project_dir: Path) -
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     for i in range(count):
         assert f"answer number {i}" in log
+
+
+def test_capture_ledger_stays_bounded_over_many_turns(store_root: Path, project_dir: Path) -> None:
+    """The capture ledger holds a bounded window, not one id per turn forever —
+    yet a recently captured turn still dedups, so idempotency holds (#41)."""
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+
+    # Record far more turns than any bounded window could hold.
+    total = 4000
+    for i in range(total):
+        record_captured(pid, f"turn-{i:08d}", store_root)
+
+    # The ledger is read in full on every capture, so its line count is the
+    # per-write cost — it must stay well below one line per turn.
+    ledger = long_term_dir(pid, store_root) / CAPTURE_LEDGER_FILENAME
+    line_count = len(ledger.read_text().split())
+    assert line_count <= 2000, f"capture ledger grew to {line_count} lines over {total} turns"
+
+    # A recently recorded turn still re-fires as a duplicate (idempotency holds).
+    assert is_captured(pid, f"turn-{total - 1:08d}", store_root)
 
 
 def test_stop_hook_is_detached_and_eventually_captures(store_root: Path, project_dir: Path) -> None:

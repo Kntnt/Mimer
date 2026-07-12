@@ -15,7 +15,8 @@ from mimer import gitreader
 from mimer.failure_log import fresh_failures
 from mimer.gitreader import fold_git_log
 from mimer.index import reindex, search
-from mimer.longterm import daily_log_path, long_term_dir
+from mimer.ledger import Ledger
+from mimer.longterm import append_entry, daily_log_path, long_term_dir
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.gitutil import init_repo
@@ -321,6 +322,103 @@ def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> 
 
     assert first >= 1
     assert second == 0
+
+
+def test_crash_mid_fold_folds_each_commit_once(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fold interrupted partway records each sha as it goes, so the next fold
+    re-duplicates no already-folded commit — the crash window is one commit, not
+    the whole batch (#41)."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    shas = [_commit(repo, f"Commit number {i}") for i in range(6)]
+    pid = _project(store_root, repo)
+
+    # Abort the fold after a few commits, standing in for a killed SessionEnd hook.
+    real_append = append_entry
+    appended = {"count": 0}
+
+    def crashing_append(project_id: str, day: str, entry: str, root: Path | None = None) -> None:
+        if appended["count"] >= 3:
+            raise RuntimeError("simulated crash mid-fold")
+        appended["count"] += 1
+        real_append(project_id, day, entry, root)
+
+    monkeypatch.setattr(gitreader, "append_entry", crashing_append)
+    with pytest.raises(RuntimeError):
+        fold_git_log(pid, repo, root=store_root)
+
+    # The next SessionEnd re-runs the fold to completion.
+    monkeypatch.setattr(gitreader, "append_entry", real_append)
+    fold_git_log(pid, repo, root=store_root)
+
+    # Every commit is folded exactly once — no duplicated daily-log entries.
+    log_text = "".join(p.read_text() for p in long_term_dir(pid, store_root).glob("*.md"))
+    for sha in shas:
+        assert log_text.count(f"git:{sha}") == 1
+
+
+def test_git_ledger_stays_bounded(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folding more commits than the dedup window keeps only the most recent shas,
+    so the git ledger stays bounded instead of growing one sha per commit (#41)."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    for i in range(30):
+        _commit(repo, f"Commit number {i}")
+    pid = _project(store_root, repo)
+
+    # Shrink the window so a single fold overflows it deterministically.
+    def small_ledger(path: Path) -> Ledger:
+        return Ledger(path, capacity=20)
+
+    monkeypatch.setattr(gitreader, "Ledger", small_ledger)
+    fold_git_log(pid, repo, root=store_root)
+
+    ledger_file = long_term_dir(pid, store_root) / gitreader.GIT_LEDGER_FILENAME
+    assert len(ledger_file.read_text().split()) <= 20
+
+
+def test_still_reachable_commit_not_refolded_after_rotation(
+    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A linear history longer than the dedup window is still folded idempotently.
+
+    The bounded ledger keeps only its most recent shas (#41), but the reader records
+    them newest-last, so the window retains the tip commits — and under reachability
+    exclusion (#42) a tip sha's ``^``-exclude reaches every ancestor. So even after
+    the ledger has rotated far past its capacity, every reachable commit stays
+    excluded and a re-fold adds nothing.
+    """
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    pid = _project(store_root, repo)
+
+    # A dedup window (8) far narrower than the history it must keep idempotent.
+    def small_ledger(path: Path) -> Ledger:
+        return Ledger(path, capacity=8)
+
+    monkeypatch.setattr(gitreader, "Ledger", small_ledger)
+
+    # Fold a first batch, then add more commits than the capacity and fold again —
+    # the extra commits push the older shas out of the window, rotating the ledger.
+    for i in range(8):
+        _commit(repo, f"First batch {i}")
+    fold_git_log(pid, repo, root=store_root)
+    for i in range(12):
+        _commit(repo, f"Second batch {i}")
+    fold_git_log(pid, repo, root=store_root)
+
+    # The ledger has rotated well past its capacity, yet a further fold sees every
+    # reachable commit as already folded and adds nothing.
+    ledger_file = long_term_dir(pid, store_root) / gitreader.GIT_LEDGER_FILENAME
+    assert len(ledger_file.read_text().split()) <= 8
+    assert fold_git_log(pid, repo, root=store_root) == 0
 
 
 def test_secret_in_commit_message_never_stored(store_root: Path, tmp_path: Path) -> None:
