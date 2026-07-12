@@ -27,7 +27,7 @@ from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
 from mimer.store import ensure_store
 from mimer.storeio import project_lock, write_atomic
-from mimer.tombstones import write_tombstone
+from mimer.tombstones import is_suppressed, load_tombstones, write_tombstone
 
 BUNDLE_DIRNAME = "permanent"
 INDEX_FILENAME = "index.md"
@@ -255,17 +255,46 @@ def profile_concepts(root: Path | None = None) -> list[Concept]:
     ]
 
 
+def concept_identity_text(title: str, body: str) -> str:
+    """The text a Concept presents when asking "is this the same fact?".
+
+    Its title and body joined, exactly as the search index stores a Concept's
+    chunk (:func:`mimer.index.concept_chunk`). Recall matches tombstones against
+    this text, so a forget's retraction and the injection paths below all test the
+    very same string — the sites that must agree on what a Concept's fact *is*
+    cannot drift apart (issue #32).
+    """
+
+    return f"{title}\n{body}".strip()
+
+
+def _not_tombstoned(concept: Concept, tombstones: list[dict[str, str]]) -> bool:
+    """Whether ``concept`` has not been forgotten, for the injection filters.
+
+    Suppression is keyed on the Concept's origin — the same origin-keyed rule
+    recall applies to a Concept row (ADR 0013) — so the manifest and the profile
+    hide a forgotten Concept exactly as recall does (issue #32).
+    """
+
+    text = concept_identity_text(concept.title, concept.body)
+    return not is_suppressed(text, project_id=concept.origin, tombstones=tombstones)
+
+
 def concept_headlines(root: Path | None = None, *, project_id: str | None = None) -> list[str]:
     """A one-line headline per Concept visible to ``project_id``, for the manifest.
 
     A global Concept is visible everywhere; a project-scoped one only within its
-    origin (ADR 0013). Without a project id, all Concepts are listed.
+    origin (ADR 0013). Without a project id, all Concepts are listed. A Concept a
+    forget has tombstoned is filtered out, so a forgotten fact stops appearing in
+    the manifest the way it already stops appearing in recall (issue #32).
     """
 
+    tombstones = load_tombstones(root)
     visible = [
         c
         for c in list_concepts(root)
-        if project_id is None or c.scope == "global" or c.origin == project_id
+        if (project_id is None or c.scope == "global" or c.origin == project_id)
+        and _not_tombstoned(c, tombstones)
     ]
     headlines = []
     for concept in visible:
@@ -283,9 +312,14 @@ def render_profile(root: Path | None = None) -> str:
     placed under Mimer's own ``## Profile`` / ``### title`` structure (ADR 0014):
     a heading or framing marker inside a body cannot then reopen the surrounding
     context as instructions once the snapshot is framed and injected.
+
+    A pinned Concept a forget has tombstoned is filtered out, so a forgotten fact
+    stops being injected into every session — the "theatre" ADR 0012 rejects — the
+    way recall already suppresses it (issue #32).
     """
 
-    pinned = profile_concepts(root)
+    tombstones = load_tombstones(root)
+    pinned = [c for c in profile_concepts(root) if _not_tombstoned(c, tombstones)]
     if not pinned:
         return ""
     blocks = "\n\n".join(f"### {concept.title}\n{neutralise(concept.body)}" for concept in pinned)

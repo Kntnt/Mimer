@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from mimer.bundle import list_concepts
-from mimer.curate import forget, main, remember
+from mimer.bundle import concept_headlines, create_concept, list_concepts, render_profile
+from mimer.curate import forget, main, redact, remember
 from mimer.project import resolve
 from mimer.registry import Registry
 from mimer.shortterm import parse_short_term, read_short_term
@@ -189,6 +189,84 @@ def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
 
     notes = parse_short_term(read_short_term(pid, store_root))["Notes"]
     assert any("celebration happens on friday" in entry.text for entry in notes)
+
+
+def test_forget_retracts_a_matching_permanent_concept_across_short_term_and_injection(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A soft forget reaches permanent memory: it removes the short-term entry,
+    retracts the matching pinned Concept, and stops the fact appearing in the
+    injected profile and manifest headlines — the full ADR 0012 cascade (issue #32).
+    """
+
+    pid = _project(store_root, project_dir)
+    create_concept(
+        title="Deploy day",
+        body="Deployments run on Tuesdays.",
+        concept_type="Reference",
+        origin=pid,
+        scope="project",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    remember("Deployments run on Tuesdays.", project_id=pid, root=store_root, today=TODAY)
+
+    result = forget("Deployments run on Tuesdays.", project_id=pid, root=store_root, today=TODAY)
+
+    assert result.action == "removed"
+    assert parse_short_term(read_short_term(pid, store_root))["Notes"] == []
+    assert list_concepts(store_root) == []
+    assert concept_headlines(store_root, project_id=pid) == []
+    assert render_profile(store_root) == ""
+    assert is_tombstoned("Deployments run on Tuesdays.", project_id=pid, root=store_root)
+
+
+def test_forget_retracts_a_reworded_concept_even_with_no_short_term_entry(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Forget retracts a Concept restated in different words, even when nothing in
+    short-term memory matches — identity is the shared matcher, so a forget still
+    reaches the permanent layer it never touched before (issue #32)."""
+
+    pid = _project(store_root, project_dir)
+    create_concept(
+        title="Prototype cache",
+        body="The prototype used a Redis cache.",
+        concept_type="Reference",
+        origin=pid,
+        scope="project",
+        root=store_root,
+    )
+
+    result = forget(
+        "We used Redis for the prototype cache", project_id=pid, root=store_root, today=TODAY
+    )
+
+    assert result.action == "tombstoned"
+    assert list_concepts(store_root) == []
+
+
+def test_redact_also_retracts_a_matching_permanent_concept(
+    store_root: Path, project_dir: Path
+) -> None:
+    """Redact is a superset of forget (ADR 0012), so it too retracts a matching
+    Concept — the hard tier must not leave in permanent memory what the soft tier
+    would have retracted (issue #32)."""
+
+    pid = _project(store_root, project_dir)
+    create_concept(
+        title="Deploy day",
+        body="Deployments run on Tuesdays.",
+        concept_type="Reference",
+        origin=pid,
+        scope="project",
+        root=store_root,
+    )
+
+    redact("Deployments run on Tuesdays.", project_id=pid, root=store_root, today=TODAY)
+
+    assert list_concepts(store_root) == []
 
 
 def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:

@@ -55,6 +55,24 @@ def load_tombstones(root: Path | None = None) -> list[dict[str, str]]:
     ]
 
 
+def is_suppressed(text: str, *, project_id: str, tombstones: list[dict[str, str]]) -> bool:
+    """Whether any of ``tombstones`` forgets ``text`` in ``project_id``.
+
+    The list-taking form of :func:`is_tombstoned`: a caller that tests many texts
+    against the ledger — recall's row filter, the manifest and the injected
+    profile — loads it once and reuses it here, so all three decide "forgotten?"
+    through the one shared matcher and can never diverge (issue #32). Identity is
+    the matcher's, whose quotation test catches a forgotten fact quoted inside a
+    larger chunk while its specificity guard keeps a short tombstone from
+    over-suppressing a longer, unrelated one.
+    """
+
+    return any(
+        record.get("project_id") == project_id and is_same_fact(text, record["text"])
+        for record in tombstones
+    )
+
+
 def is_tombstoned(text: str, *, project_id: str, root: Path | None = None) -> bool:
     """Whether a fact has been forgotten in the given project.
 
@@ -62,7 +80,4 @@ def is_tombstoned(text: str, *, project_id: str, root: Path | None = None) -> bo
     identity is decided by the shared matcher rather than exact string equality.
     """
 
-    return any(
-        record.get("project_id") == project_id and is_same_fact(text, record["text"])
-        for record in load_tombstones(root)
-    )
+    return is_suppressed(text, project_id=project_id, tombstones=load_tombstones(root))
