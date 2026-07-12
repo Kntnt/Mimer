@@ -489,6 +489,61 @@ def test_digest_refreshed_working_state_is_not_promoted(
     assert list_concepts(store_root) == []
 
 
+def test_two_short_facts_sharing_one_word_do_not_supersede(store_root: Path) -> None:
+    """Two short facts that share a single content word are different subjects, so
+    neither supersedes (and drops) the other (issue #29).
+
+    The same-subject test divided the shared count by the *smaller* set, so two
+    two-word facts sharing one word cleared the 50 % bar and the second silently
+    superseded the first — dropping a genuinely unrelated fact from recall. A
+    minimum absolute overlap keeps a lone shared word from ever colliding.
+    """
+
+    ensure_store(store_root)
+    first = distill_fact(text="uses redis", project_id="p", scope="global", root=store_root)
+    second = distill_fact(text="uses postgres", project_id="p", scope="global", root=store_root)
+
+    assert first.status == "created"
+    assert second.status == "created"
+    # Both survive as current knowledge: one shared word is not the same subject.
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert len(active) == 2
+
+
+def test_project_scoped_fact_cannot_supersede_a_global_concept(store_root: Path) -> None:
+    """A narrower, project-scoped fact must not supersede a broader, global Concept
+    (issue #29).
+
+    Superseding a global Concept marks it dropped from recall in *every* project,
+    now visible only inside the one project that narrowed it — silent, store-wide
+    data loss. A project fact about the same subject may be created, but the global
+    Concept it would have narrowed stays active and recallable everywhere.
+    """
+
+    ensure_store(store_root)
+    distill_fact(
+        text="The company deploys on Fridays.",
+        project_id="alpha",
+        scope="global",
+        root=store_root,
+    )
+    result = distill_fact(
+        text="The company deploys on Mondays.",
+        project_id="alpha",
+        scope="project",
+        root=store_root,
+    )
+    reindex(store_root)
+
+    # The project fact never supersedes the broader global Concept.
+    assert result.status != "superseded"
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert any(c.scope == "global" and "Fridays" in c.body for c in active)
+    # The global Concept is still shared with an unrelated project.
+    hits = search("when do we deploy", root=store_root, project_id="beta")
+    assert any("Fridays" in c.text for c in hits)
+
+
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
     """A newly distilled Concept is queued for the next session's announcement."""
 
