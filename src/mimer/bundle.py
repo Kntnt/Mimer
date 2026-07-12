@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from mimer.failure_log import log_failure
+from mimer.framing import neutralise
 from mimer.paths import safe_identifier, store_root
 from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
@@ -260,12 +261,18 @@ def concept_headlines(root: Path | None = None, *, project_id: str | None = None
 
 
 def render_profile(root: Path | None = None) -> str:
-    """Render the pinned profile Concepts for injection, or empty when none."""
+    """Render the pinned profile Concepts for injection, or empty when none.
+
+    Each Concept body is an untrusted leaf, so it is neutralised before it is
+    placed under Mimer's own ``## Profile`` / ``### title`` structure (ADR 0014):
+    a heading or framing marker inside a body cannot then reopen the surrounding
+    context as instructions once the snapshot is framed and injected.
+    """
 
     pinned = profile_concepts(root)
     if not pinned:
         return ""
-    blocks = "\n\n".join(f"### {concept.title}\n{concept.body}" for concept in pinned)
+    blocks = "\n\n".join(f"### {concept.title}\n{neutralise(concept.body)}" for concept in pinned)
     return f"## Profile\n\n{blocks}"
 
 

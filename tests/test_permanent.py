@@ -25,8 +25,8 @@ from mimer.bundle import (
     list_concepts,
     mark_superseded,
     read_concept,
-    render_profile,
     rename_concept,
+    render_profile,
     retract_concept,
 )
 from mimer.index import reindex, search

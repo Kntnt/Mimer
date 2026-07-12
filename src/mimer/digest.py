@@ -162,7 +162,11 @@ def _parse_reply(reply: str) -> tuple[str, list[str], list[str]]:
         elif current is not None:
             sections[current].append(line)
 
-    digest = "\n".join(sections.get("digest", [])).strip()
+    # The digest prose is model output derived from the untrusted transcript, so
+    # it is neutralised before it lands verbatim in the permanent daily log — the
+    # same leaf treatment its sibling bullets get, so a heading or framing marker
+    # cannot ride into the record and later be recalled as an instruction.
+    digest = neutralise("\n".join(sections.get("digest", [])).strip())
     return (
         digest,
         _bullets(sections.get("active threads", [])),

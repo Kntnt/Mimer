@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mimer.framing import frame
+from mimer.framing import frame, neutralise
 from mimer.index import Citation, search
 from mimer.paths import store_root
 from mimer.project import confirm_hint, resolve
@@ -37,10 +37,10 @@ class RecallResult:
 
         Mimer's own message is its trusted voice and stays outside the frame;
         the cited excerpts are recalled from untrusted memory, so they are
-        wrapped in the data frame (ADR 0014). The advisory distiller filter is
-        not the gate — a directive that slips past it into a Concept surfaces
-        here as inert, fenced data rather than a bare command a future session
-        might obey.
+        neutralised as leaf values and wrapped in the data frame (ADR 0014). The
+        advisory distiller filter is not the gate — a directive that slips past
+        it into a Concept surfaces here as inert, fenced data, and a heading it
+        carries is stripped so it cannot reopen the context as instructions.
         """
 
         if self.is_empty():
@@ -49,7 +49,7 @@ class RecallResult:
         excerpts = "\n".join(
             f"[{c.source} · {c.date} · {c.heading}] {c.excerpt}" for c in self.citations
         )
-        return f"{self.message}\n{frame(excerpts)}"
+        return f"{self.message}\n{frame(neutralise(excerpts))}"
 
 
 def recall(
