@@ -9,6 +9,10 @@ every shared Markdown artefact gets an explicit discipline:
 - **Daily-log entries** are pure appends written with ``O_APPEND``
   (:func:`append_text`), so concurrent writers interleave whole lines without a
   lock and without corruption.
+- **Whole-artefact folds** — a project merge (ADR 0008) combining one append-only
+  file onto another — use :func:`append_fold`, the same ``O_APPEND`` discipline
+  over a full block, so the fold can neither clobber nor be clobbered by a
+  concurrent appender.
 
 Advisory locks use ``flock``, which the kernel releases automatically when the
 holding process dies — so a crashed holder never deadlocks the store.
@@ -77,6 +81,36 @@ def append_text(path: Path, text: str) -> None:
         os.write(fd, data)
     finally:
         os.close(fd)
+
+
+def append_fold(path: Path, content: str) -> None:
+    """Fold ``content`` onto the end of ``path`` with ``O_APPEND``, byte for byte.
+
+    Unlike :func:`append_text`, which writes one short, newline-terminated record,
+    this appends an arbitrary-length block and writes *every* byte — a single
+    ``os.write`` can fall short for a large fold — so nothing is truncated. Each
+    write lands at the current end-of-file, so the fold can neither overwrite the
+    target's existing records nor be overwritten by a concurrent
+    :func:`append_text` producer, whatever lock either side holds. A project merge
+    (ADR 0008) uses it to combine one append-only artefact onto another; the target
+    keeps the store's owner-only mode.
+    """
+
+    # Append every byte at end-of-file: O_APPEND makes each write seek-and-land
+    # atomically, and the loop covers a short os.write, so a large fold is never
+    # truncated and a concurrent appender only ever interleaves whole records.
+    data = content.encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
+    try:
+        offset = 0
+        while offset < len(data):
+            offset += os.write(fd, data[offset:])
+    finally:
+        os.close(fd)
+
+    # Re-assert the store's owner-only mode: O_APPEND onto an existing file leaves
+    # its mode untouched, so a target loosened out-of-band is tightened here.
+    os.chmod(path, FILE_MODE)
 
 
 def write_atomic(path: Path, content: str) -> None:

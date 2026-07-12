@@ -17,7 +17,7 @@ from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.store import FILE_MODE, ensure_store
-from mimer.storeio import project_lock, write_atomic
+from mimer.storeio import append_fold, project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
 # store root.
@@ -216,15 +216,28 @@ class Registry:
         artefact type rather than silently overwritten. The source directory is
         drained and removed only after everything has moved.
 
-        The whole merge runs under the target's per-project lock, and every
-        colliding file is re-read and rewritten atomically inside it (ADR 0011),
-        so a concurrent writer to the live target cannot lose an update and no
-        target artefact is ever left truncated by a crash. Cross-file
-        transactionality is not attempted: an unexpected error part-way leaves
-        the already-folded artefacts in the target, and a crash between combining
-        a source artefact and unlinking it can re-append that artefact on a
-        retry. That residual is acceptable while merge has no live caller; it must
-        be revisited before a UI exposes the action.
+        Concurrency (ADR 0011). The merge holds the target's per-project lock
+        throughout. ``short-term.md`` is combined read-modify-write inside that
+        lock, and its live writers (the memory skill and the session digest) take
+        the same lock, so a concurrent update to it cannot be lost. Every
+        append-only artefact — daily logs, the capture/digest/git ledgers, the
+        distilled queue, transcripts — is folded with ``O_APPEND`` (see
+        :func:`_concatenate_file`), matching its lockless producers, so a
+        concurrent append is neither lost nor able to truncate the target, whether
+        or not that producer holds any lock.
+
+        Not attempted. The merge is not crash- or failure-atomic across artefacts.
+        An unexpected error part-way leaves the already-folded artefacts in the
+        target; and because a fold keeps the source file and appends its bytes to
+        the target, a retry after a crash between folding an artefact and unlinking
+        it re-appends — duplicates — it (harmless for ``short-term.md``, which
+        dedups; a duplicate line elsewhere). The source directory is also drained
+        and removed before the caller persists the registry, and only the target is
+        locked: a crash between the drain and ``save`` leaves the registry still
+        naming an emptied source, and a stray writer still resolving to the retired
+        source id is not serialised against the drain. These residuals are
+        acceptable while merge has no live caller; they must be revisited before a
+        UI exposes the action.
         """
 
         source_dir = project_dir(source_id, self._root)
@@ -267,10 +280,11 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
     """Combine a leaf file present on both sides of a merge, keeping every entry.
 
     ``short-term.md`` is a structured document, so its dated entries are merged
-    section by section (duplicates dropped) under the target's id. Every other
-    project artefact — daily logs, the capture/digest/git ledgers, the distilled
-    queue, archived transcripts — is append-only, so the source's content is
-    concatenated onto the target's.
+    section by section (duplicates dropped) under the target's id and rewritten
+    atomically. Every other project artefact — daily logs, the capture/digest/git
+    ledgers, the distilled queue, archived transcripts — is append-only, so the
+    source's content is folded onto the end of the target's with ``O_APPEND``
+    rather than overwritten (see :func:`_concatenate_file`).
     """
 
     # Imported lazily: shortterm depends on this module for ``project_dir``, so a
@@ -289,17 +303,24 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
 
 
 def _concatenate_file(source_file: Path, target_file: Path) -> None:
-    """Append the source file's content onto the target's, preserving every line.
+    """Fold the source file's records onto the end of the target's, losing none.
 
-    The combined content is written atomically (temp file then ``os.replace``),
-    so a crash mid-write never truncates the target's existing records — and the
-    replacement carries the store's owner-only mode. A newline is inserted at the
-    seam when the target does not already end with one, so the target's last
-    record and the source's first never fuse into a single line.
+    Every append-only artefact this handles — daily logs, the capture/digest/git
+    ledgers, the distilled queue, archived transcripts — is written by its live
+    producer with lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`), which
+    ignores the project lock. Folding by read-modify-write would silently drop any
+    record a producer appended between the read and the rewrite, so the fold uses
+    ``O_APPEND`` too (:func:`mimer.storeio.append_fold`): the source's bytes land
+    at the target's end-of-file, never truncating it and never racing a concurrent
+    appender. A newline is inserted at the seam when the target does not already
+    end with one, so the target's last record and the source's first never fuse
+    into a single line.
     """
 
+    # Read the target only to decide the seam; it is never written back, so a
+    # record a producer appends after this read is preserved by the fold below.
     existing = target_file.read_text(encoding="utf-8")
     addition = source_file.read_text(encoding="utf-8")
-
     separator = "" if not existing or existing.endswith("\n") else "\n"
-    write_atomic(target_file, existing + separator + addition)
+
+    append_fold(target_file, separator + addition)

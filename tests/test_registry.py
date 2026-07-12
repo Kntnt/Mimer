@@ -345,11 +345,10 @@ def test_merge_folds_a_same_named_transcript(tmp_path: Path) -> None:
 
     # Both sides archived a transcript under the very same filename, so the merge
     # must combine the two rather than let one clobber the other.
-    for project_id, line in (("orphan", '{"who":"orphan"}\n'), ("canonical", '{"who":"canonical"}\n')):
+    for project_id in ("orphan", "canonical"):
         transcripts_dir(project_id, tmp_path).mkdir(parents=True, exist_ok=True)
-        (transcripts_dir(project_id, tmp_path) / "sess-shared.jsonl").write_text(
-            line, encoding="utf-8"
-        )
+        transcript = transcripts_dir(project_id, tmp_path) / "sess-shared.jsonl"
+        transcript.write_text(f'{{"who":"{project_id}"}}\n', encoding="utf-8")
 
     reg.merge("orphan", "canonical")
 
