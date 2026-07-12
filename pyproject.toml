@@ -66,4 +66,8 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: opt-in test that drives a live `claude` binary (set MIMER_INTEGRATION=1); deselected by default CI",
+    "packaging: opt-in smoke test that builds and installs the wheel (set MIMER_PACKAGING=1); needs no `claude` binary",
+]
