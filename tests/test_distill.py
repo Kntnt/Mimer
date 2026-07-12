@@ -162,6 +162,71 @@ def test_distilled_concept_body_is_stored_redacted(store_root: Path) -> None:
     assert secret not in concept.body
     assert secret not in concept.title
     assert secret not in concept_path(result.slug, store_root).read_text(encoding="utf-8")
+    # Redaction strips the secret without destroying the surrounding fact.
+    assert "deploy key" in concept.body
+
+
+def test_redistilling_a_secret_fact_is_a_duplicate_not_a_supersede(store_root: Path) -> None:
+    """Re-distilling an identical secret-bearing fact is recognised as a duplicate,
+    not churned into a superseding second Concept: the dedup check and the stored
+    body agree on the same redacted form (issue #23)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    fact = f"the deploy key is {secret}"
+
+    first = distill_fact(text=fact, project_id="p", scope="global", root=store_root)
+    second = distill_fact(text=fact, project_id="p", scope="global", root=store_root)
+
+    assert first.status == "created"
+    assert second.status == "duplicate"
+    assert len(list_concepts(store_root)) == 1
+
+
+def test_secret_straddling_the_title_cut_is_not_leaked(store_root: Path) -> None:
+    """A secret positioned at the 80-char title truncation is redacted before the
+    title is derived, so no unusable token fragment leaks into the title, slug or
+    persisted file (issue #23)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7EXAMPLE"
+    # Pad so the fixed-length token straddles the 80-char title cut.
+    text = f"{'deploy ' * 9}note {secret} tail"
+    assert text.index(secret) < 80 < text.index(secret) + len(secret)
+
+    result = distill_fact(text=text, project_id="p", scope="global", root=store_root)
+
+    assert result.slug is not None
+    concept = read_concept(result.slug, store_root)
+    fragment = secret[:12]
+    assert fragment not in concept.title
+    assert fragment not in result.slug
+    assert fragment not in concept_path(result.slug, store_root).read_text(encoding="utf-8")
+
+
+def test_durable_remembered_secret_stays_redacted_through_distillation(
+    store_root: Path, project_dir: Path
+) -> None:
+    """A secret remembered as durable is redacted at the remember sink and stays
+    redacted end to end when it is later distilled into a Concept (issue #23)."""
+
+    pid = _project(store_root, project_dir)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    remember(
+        f"the deploy key is {secret}",
+        project_id=pid,
+        root=store_root,
+        durable=True,
+        today=date(2026, 7, 1),
+    )
+
+    distill_durable_entries(pid, root=store_root, scope="global")
+
+    concepts = list_concepts(store_root)
+    assert concepts
+    assert all(secret not in c.body and secret not in c.title for c in concepts)
+    assert any("deploy key" in c.body for c in concepts)
+    assert secret not in read_short_term(pid, store_root)
 
 
 def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:

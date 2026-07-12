@@ -85,6 +85,54 @@ def test_curated_write_records_origin_and_scope(store_root: Path) -> None:
     assert concept.scope == "project"
 
 
+def test_citation_secret_is_redacted_before_the_concept_is_persisted(store_root: Path) -> None:
+    """A secret in a citation — a credential-in-URL source or a secret-bearing
+    excerpt — is stripped at the Concept-creation sink, so no caller can land one
+    in the persisted file (issue #23)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    concept = create_concept(
+        title="Deploy runbook",
+        body="The deploy runbook lives in the ops repo.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        citations=[
+            Source(f"https://user:{secret}@example.com/runbook", f"token {secret}", "2026-07-01")
+        ],
+        root=store_root,
+    )
+
+    raw = concept_path(concept.slug, store_root).read_text(encoding="utf-8")
+    assert secret not in raw
+    loaded = read_concept(concept.slug, root=store_root)
+    assert loaded.citations
+    assert all(secret not in c.source and secret not in c.excerpt for c in loaded.citations)
+
+
+def test_description_secret_is_redacted_at_the_sink(store_root: Path) -> None:
+    """A secret in the description field is stripped before the Concept is persisted,
+    and the surrounding text survives (issue #23)."""
+
+    ensure_store(store_root)
+    secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+    concept = create_concept(
+        title="Access note",
+        body="An access note.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        description=f"summary mentioning {secret}",
+        root=store_root,
+    )
+
+    loaded = read_concept(concept.slug, root=store_root)
+    assert secret not in loaded.description
+    assert secret not in concept_path(concept.slug, store_root).read_text(encoding="utf-8")
+    assert "summary mentioning" in loaded.description
+
+
 def test_pinned_write_without_confirmation_is_refused(store_root: Path) -> None:
     """A pinned/profile write without explicit confirmation is refused."""
 
