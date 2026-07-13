@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from mimer import llm
+from mimer import clock, llm
 from mimer.failure_log import log_failure
 from mimer.framing import fence_transcript, neutralise
 from mimer.index import index_if_present
@@ -37,7 +37,7 @@ from mimer.shortterm import (
     render_short_term,
 )
 from mimer.storeio import project_lock, write_atomic
-from mimer.transcript import conversation_text
+from mimer.transcript import Exchange, conversation_text, last_exchange
 
 Haiku = Callable[[str], str | None]
 
@@ -60,7 +60,6 @@ def digest_session(
     """Digest a session described by a SessionEnd payload. Never raises."""
 
     root = root or store_root()
-    today = today or date.today()
     call_haiku = haiku or llm.run_haiku
 
     try:
@@ -97,6 +96,15 @@ def digest_session(
         if not conversation.strip():
             return DigestResult("nothing")
 
+        # Anchor the digest's day and time on the session's last turn — the same
+        # clock capture keys off (#37) — so a session whose UTC date differs from
+        # the machine's local date still records its captures and its digest to
+        # one daily log with agreeing times. An explicit ``today`` still overrides
+        # the day, for deterministic tests.
+        anchor = last_exchange(transcript)
+        day = today or _session_day(anchor)
+        digest_time = _session_time(anchor)
+
         # The one model call, on the redacted conversation. A None reply means
         # headless Claude is unavailable — defer, leaving the extractive record.
         reply = call_haiku(_build_prompt(redact(conversation)))
@@ -116,13 +124,13 @@ def digest_session(
         with project_lock(project_id, root=root):
             if is_digested(project_id, session_id, root):
                 return DigestResult("duplicate")
-            _append_digest(project_id, today, digest, root)
-            _refresh_short_term(project_id, active, pending, today, root)
+            _append_digest(project_id, day, digest, digest_time, root)
+            _refresh_short_term(project_id, active, pending, day, root)
             archive_path = _archive_transcript(project_id, session_id, transcript, root)
             record_digested(project_id, session_id, root)
 
         # Keep the derived index in step, when one exists (ADR 0011).
-        index_if_present(project_id, today.isoformat(), root)
+        index_if_present(project_id, day.isoformat(), root)
         return DigestResult("digested", archive_path)
 
     except Exception as exc:  # noqa: BLE001 - the digest must never crash the session
@@ -197,13 +205,30 @@ def _bullets(lines: list[str]) -> list[str]:
     return texts
 
 
-def _append_digest(project_id: str, today: date, digest: str, root: Path) -> None:
-    """Append the session digest to today's daily log."""
+def _session_day(anchor: Exchange | None) -> date:
+    """The day the session belongs to: its last turn's UTC date, or today (#37).
+
+    The anchor is absent only for a conversation with no assistant turn to key
+    off; the current UTC date is then the best available stand-in.
+    """
+
+    return date.fromisoformat(anchor.date) if anchor else clock.today()
+
+
+def _session_time(anchor: Exchange | None) -> str:
+    """The session's closing ``HH:MM`` on the one clock: its last turn's UTC time,
+    or the current UTC time when there is no turn to anchor on (#37)."""
+
+    return anchor.time_label if anchor else datetime.now(UTC).strftime("%H:%M")
+
+
+def _append_digest(project_id: str, day: date, digest: str, time_label: str, root: Path) -> None:
+    """Append the session digest to its daily log, stamped on the one clock (#37)."""
 
     if not digest:
         return
-    entry = f"## Session digest ({datetime.now().strftime('%H:%M')})\n\n{digest}\n"
-    append_entry(project_id, today.isoformat(), entry, root)
+    entry = f"## Session digest ({time_label})\n\n{digest}\n"
+    append_entry(project_id, day.isoformat(), entry, root)
 
 
 def _refresh_short_term(

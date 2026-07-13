@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping
-from datetime import date
 from pathlib import Path
 from typing import Any
 
+from mimer import clock
 from mimer.bundle import concept_headlines, render_profile
 from mimer.distill import clear_distilled, peek_distilled
 from mimer.failure_log import fresh_failures
@@ -57,7 +57,7 @@ def handle(payload: Mapping[str, Any]) -> None:
     snapshot = build_snapshot(
         resolution.project_id,
         short_term_text,
-        today=date.today(),
+        today=clock.today(),
         source=source,
         manifest=_manifest(resolution.project_id, root),
         profile=render_profile(root),

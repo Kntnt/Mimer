@@ -23,7 +23,7 @@ from typing import Protocol
 
 import sqlite_vec
 
-from mimer import db
+from mimer import clock, db
 from mimer.bundle import concept_identity_text
 from mimer.embedding import EMBEDDING_DIMENSIONS, embed
 from mimer.longterm import daily_log_path
@@ -355,7 +355,7 @@ def search(
     allowed = _allowed_projects(project_id, projects)
     tombstones = load_tombstones(root)
     results = [
-        _cite(row, candidates[row["id"]], query_date=date.today())
+        _cite(row, candidates[row["id"]], query_date=clock.today())
         for row in rows
         if _in_scope(row, allowed, home=project_id)
         and not is_suppressed(row["text"], project_id=row["project_id"], tombstones=tombstones)

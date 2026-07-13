@@ -27,16 +27,21 @@ class Exchange:
 
     @property
     def date(self) -> str:
-        """The day the turn belongs to (its timestamp's date), ``YYYY-MM-DD``."""
+        """The day the turn belongs to on Mimer's UTC clock, ``YYYY-MM-DD``.
+
+        Normalised to UTC (#37) so the day capture files a turn under agrees with
+        the day the digest and the age labels derive from the same clock,
+        whatever zone the transcript timestamp carries.
+        """
 
         return _parse_date(self.timestamp).isoformat()
 
     @property
     def time_label(self) -> str:
-        """The turn's wall-clock ``HH:MM``, or ``??:??`` when unknown."""
+        """The turn's UTC wall-clock ``HH:MM``, or ``??:??`` when unknown (#37)."""
 
         moment = _parse_datetime(self.timestamp)
-        return moment.strftime("%H:%M") if moment else "??:??"
+        return moment.astimezone(UTC).strftime("%H:%M") if moment else "??:??"
 
 
 def last_exchange(transcript_path: Path) -> Exchange | None:
@@ -186,7 +191,7 @@ def _parse_datetime(timestamp: str) -> datetime | None:
 
 
 def _parse_date(timestamp: str) -> date:
-    """The date of a timestamp, falling back to today when unparseable."""
+    """The UTC date of a timestamp, falling back to today when unparseable (#37)."""
 
     moment = _parse_datetime(timestamp)
-    return moment.date() if moment else datetime.now(UTC).date()
+    return moment.astimezone(UTC).date() if moment else datetime.now(UTC).date()

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from mimer import clock
 from mimer.bundle import concept_identity_text, list_concepts, retract_concept
 from mimer.distill import distill_durable_entries
 from mimer.erasure import erase_from_raw_record
@@ -112,7 +113,7 @@ def remember(
     text = strip_secrets(text)
 
     root = root or store_root()
-    today = today or date.today()
+    today = today or clock.today()
     ensure_short_term(project_id, root)
     path = short_term_path(project_id, root)
 

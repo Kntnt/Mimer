@@ -84,9 +84,7 @@ def test_capture_and_digest_share_one_utc_day_across_the_boundary(
     assert not daily_log_path(pid, local_day, store_root).exists()
 
 
-def test_capture_time_label_reads_utc_not_the_offset(
-    store_root: Path, project_dir: Path
-) -> None:
+def test_capture_time_label_reads_utc_not_the_offset(store_root: Path, project_dir: Path) -> None:
     """The extractive entry's time label is the turn's UTC wall clock, so it
     agrees with the day the entry is filed under (#37)."""
 
@@ -105,7 +103,10 @@ def test_capture_time_label_reads_utc_not_the_offset(
 
 
 def test_age_labels_use_the_same_utc_clock(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    store_root: Path,
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The snapshot ages entries against the same UTC clock, so an entry stamped
     on the UTC day reads as ``today`` rather than shifted a day by a local

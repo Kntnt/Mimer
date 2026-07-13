@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from mimer import clock
 from mimer.bundle import Concept, Source, create_concept, list_concepts
 from mimer.failure_log import log_failure
 from mimer.longterm import append_entry
@@ -222,7 +223,7 @@ def distill_durable_entries(
     """
 
     root = root or store_root()
-    today = today or date.today()
+    today = today or clock.today()
     path = short_term_path(project_id, root)
     if not path.exists():
         return []

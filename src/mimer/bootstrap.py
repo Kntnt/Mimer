@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
+from mimer import clock
 from mimer.bundle import list_concepts
 from mimer.curate import remember
 from mimer.distill import distill_fact
@@ -188,7 +188,7 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> tuple[i
             f"Bootstrapped prior history; key facts distilled ({len(facts)}).",
             project_id=project_id,
             root=root,
-            today=date.today(),
+            today=clock.today(),
             durable=False,
         )
     return concept_count, bool(facts)
