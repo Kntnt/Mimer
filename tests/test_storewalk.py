@@ -9,8 +9,8 @@ from pathlib import Path
 
 from mimer.longterm import record_captured, record_digested
 from mimer.registry import Registry, project_dir
-from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
 from mimer.store import ensure_store
+from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
 
 ROOT = Path(__file__).resolve().parent.parent
 
