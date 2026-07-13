@@ -1,6 +1,11 @@
 """Concurrency tests for the store I/O layer (ADR 0011): per-project locked
 read-modify-write serialises without lost updates, O_APPEND daily-log writes
 interleave without loss, and a crashed lock holder never deadlocks the store.
+
+The advisory locks are also thread-reentrant (#49): the same thread nests a
+project, named, or mixed lock without self-deadlocking, the hold releases only
+when the outermost holder exits, and distinct names — including a project id and
+a named lock spelled the same — are independent locks.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mimer.store import ensure_store
-from mimer.storeio import append_text, project_lock, update_file
+from mimer.storeio import append_text, named_lock, project_lock, update_file
 
 
 def _append_marker(marker: str) -> Callable[[str], str]:
@@ -193,9 +198,8 @@ def test_same_thread_reentrant_project_lock(store_root: Path) -> None:
     ensure_store(store_root)
 
     def nest() -> None:
-        with project_lock("proj", root=store_root):
-            with project_lock("proj", root=store_root):
-                pass
+        with project_lock("proj", root=store_root), project_lock("proj", root=store_root):
+            pass
 
     assert _completes_within(nest), "same-thread project_lock nesting deadlocked"
 
@@ -203,14 +207,11 @@ def test_same_thread_reentrant_project_lock(store_root: Path) -> None:
 def test_same_thread_reentrant_named_lock(store_root: Path) -> None:
     """The same thread nests one named lock without self-deadlocking."""
 
-    from mimer.storeio import named_lock
-
     ensure_store(store_root)
 
     def nest() -> None:
-        with named_lock("bundle", root=store_root):
-            with named_lock("bundle", root=store_root):
-                pass
+        with named_lock("bundle", root=store_root), named_lock("bundle", root=store_root):
+            pass
 
     assert _completes_within(nest), "same-thread named_lock nesting deadlocked"
 
@@ -219,16 +220,16 @@ def test_same_thread_reentrant_mixed_locks(store_root: Path) -> None:
     """One thread holds a project lock and a named lock (distinct names) at once,
     nesting each, without deadlock."""
 
-    from mimer.storeio import named_lock
-
     ensure_store(store_root)
 
     def nest() -> None:
-        with project_lock("proj", root=store_root):
-            with named_lock("bundle", root=store_root):
-                with project_lock("proj", root=store_root):
-                    with named_lock("bundle", root=store_root):
-                        pass
+        with (
+            project_lock("proj", root=store_root),
+            named_lock("bundle", root=store_root),
+            project_lock("proj", root=store_root),
+            named_lock("bundle", root=store_root),
+        ):
+            pass
 
     assert _completes_within(nest), "mixed same-thread lock nesting deadlocked"
 
@@ -281,8 +282,6 @@ def test_nested_hold_releases_only_at_outermost_exit(store_root: Path) -> None:
 def test_distinct_named_locks_are_independent(store_root: Path) -> None:
     """Two named locks with different names never serialise against each other."""
 
-    from mimer.storeio import named_lock
-
     ensure_store(store_root)
 
     alpha_held = threading.Event()
@@ -318,8 +317,6 @@ def test_named_lock_and_project_lock_do_not_collide(store_root: Path) -> None:
     """A project id and a named lock spelled the same are independent locks: the
     dunder lock-file naming keeps them in disjoint files."""
 
-    from mimer.storeio import named_lock
-
     ensure_store(store_root)
 
     project_held = threading.Event()
@@ -354,8 +351,6 @@ def test_named_lock_and_project_lock_do_not_collide(store_root: Path) -> None:
 def test_named_lock_uses_dunder_lock_file(store_root: Path) -> None:
     """A named lock's file keeps the dunder naming, so it cannot collide with a
     sanitised project id's lock file."""
-
-    from mimer.storeio import named_lock
 
     ensure_store(store_root)
 
