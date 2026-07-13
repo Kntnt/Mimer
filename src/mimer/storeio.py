@@ -1,21 +1,42 @@
-"""Concurrency-safe store I/O (ADR 0011).
+"""Concurrency-safe store I/O and the store's write-discipline map (ADR 0011).
 
 Multiple sessions and detached capture processes touch the store at once, so
-every shared Markdown artefact gets an explicit discipline:
+every shared artefact has one explicit write discipline. This module is the
+single home of that map, and the primitive that implements each row:
 
-- **Read-modify-write** of a file takes a per-project advisory lock and re-reads
-  inside it (:func:`update_file`), so two writers serialise and neither update is
-  lost.
-- **Daily-log entries** are pure appends written with ``O_APPEND``
-  (:func:`append_text`), so concurrent writers interleave whole lines without a
-  lock and without corruption.
-- **Whole-artefact folds** — a project merge (ADR 0008) combining one append-only
-  file onto another — use :func:`append_fold`, the same ``O_APPEND`` discipline
-  over a full block, so the fold can neither clobber nor be clobbered by a
-  concurrent appender.
+======================================  =============================  ===========================
+Artefact                                Discipline                     Primitive
+======================================  =============================  ===========================
+short-term memory (short-term.md)       locked RMW (per-project lock)  update_file
+capture/digest/git ledgers (#41)        locked RMW (per-project lock)  project_lock + write_atomic
+the permanent bundle (+ index.md)       locked RMW (store-wide named)  named_lock + write_atomic
+the registry (registry.json)            locked RMW (store-wide named)  named_lock + write_atomic
+daily-log entries                       lockless O_APPEND              append_text
+the distilled queue (.distilled-queue)  lockless O_APPEND              append_text
+tombstones (tombstones.jsonl)           lockless O_APPEND              append_text
+project-merge folds (ADR 0008)          lockless O_APPEND fold         append_fold
+======================================  =============================  ===========================
 
-Advisory locks use ``flock``, which the kernel releases automatically when the
-holding process dies — so a crashed holder never deadlocks the store.
+*Locked read-modify-write* re-reads the file inside the lock and rewrites it
+atomically (:func:`update_file`, or an explicit :func:`project_lock` /
+:func:`named_lock` around :func:`write_atomic`), so two writers serialise and
+neither update is lost. *Lockless O_APPEND* writes each short record with
+``O_APPEND`` (:func:`append_text`), so concurrent writers interleave whole
+records without a lock and without corruption; a project merge (ADR 0008) folds
+a whole append-only block the same way (:func:`append_fold`), so the fold can
+neither clobber nor be clobbered by a concurrent appender.
+
+Advisory locks (:func:`project_lock`, :func:`named_lock`) share one reentrant
+``flock`` mechanism whose contract is:
+
+- reentrant within one thread — the same thread nests the same lock freely;
+- threads exclude each other — a second thread blocks until the first releases;
+- processes exclude each other — a second process blocks likewise;
+- ``project_lock`` and ``named_lock`` share the mechanism, and different names
+  are independent locks.
+
+``flock`` is released by the kernel when the holding process dies, so a crashed
+holder never wedges the store.
 """
 
 from __future__ import annotations
@@ -24,15 +45,47 @@ import fcntl
 import os
 import re
 import tempfile
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.store import FILE_MODE, ensure_dir, ensure_store
 
-# Per-project advisory locks live here, one file per project id.
+# Advisory lock files live here, one per project id or store-wide name.
 LOCKS_DIRNAME = "locks"
+
+
+@dataclass
+class _LockHold:
+    """One thread's hold on a lock file: the open fd and how deep the nest is.
+
+    The kernel ``flock`` is taken once when ``depth`` first reaches 1 and released
+    only when it falls back to 0, so a reentrant acquisition never re-locks and
+    the whole nest presents unbroken exclusion to other threads and processes.
+    """
+
+    fd: int
+    depth: int
+
+
+class _HeldLocks(threading.local):
+    """Per-thread table of the advisory locks this thread currently holds.
+
+    ``threading.local`` re-runs ``__init__`` in every thread, so each thread sees
+    its own empty table — the basis of the reentrancy. A thread finds and deepens
+    only locks it took itself; a lock another thread holds is invisible here and
+    excluded through the kernel ``flock`` instead, which conflicts two fds on one
+    file even within a single process (the self-deadlock this table removes).
+    """
+
+    def __init__(self) -> None:
+        self.table: dict[tuple[Path, Path], _LockHold] = {}
+
+
+_held = _HeldLocks()
 
 
 def _lock_path(project_id: str, root: Path) -> Path:
@@ -42,12 +95,92 @@ def _lock_path(project_id: str, root: Path) -> Path:
     return root / LOCKS_DIRNAME / f"{safe}.lock"
 
 
+def _named_lock_path(name: str, root: Path) -> Path:
+    """Path to a store-wide named lock file.
+
+    The dunder wrapping keeps every named lock in a namespace no sanitised project
+    id (``locks/<safe>.lock``) can reach, so a marker-chosen project id and a lock
+    name spelled the same never resolve to the same file.
+    """
+
+    return root / LOCKS_DIRNAME / f"__{name}__.lock"
+
+
+@contextmanager
+def _hold(root: Path, lock_file: Path) -> Iterator[None]:
+    """Hold ``lock_file`` exclusively for the block, reentrant within one thread.
+
+    The single mechanism behind :func:`project_lock` and :func:`named_lock`. The
+    first acquisition on a thread opens the file and takes the kernel ``flock``; a
+    nested acquisition of the same lock reuses that fd and only deepens the count,
+    so a thread never blocks on a lock it already holds. The ``flock`` is released
+    — and the fd closed — only when the outermost hold exits.
+    """
+
+    table = _held.table
+    key = (root, lock_file)
+    hold = table.get(key)
+
+    # First acquisition on this thread: open the lock file and take the exclusive
+    # kernel flock, closing the fd if the lock itself fails so it never leaks.
+    if hold is None:
+        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, FILE_MODE)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+        hold = _LockHold(fd=fd, depth=0)
+        table[key] = hold
+
+    # Deepen the nest for the block, releasing the kernel flock and closing the fd
+    # only as the outermost hold unwinds.
+    hold.depth += 1
+    try:
+        yield
+    finally:
+        hold.depth -= 1
+        if hold.depth == 0:
+            del table[key]
+            fcntl.flock(hold.fd, fcntl.LOCK_UN)
+            os.close(hold.fd)
+
+
+@contextmanager
+def named_lock(name: str, *, root: Path | None = None) -> Iterator[None]:
+    """Hold the store-wide artefact lock named ``name`` for the block.
+
+    The home of the store's cross-cutting locks — the registry, the permanent
+    bundle — that belong to no single project. The lock file is
+    ``locks/__<name>__.lock``; the dunder wrapping keeps it clear of every
+    project's ``locks/<safe>.lock``, so a marker-chosen project id can never
+    collide with a lock name.
+
+    The lock is reentrant within one thread and mutually exclusive across threads
+    and processes; :func:`project_lock` is its per-project counterpart on the same
+    mechanism, and different names are independent locks. ``flock`` is released by
+    the kernel when the holder dies, so a crash cannot wedge the store.
+    """
+
+    root = root or store_root()
+    ensure_store(root)
+
+    lock_file = _named_lock_path(name, root)
+    ensure_dir(lock_file.parent)
+
+    with _hold(root, lock_file):
+        yield
+
+
 @contextmanager
 def project_lock(project_id: str, *, root: Path | None = None) -> Iterator[None]:
     """Hold the exclusive per-project advisory lock for the duration of the block.
 
-    The lock file is created on demand. ``flock`` is advisory and released by the
-    kernel when this process exits, so a crash cannot leave the store wedged.
+    Shares the reentrant ``flock`` mechanism with :func:`named_lock`, its
+    store-wide counterpart, so the same thread may nest this lock freely while
+    threads and processes still exclude one another. The lock file is created on
+    demand and released by the kernel when this process exits, so a crash cannot
+    leave the store wedged.
     """
 
     root = root or store_root()
@@ -56,14 +189,8 @@ def project_lock(project_id: str, *, root: Path | None = None) -> Iterator[None]
     lock_file = _lock_path(project_id, root)
     ensure_dir(lock_file.parent)
 
-    # Open (creating if needed) and take an exclusive lock, releasing on exit.
-    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, FILE_MODE)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+    with _hold(root, lock_file):
         yield
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
 
 
 def append_text(path: Path, text: str) -> None:
