@@ -12,7 +12,7 @@ capture/digest/git ledgers (#41)        locked RMW (per-project lock)  project_l
 the permanent bundle (+ index.md)       locked RMW (store-wide named)  named_lock + write_atomic
 the registry (registry.json)            locked RMW (store-wide named)  named_lock + write_atomic
 daily-log entries                       lockless O_APPEND              append_text
-the distilled queue (.distilled-queue)  lockless O_APPEND              append_text
+announcement queue (.distilled-queue)   lockless O_APPEND              append_text
 tombstones (tombstones.jsonl)           lockless O_APPEND              append_text
 project-merge folds (ADR 0008)          lockless O_APPEND fold         append_fold
 ======================================  =============================  ===========================
