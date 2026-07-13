@@ -4,11 +4,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-### Added
-
-- A way to confirm a pending project identity: `mimer-manage confirm <candidate-id>` binds the current directory to a named project when resolution needs confirmation, reaching the previously unreachable link action so injection and capture proceed. The needs-confirmation refusals — at SessionStart, on a curated write, and on recall — now name the exact command and candidate id to run, and the memory skill and README document the flow.
-
-## [0.1.0] – 2026-07-12
+## [0.1.0] – 2026-07-13
 
 ### Added
 
@@ -37,6 +33,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - Bootstrap (Stage 7): a per-project, opt-in, resumable import of pre-existing Claude Code session history via `mimer-bootstrap`. Transcripts are extracted through the redaction pass — excluding Mimer-spawned sessions — written into long-term memory and indexed, then a finishing distillation pass seeds permanent memory, a starter profile and an initial short-term working set. Import state lives per project in the registry, so a crash resumes rather than restarts and a project first seen later still imports its own history; an unrecognised transcript format degrades gracefully with a logged, actionable message.
 - Packaging and first run (Stage 8): a `mimer-install` flow that creates the store, verifies the interpreter can load SQLite extensions — failing loudly and early with an actionable message when it cannot — and pre-fetches the local embedding model so no session stalls on a download. Fresh failure-log entries surface as a one-line health notice at session start; `mimer-uninstall` leaves the store in place with a pointer note; and the README documents installation, the `mimer-*` commands, and coexistence with Claude Code's native auto memory (recommending, never requiring, `autoMemoryEnabled: false` in Mimer-managed projects).
 - A marketplace manifest (`.claude-plugin/marketplace.json`) that makes the repository its own single-plugin marketplace, so a local checkout installs with `/plugin marketplace add` followed by `/plugin install` (found in live installation testing).
+- Project-identity confirmation: `mimer-manage confirm <candidate-id>` binds the current directory to a named project when resolution needs confirmation, reaching the previously unreachable link action so injection and capture proceed. The needs-confirmation refusals — at SessionStart, on a curated write, and on recall — now name the exact command and candidate id to run, and the memory skill and README document the flow.
+- Per-project capture and scope controls: capture can be paused for a project — a standing "capture off" honoured across sessions — and a project's recall scope adjusted, through `mimer-manage`, so a sensitive project can be silenced without uninstalling.
+- A hard `redact` forgetting tier alongside the soft `forget`: where forget tombstones a fact so it stops surfacing while the raw record stays, redact irreversibly removes it across every layer — short-term, the long-term log and permanent Concepts — a true superset of forget for when the underlying text itself must go.
 
 ### Changed
 
@@ -48,6 +47,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Glossary extended with the operations and mechanics the design now names: forget and redact, session digest, reindex, project id, origin and scope, registry, marker, pinned, cap, judgment rules, tombstone.
 - ADRs 0001–0004, 0006 and 0008 amended for consistency with the review's decisions: sanctioned explicit recall widening, corrected OKF attribution, security note on store syncing, pointers to the new trust and scope ADRs, the settled invocation mechanism, and pinned project-identity mechanics.
 - `AGENTS.md` now also references the OKF profile.
+- `forget` and `redact` now reach permanent memory and injection: besides removing the short-term entry and writing a tombstone they retract any permanent Concept the shared matcher judges the same fact (scoped to the project's own Concepts), and the Concept manifest and pinned profile filter out a tombstoned Concept — so a forgotten fact stops appearing everywhere, not only in short-term.
+- Redaction broadened and applied on every write path: more secret classes are recognised (env-suffixed keys, npm and cloud tokens, JWTs and credential-bearing URLs among them), redaction now runs on curated writes and distilled Concepts as well as capture, and raw memory text is kept out of the failure log.
 
 ### Fixed
 
@@ -56,6 +57,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Bootstrap's finishing distillation no longer fails silently, a defect found in end-to-end verification: the distiller prompt is now a strict output contract (so the real Haiku call returns a bullet list rather than conversational prose even under an ambient session context), the parser tolerates surrounding prose, and a finishing pass that yields no concepts over a non-empty record is logged and retried on a later run over the already-imported record rather than being stranded by the completed transcript import. The Concept-headline manifest no longer duplicates a title as its own detail.
 - `mimer-install` now builds the search index up front, so captured, digested, git-folded and imported content is searchable from the first session without a manual `mimer-reindex` (also found in end-to-end verification).
 - The plugin manifest no longer declares `"hooks": "./hooks/hooks.json"`: Claude Code loads the standard hooks file automatically, so the explicit reference registered it twice and made installation and `/reload-plugins` fail with a duplicate-hooks error (found in live installation testing).
+- The Stage 0–8 features were hardened across a pre-release review before first ship: automatic distillation now actually fires in normal use and is cap-triggered (#27, #28) without destroying unrelated or broader-scoped knowledge (#29); a changed fact supersedes its predecessor in one atomic step so recall returns exactly one current answer with the old one dropped from the search index (#30); project-scoped Concepts no longer leak through a widened recall (#20); the data-losing project merge is fixed (#33); permanent-memory writes are crash-safe and tolerate one bad Concept file (#17); the memory-is-data boundary is enforced by neutralising and nonce-fencing every injected surface (#36); identifiers are validated before building store paths (#25); the dedup ledgers are bounded (#41); the session digest is serialised under the project lock (#39); one clock drives capture, the digest and age labels (#37); repeated identical turns get distinct identities (#38); and the capture/hook path fails loudly and never drops work silently (#40).
+- Developer, test and CI hardening: CI now runs on Linux and macOS with coverage and a packaging smoke test, plus local pre-commit hooks (#44, #46); a documentation-truthfulness sweep aligned the README, docs and ADRs with the shipped code (#45); duplicated helpers were consolidated behind shared utilities and one "same fact?" matcher (#18, #19); git history beyond the last 100 commits is now backfilled (#42); and first-run install fails gracefully on model or index errors (#43).
 
 [Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.1.0
