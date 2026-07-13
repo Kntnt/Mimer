@@ -212,3 +212,32 @@ SAMPLES: list[Sample] = [
 GIT_SHA = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
 SHORT_GIT_SHA = "a1b2c3d4e5f6"
 ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+# A normalised git remote — the canonical host/path key project.normalise_remote
+# yields, stored in the registry and cited in provenance.
+NORMALISED_REMOTE = "github.com/kntnt/mimer"
+
+# ISO 8601 date and timestamp: how daily logs, citations and ledger records stamp
+# time.
+ISO_DATE = "2026-07-13"
+ISO_TIMESTAMP = "2026-07-13T14:37:13Z"
+
+# Dedup-ledger keys: a truncated and a full lowercase-hex sha256 digest, the
+# shape of the turn ids, session ids and commit shas the ledgers store.
+LEDGER_KEY = "9f2a1c7be3d40a5b"
+LEDGER_DIGEST = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+# The shape-safe corpus the write seam must land byte-identical. Redaction is
+# shape-based by design, so every provenance identifier the rest of Mimer stores
+# and cites passes through each storeio primitive untouched — the positive proof
+# that redacting the primitives mangles no real artefact.
+SHAPE_SAFE: list[str] = [
+    GIT_SHA,
+    SHORT_GIT_SHA,
+    ULID,
+    NORMALISED_REMOTE,
+    ISO_DATE,
+    ISO_TIMESTAMP,
+    LEDGER_KEY,
+    LEDGER_DIGEST,
+]

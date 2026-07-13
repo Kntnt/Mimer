@@ -154,3 +154,15 @@ def test_provenance_identifiers_are_not_over_redacted(identifier: str) -> None:
     text = f"see commit {identifier} for the change"
 
     assert redact(text) == text
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
+def test_redaction_is_idempotent(sample: Sample) -> None:
+    """Redacting an already-redacted string is a no-op: ``redact(redact(s)) ==
+    redact(s)`` across the secret corpus. The write seam (#55) leaves sink-level
+    redaction upstream, so most content is redacted twice; this pins the property
+    that lets the design lean on it."""
+
+    once = redact(f"here is the value {sample.text} use it")
+
+    assert redact(once) == once

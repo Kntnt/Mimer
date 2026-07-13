@@ -6,6 +6,10 @@ The advisory locks are also thread-reentrant (#49): the same thread nests a
 project, named, or mixed lock without self-deadlocking, the hold releases only
 when the outermost holder exits, and distinct names — including a project id and
 a named lock spelled the same — are independent locks.
+
+The write seam (#55): every write primitive runs the redaction pass before bytes
+reach disk, so a raw secret written through any of the three lands redacted,
+while shape-safe provenance lands byte-identical.
 """
 
 from __future__ import annotations
@@ -16,8 +20,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from mimer.store import ensure_store
-from mimer.storeio import append_text, named_lock, project_lock, write_atomic
+from mimer.storeio import append_fold, append_text, named_lock, project_lock, write_atomic
+from tests.secret_samples import SAMPLES, SHAPE_SAFE, Sample
 
 
 def _locked_append(target: Path, marker: str, root: Path) -> None:
@@ -358,3 +365,49 @@ def test_named_lock_uses_dunder_lock_file(store_root: Path) -> None:
 
     with named_lock("registry", root=store_root):
         assert (store_root / "locks" / "__registry__.lock").exists()
+
+
+# The three write primitives, keyed by name, and the on-disk transform each
+# applies to already-safe content: write_atomic and append_fold write byte for
+# byte; append_text normalises to exactly one trailing newline. Both seam tests
+# below drive every primitive so the disk guarantee has no per-primitive gap.
+_WRITE_PRIMITIVES: list[Callable[[Path, str], None]] = [write_atomic, append_text, append_fold]
+
+_ON_DISK: dict[str, Callable[[str], str]] = {
+    "write_atomic": lambda s: s,
+    "append_fold": lambda s: s,
+    "append_text": lambda s: s.rstrip("\n") + "\n",
+}
+
+
+@pytest.mark.parametrize("primitive", _WRITE_PRIMITIVES, ids=lambda p: p.__name__)
+@pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
+def test_write_primitive_strips_a_secret(
+    primitive: Callable[[Path, str], None], sample: Sample, tmp_path: Path
+) -> None:
+    """A raw secret written through any write primitive lands redacted on disk:
+    the seam runs the redaction pass before bytes reach the file, so no sink has
+    to remember to."""
+
+    target = tmp_path / "artefact"
+    primitive(target, f"here is the value {sample.text} use it")
+
+    content = target.read_text(encoding="utf-8")
+    assert sample.sensitive not in content
+    assert "REDACTED" in content
+
+
+@pytest.mark.parametrize("primitive", _WRITE_PRIMITIVES, ids=lambda p: p.__name__)
+@pytest.mark.parametrize("identifier", SHAPE_SAFE)
+def test_write_primitive_keeps_shape_safe_content_byte_identical(
+    primitive: Callable[[Path, str], None], identifier: str, tmp_path: Path
+) -> None:
+    """Shape-safe provenance — git SHAs, ULIDs, normalised remotes, ISO dates,
+    ledger hashes — written through any write primitive lands byte-identical: the
+    seam's redaction is shape-based, so the identifiers Mimer cites survive."""
+
+    target = tmp_path / "artefact"
+    payload = f"provenance {identifier} kept"
+    primitive(target, payload)
+
+    assert target.read_text(encoding="utf-8") == _ON_DISK[primitive.__name__](payload)
