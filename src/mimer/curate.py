@@ -227,7 +227,7 @@ def _retract_matching_concepts(text: str, *, project_id: str, root: Path) -> lis
             try:
                 retract_concept(concept.slug, root)
                 retracted.append(concept.title)
-            except OSError:
+            except FileNotFoundError:
                 continue
     return retracted
 
