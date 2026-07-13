@@ -28,7 +28,7 @@ from mimer.bundle import concept_identity_text, list_concepts, retract_concept
 from mimer.distill import distill_durable_entries
 from mimer.erasure import erase_from_raw_record
 from mimer.longterm import append_entry
-from mimer.matcher import is_same_fact
+from mimer.matcher import is_same_fact, normalised
 from mimer.paths import store_root
 from mimer.project import confirm_hint, resolve
 from mimer.redaction import redact as strip_secrets
@@ -62,8 +62,9 @@ class WriteResult:
 def _key(text: str) -> str:
     """Exact normalised identity of a fact, for the remember dedup only.
 
-    This is deliberately *not* the shared "same fact?" matcher (issue #18). That
-    matcher answers whether a fact has been forgotten across layers, and errs
+    This delegates to the matcher's exact-identity :func:`mimer.matcher.normalised`
+    but deliberately *not* to its fuzzy "same fact?" matcher (issues #18, #52). That
+    fuzzy matcher answers whether a fact has been forgotten across layers, and errs
     toward matching so a forget stays a forget. Remember asks a narrower, opposite
     question — is the user re-stating the one note they are editing? — where fuzzy
     overlap is unsafe: it would silently overwrite a distinct-but-similar note. So
@@ -71,7 +72,7 @@ def _key(text: str) -> str:
     fuzzy semantics to the three forgetting sites.
     """
 
-    return " ".join(text.lower().split())
+    return normalised(text)
 
 
 def remember(

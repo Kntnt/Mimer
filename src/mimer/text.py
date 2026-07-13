@@ -1,28 +1,28 @@
-"""Shared text helpers: one authoritative home for three pieces of knowledge
-that had drifted into copies across the memory stages (issue #19).
+"""Shared text helpers: one authoritative home for the pieces of knowledge that
+had drifted into copies across the memory stages (issue #19).
 
-Before this module, distillation and recall each hand-maintained a stopword set
-and the two had already diverged — the dangerous kind of duplication, because a
-word one stage treats as glue and the other as content makes them disagree about
-what a fact is *about*. "Collapse and truncate" lived in three places and
-"parse a Markdown bullet list" in two. Consolidating each here gives every
-caller one source to import rather than a copy to keep in step.
+"Collapse and truncate" lived in three places and "parse a Markdown bullet list"
+in two; consolidating each here gives every caller one source to import rather than
+a copy to keep in step. The stopword set here is the *retrieval* set — recall's
+FTS query-term selection is its one consumer. Fact identity does not draw on it:
+the matcher is the one home of "same fact?" and "same subject?" and owns its own
+stopword set (issues #18, #52). The two sets are deliberately separate, so retuning
+retrieval never silently moves what the matcher treats as a content word.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-# The single stopword set for the whole system: the glue words dropped when
-# deciding what a fact is *about* (distillation's subject-matcher) and which
-# terms to keyword-search on (recall's FTS query). It is the deliberate *union*
-# of the two lists that distillation and recall used to maintain separately —
-# the more complete "what is a content word?" definition, so every word either
-# stage previously treated as glue stays glue and the two can never again
-# classify a word differently (issue #19). One consequence, chosen knowingly:
-# "new" (unique to distillation's old list) is now glue for recall too, so a
-# keyword query leans on the word beside it and on semantic search rather than
-# on "new" itself.
+# The retrieval stopword set: the glue words dropped when choosing which terms to
+# keyword-search on — recall's FTS query, its one consumer. It is *not* the whole
+# system's stopword set: fact identity lives in the matcher, which owns its own
+# (issues #18, #52), so retuning this set never moves what distillation treats as a
+# content word. The set is the union of the two lists distillation and recall once
+# maintained separately, kept whole so recall loses no glue word it ever had
+# (issue #19). One consequence, chosen knowingly: "new" (from distillation's old
+# list) is glue for recall too, so a keyword query leans on the word beside it and
+# on semantic search rather than on "new" itself.
 STOPWORDS: frozenset[str] = frozenset(
     [
         "a",

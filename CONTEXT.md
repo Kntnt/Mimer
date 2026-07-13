@@ -139,3 +139,7 @@ _Avoid_: directory scan, file listing, crawl.
 **Lock discipline**:
 Which lock and write discipline each store artefact takes: short-term memory and the bundle are locked read-modify-write; daily logs, ledgers and the announcement queue are lockless appends; the registry takes its own named lock. Locks are per-project or named, and reentrant within a thread — stated once in storeio, re-derived nowhere.
 _Avoid_: mutex, synchronisation, critical section.
+
+**Matcher**:
+The one module answering fact identity. Three notions, one home: *same fact?* (forget, tombstones, recall suppression — never matches a value substitution, so a correction is never suppressed), *same subject?* (distillation's dedup and supersession targeting — must match one, so a changed fact finds its predecessor) and the *normalised* exact identity they and remember-dedup share. One tokenizer, one stopword policy.
+_Avoid_: similarity, dedup logic, fuzzy match.

@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 import mimer.distill as distill_module
-from mimer import matcher
 from mimer.bundle import INDEX_FILENAME, concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.digest import digest_session
@@ -809,12 +808,13 @@ def test_distillation_owns_no_private_fact_identity_engine() -> None:
         assert not hasattr(distill_module, gone), gone
 
     # No private tokenizer regex and no reach into the retrieval stopword set survive
-    # in the source — matching is imported from the matcher.
+    # in the source — matching is imported from the matcher and used at the call site.
     source = Path(distill_module.__file__).read_text(encoding="utf-8")
     assert "STOPWORDS" not in source
     assert "[a-z0-9]" not in source
-    assert distill_module.is_same_subject is matcher.is_same_subject
-    assert distill_module.normalised is matcher.normalised
+    assert "from mimer.matcher import is_same_subject, normalised" in source
+    assert "is_same_subject(" in source
+    assert "normalised(" in source
 
     # The supersession policy stays put.
     assert distill_module._SCOPE_RANK == {"project": 0, "global": 1}

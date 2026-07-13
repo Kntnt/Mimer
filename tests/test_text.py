@@ -17,13 +17,13 @@ from mimer import distill, index
 from mimer import text as mtext
 
 
-def test_distill_and_index_share_one_stopword_set() -> None:
-    """Distillation's subject-matcher and recall's keyword filter answer the same
-    "is this a content word?" question, so they reference one frozenset — an
-    identity check, so a re-declared private copy fails loudly (issue #19)."""
+def test_recall_is_the_sole_consumer_of_the_retrieval_stopwords() -> None:
+    """Recall's FTS keyword filter references the retrieval stopword set by identity,
+    and distillation no longer draws on it — fact identity's stopwords moved to the
+    matcher, which owns its own set (issues #19, #52, #53)."""
 
-    assert distill._STOP is mtext.STOPWORDS
     assert index._STOPWORDS is mtext.STOPWORDS
+    assert not hasattr(distill, "_STOP")
 
 
 def test_stopwords_is_the_union_of_the_two_legacy_sets() -> None:

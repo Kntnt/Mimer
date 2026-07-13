@@ -14,7 +14,6 @@ for the next session's announcement.
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,12 +24,13 @@ from mimer import clock
 from mimer.bundle import Concept, Source, create_concept, list_concepts
 from mimer.failure_log import log_failure
 from mimer.longterm import append_entry
+from mimer.matcher import is_same_subject, normalised
 from mimer.paths import store_root
 from mimer.redaction import redact
 from mimer.registry import Registry, project_dir
 from mimer.shortterm import Entry, rewrite_sections, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
-from mimer.text import STOPWORDS, truncate
+from mimer.text import truncate
 from mimer.tombstones import is_tombstoned
 
 # The on-disk announcement-queue file. The name predates the "Announcement
@@ -41,22 +41,10 @@ ANNOUNCEMENT_QUEUE_FILENAME = ".distilled-queue"
 # A Concept title is a fixed-width label; a longer fact is hard-cut to this.
 _TITLE_CHARS = 80
 
-# Two facts are the same subject only when they share at least this many content
-# words *and* clear the overlap ratio below. The absolute floor is the counterweight
-# to the ratio: without it, two two-word facts sharing a single word ("uses redis" /
-# "uses postgres") clear 50 % of the smaller set and the second silently supersedes
-# the first — dropping a genuinely unrelated fact from recall (issue #29).
-_MIN_SUBJECT_OVERLAP = 2
-
 # A fact may supersede a predecessor only when the predecessor is not broader-scoped:
 # a project-scoped fact must never narrow a global Concept, which would mark it
 # dropped from recall in every other project (issue #29). Higher rank = broader.
 _SCOPE_RANK = {"project": 0, "global": 1}
-
-# The shared stopword set: content words shorter than three characters, and
-# these glue words, are ignored when deciding whether two facts are about the
-# same subject. One source shared with recall so the two never disagree (#19).
-_STOP = STOPWORDS
 
 # Markers of an imperative addressed to the agent (ADR 0014). This filter is
 # advisory: it is a best-effort pre-filter, not the gate. The gate is the
@@ -155,7 +143,7 @@ def distill_fact(
     # Recall over the bundle first: is there an active Concept about this subject
     # that this fact may safely dedup against or supersede (same or narrower scope)?
     predecessor = _same_subject_concept(text, project_id, scope, root)
-    if predecessor is not None and _normalise(predecessor.body) == _normalise(text):
+    if predecessor is not None and normalised(predecessor.body) == normalised(text):
         return DistillResult("duplicate", predecessor.slug)
 
     # Create the successor and retire the predecessor as one atomic unit: when the
@@ -266,12 +254,14 @@ def _promote(text: str, project_id: str, scope: str, root: Path) -> DistillResul
 def _same_subject_concept(text: str, project_id: str, scope: str, root: Path) -> Concept | None:
     """Find the active, visible Concept a ``scope``-scoped fact should act on.
 
-    An identical Concept is returned regardless of scope, so an incoming fact
-    deduplicates against it rather than writing a second copy. Otherwise only a
-    Concept that is *not* broader-scoped than the incoming fact is returned as a
-    supersession target: a project-scoped fact must never narrow a global Concept
-    and drop it from recall everywhere (issue #29). A broader same-subject Concept
-    is left untouched — the fact is created alongside it instead.
+    Subject matching is the matcher's job (:func:`mimer.matcher.is_same_subject`);
+    this function is the supersession *policy* over its answer. An identical Concept
+    is returned regardless of scope, so an incoming fact deduplicates against it
+    rather than writing a second copy. Otherwise only a Concept that is *not*
+    broader-scoped than the incoming fact is returned as a supersession target: a
+    project-scoped fact must never narrow a global Concept and drop it from recall
+    everywhere (issue #29). A broader same-subject Concept is left untouched — the
+    fact is created alongside it instead.
     """
 
     supersedable: Concept | None = None
@@ -280,39 +270,17 @@ def _same_subject_concept(text: str, project_id: str, scope: str, root: Path) ->
             continue
         if concept.scope != "global" and concept.origin != project_id:
             continue
-        if not _same_subject(text, concept.body):
+        if not is_same_subject(text, concept.body):
             continue
         # An identical Concept is a duplicate whatever its scope — dedup against it
         # instead of minting a redundant copy.
-        if _normalise(concept.body) == _normalise(text):
+        if normalised(concept.body) == normalised(text):
             return concept
         # Otherwise this Concept would be superseded, which is only safe when it is
         # not broader-scoped than the incoming fact.
         if supersedable is None and _SCOPE_RANK[concept.scope] <= _SCOPE_RANK[scope]:
             supersedable = concept
     return supersedable
-
-
-def _same_subject(a: str, b: str) -> bool:
-    """Whether two facts are about the same subject, by content-word overlap.
-
-    Two facts must share both an absolute minimum number of content words and at
-    least half of the smaller set: the ratio alone let two-word facts collide on a
-    single shared word, so the absolute floor is what keeps unrelated short facts
-    from being treated as the same subject (issue #29).
-    """
-
-    words_a, words_b = _content_words(a), _content_words(b)
-    if not words_a or not words_b:
-        return False
-    shared = len(words_a & words_b)
-    if shared < _MIN_SUBJECT_OVERLAP:
-        return False
-    return shared / min(len(words_a), len(words_b)) >= 0.5
-
-
-def _content_words(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in _STOP}
 
 
 def _is_instruction_shaped(text: str) -> bool:
@@ -326,10 +294,6 @@ def _is_instruction_shaped(text: str) -> bool:
 
     lowered = text.strip().lower()
     return any(marker in lowered for marker in _INSTRUCTION_MARKERS)
-
-
-def _normalise(text: str) -> str:
-    return " ".join(text.lower().split())
 
 
 def _title(text: str) -> str:

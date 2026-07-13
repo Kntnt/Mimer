@@ -107,7 +107,9 @@ _WORD_RE = re.compile(r"[^\W_]+")
 # a generic phrase fuzzy-match on shared glue (``we``/``use``), so they are stripped
 # before overlap and the specificity guard are measured. Kept local to this module:
 # the matcher is the shared prefactor other sites depend on, so it owns its own
-# notion of "which words matter" rather than reaching into a higher layer.
+# notion of "which words matter" rather than reaching into a higher layer. It is a
+# distinct set from the retrieval stopwords in ``mimer.text`` (recall's FTS): the two
+# are tuned independently, so a change to one never silently moves the other.
 _STOP = frozenset(
     {
         "a",

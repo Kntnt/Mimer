@@ -50,8 +50,9 @@ _EXCERPT_CHARS = 240
 _HEADING_RE = re.compile(r"^(#{2,6})\s+(.*)$")
 
 # Common words dropped from keyword queries so FTS matches on content, not glue.
-# One source shared with distillation so the two never disagree about what a
-# content word is (issue #19).
+# The retrieval stopword set (``mimer.text``): recall's FTS is its one consumer.
+# Fact identity keeps its own stopword set in the matcher, so the two are tuned
+# independently (issues #19, #53).
 _STOPWORDS = STOPWORDS
 
 
