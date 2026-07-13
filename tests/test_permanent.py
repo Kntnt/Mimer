@@ -520,6 +520,37 @@ def test_reindex_indexes_the_valid_concept_despite_one_bad_file(store_root: Path
     assert any(hit.source == f"permanent/{good.slug}.md" for hit in hits)
 
 
+def test_superseded_concept_is_absent_from_the_manifest(store_root: Path) -> None:
+    """A superseded Concept is filtered out of the manifest headlines, the way it
+    is already dropped from recall. Status must gate the manifest, not only the
+    tombstone filter — otherwise a stale, superseded fact still shows up in the
+    injected manifest (ADR 0015, #40)."""
+
+    ensure_store(store_root)
+    old = create_concept(
+        title="Deploys run on Friday",
+        body="Deploys run on Friday afternoons.",
+        concept_type="Fact",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+    create_concept(
+        title="Deploys run on Tuesday",
+        body="Deploys run on Tuesday afternoons.",
+        concept_type="Fact",
+        origin="proj-a",
+        scope="global",
+        supersede=old,
+        root=store_root,
+    )
+
+    headlines = concept_headlines(store_root, project_id="proj-a")
+
+    assert any("Tuesday" in headline for headline in headlines)
+    assert not any("Friday" in headline for headline in headlines)
+
+
 def test_concept_headlines_survive_one_bad_file(store_root: Path) -> None:
     """The manifest's Concept headlines still list every valid Concept when one
     file in the bundle is unparseable (issue #17)."""

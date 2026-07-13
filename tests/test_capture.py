@@ -192,6 +192,60 @@ def test_capture_failure_is_logged_and_loses_nothing(store_root: Path, project_d
     assert "a good prior entry" in daily_log_path(pid, "2026-07-11", store_root).read_text()
 
 
+def test_corrupt_spool_is_logged_not_silent(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt spool file produces a failure-log line rather than vanishing.
+
+    capture.main runs detached with stderr routed to DEVNULL, so a read or parse
+    error on the spooled payload that escaped uncaught would leave no trace at
+    all, breaking the module's "every failure is logged" contract (#40)."""
+
+    import mimer.capture as capture_module
+
+    ensure_store(store_root)
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    spool = project_dir / "payload.json"
+    spool.write_text("{ this is not valid json", encoding="utf-8")
+
+    result = capture_module.main([str(spool)])
+
+    assert result == 0
+    assert (store_root / "mimer.log").read_text(encoding="utf-8").strip() != ""
+    assert not spool.exists()
+
+
+def test_index_contention_does_not_fail_a_durable_capture(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Benign index contention after a durable append never flips an already
+    recorded capture to "failed": the daily-log entry stands and the index —
+    derived and rebuildable (ADR 0011) — is simply retried on the next write.
+
+    A concurrent writer hitting the index's busy timeout is contention, not a
+    capture failure, so it must not spend a spurious health-log line either (#40)."""
+
+    import sqlite3
+
+    import mimer.capture as capture_module
+
+    ensure_store(store_root)
+    transcript = write_transcript(
+        project_dir / "t.jsonl", [("q", "a durable answer", "2026-07-11T10:00:00Z")]
+    )
+
+    def busy(*_: object, **__: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(capture_module, "index_if_present", busy)
+
+    result = capture_from_payload(_payload(project_dir, transcript), root=store_root)
+
+    assert result.status == "captured"
+    pid = _project_id(store_root, project_dir)
+    assert "a durable answer" in daily_log_path(pid, "2026-07-11", store_root).read_text()
+
+
 def test_concurrent_captures_lose_nothing(store_root: Path, project_dir: Path) -> None:
     """Concurrent captures of distinct turns all land (uses the store I/O layer)."""
 

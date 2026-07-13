@@ -132,6 +132,39 @@ def test_unknown_project_injects_empty_but_well_formed(store_root: Path, project
     assert "no short-term memory yet" in context
 
 
+def test_distillation_announcement_survives_a_later_failure(
+    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The "Distilled since last session" notice is not lost when a step after the
+    drain fails: the queue is cleared only once the snapshot is emitted, so a
+    failure re-announces next session rather than dropping the notice for good —
+    at-least-once, never zero (ADR 0014, #40)."""
+
+    import mimer.hooks.session_start as session_start
+    from mimer.distill import _queue_path, _record_distilled
+
+    ensure_store(store_root)
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    resolution = resolve(project_dir, root=store_root)
+    assert resolution.project_id is not None
+    pid = resolution.project_id
+    _record_distilled(pid, "A distilled concept", store_root)
+
+    # Force a failure strictly after the queue would be drained: snapshot rendering
+    # raises, standing in for any post-drain step that can fail.
+    def boom(*_: object, **__: object) -> str:
+        raise RuntimeError("snapshot build failed")
+
+    monkeypatch.setattr(session_start, "build_snapshot", boom)
+
+    with pytest.raises(RuntimeError):
+        session_start.handle({"cwd": str(project_dir), "source": "startup"})
+
+    queue = _queue_path(pid, store_root)
+    assert queue.exists()
+    assert "A distilled concept" in queue.read_text(encoding="utf-8")
+
+
 def test_needs_confirmation_injection_names_confirm_command(
     store_root: Path, tmp_path: Path
 ) -> None:

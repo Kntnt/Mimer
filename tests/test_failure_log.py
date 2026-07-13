@@ -52,3 +52,23 @@ def test_fresh_failures_redacts_legacy_unredacted_line(store_root: Path) -> None
 
     assert surfaced
     assert all(secret not in message for message in surfaced)
+
+
+def test_naive_timestamp_line_does_not_suppress_injection(store_root: Path) -> None:
+    """A failure line with a naive (offset-less) timestamp is still surfaced rather
+    than raising a TypeError. The naive stamp parses fine, so the crash used to
+    come from comparing it to the aware cutoff — and, surfaced through the health
+    notice, that one bad line suppressed all memory injection for the session (#40)."""
+
+    ensure_store(store_root)
+
+    # A naive stamp: the current UTC instant rendered with its offset stripped, so
+    # it is unambiguously fresh yet carries no tzinfo.
+    naive_stamp = datetime.now(UTC).replace(tzinfo=None).isoformat()
+    (store_root / LOG_FILENAME).write_text(
+        f"{naive_stamp}\tcapture: boom\n", encoding="utf-8"
+    )
+
+    surfaced = fresh_failures(store_root)
+
+    assert any("boom" in message for message in surfaced)

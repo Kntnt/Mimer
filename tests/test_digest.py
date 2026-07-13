@@ -108,6 +108,46 @@ def test_digest_writes_log_refreshes_short_term_and_archives(
     assert result.archive_path is not None and result.archive_path.exists()
 
 
+def test_digest_refresh_respects_the_short_term_cap(
+    store_root: Path, project_dir: Path
+) -> None:
+    """The digest's wholesale refresh of the auto-maintained sections is a second
+    writer to short-term, so it must honour the cap every other write enforces.
+    Without eviction after the refresh it is the one path that lets short-term
+    grow unbounded, silently overriding the cap (ADR 0017, #40)."""
+
+    from mimer.shortterm import SHORT_TERM_CAP, short_term_path
+
+    ensure_store(store_root)
+    pid = _project_id(store_root, project_dir)
+
+    # Seed short-term at the cap with transient notes, so the digest's refresh of
+    # the active/pending sections tips the file over and eviction must run.
+    notes = "\n".join(f"- [2026-06-{(i % 28) + 1:02d}] note number {i}" for i in range(SHORT_TERM_CAP))
+    path = short_term_path(pid, store_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"# Short-term memory — {pid}\n\n## Active threads\n\n"
+        f"## Pending decisions\n\n## Notes\n\n{notes}\n",
+        encoding="utf-8",
+    )
+
+    transcript = write_transcript(
+        project_dir / "t.jsonl", [("q", "an answer worth digesting", "2026-07-11T15:00:00Z")]
+    )
+    result = digest_session(
+        _payload(project_dir, transcript),
+        root=store_root,
+        haiku=lambda _: DIGEST_REPLY,
+        today=TODAY,
+    )
+
+    assert result.status == "digested"
+    sections = parse_short_term(read_short_term(pid, store_root))
+    total = sum(len(entries) for entries in sections.values())
+    assert total <= SHORT_TERM_CAP
+
+
 def test_digest_redacts_secret_from_prompt_and_archive(store_root: Path, project_dir: Path) -> None:
     """Secrets never reach the Haiku prompt nor the archived transcript."""
 
