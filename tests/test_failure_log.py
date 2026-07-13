@@ -65,9 +65,7 @@ def test_naive_timestamp_line_does_not_suppress_injection(store_root: Path) -> N
     # A naive stamp: the current UTC instant rendered with its offset stripped, so
     # it is unambiguously fresh yet carries no tzinfo.
     naive_stamp = datetime.now(UTC).replace(tzinfo=None).isoformat()
-    (store_root / LOG_FILENAME).write_text(
-        f"{naive_stamp}\tcapture: boom\n", encoding="utf-8"
-    )
+    (store_root / LOG_FILENAME).write_text(f"{naive_stamp}\tcapture: boom\n", encoding="utf-8")
 
     surfaced = fresh_failures(store_root)
 

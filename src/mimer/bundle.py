@@ -284,16 +284,19 @@ def concept_headlines(root: Path | None = None, *, project_id: str | None = None
     """A one-line headline per Concept visible to ``project_id``, for the manifest.
 
     A global Concept is visible everywhere; a project-scoped one only within its
-    origin (ADR 0013). Without a project id, all Concepts are listed. A Concept a
-    forget has tombstoned is filtered out, so a forgotten fact stops appearing in
-    the manifest the way it already stops appearing in recall (issue #32).
+    origin (ADR 0013). Without a project id, all Concepts are listed. A superseded
+    Concept is filtered out — only the current answer belongs in the manifest, the
+    way recall returns just the active one (ADR 0015, #40) — as is a Concept a
+    forget has tombstoned, so a forgotten fact stops appearing in the manifest the
+    way it already stops appearing in recall (issue #32).
     """
 
     tombstones = load_tombstones(root)
     visible = [
         c
         for c in list_concepts(root)
-        if (project_id is None or c.scope == "global" or c.origin == project_id)
+        if c.status == "active"
+        and (project_id is None or c.scope == "global" or c.origin == project_id)
         and _not_tombstoned(c, tombstones)
     ]
     headlines = []

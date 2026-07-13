@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from mimer.paths import store_root
@@ -33,11 +34,17 @@ SECTIONS = (*AUTO_REFRESHED_SECTIONS, *CURATED_SECTIONS)
 # (#6/#8) the cap only warns; the value is tunable via configuration later.
 SHORT_TERM_CAP = 30
 
-# A date-stamped bullet entry: ``- [YYYY-MM-DD] text``.
-_ENTRY_RE = re.compile(r"^-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$")
-
-# A trailing marker flagging an entry as durable, so the cap keeps it (ADR 0017).
+# A durable entry carries the marker in a fixed structural slot — immediately
+# after the date bracket, with no separating space — so durability rides
+# out-of-band rather than being sniffed from the free text. A transient entry
+# always has a space after the date bracket, a position free text can never
+# occupy, so content that merely contains or ends in ``[durable]`` is never
+# misread as durable nor has those words stripped (ADR 0017, #40).
 _DURABLE_MARKER = "[durable]"
+
+# A date-stamped bullet entry, ``- [YYYY-MM-DD] text``, optionally carrying the
+# durable marker flush against the date bracket: ``- [YYYY-MM-DD][durable] text``.
+_ENTRY_RE = re.compile(r"^-\s*\[(\d{4}-\d{2}-\d{2})\](\[durable\])?\s*(.*)$")
 
 
 @dataclass(frozen=True)
@@ -72,18 +79,11 @@ def parse_short_term(content: str) -> dict[str, list[Entry]]:
         elif current is not None:
             match = _ENTRY_RE.match(line.strip())
             if match:
-                sections[current].append(_entry_from_text(match.group(1), match.group(2).strip()))
+                date_stamp, durable_marker, text = match.groups()
+                entry = Entry(date_stamp, text.strip(), durable=bool(durable_marker))
+                sections[current].append(entry)
 
     return sections
-
-
-def _entry_from_text(date_stamp: str, text: str) -> Entry:
-    """Build an entry, splitting off the trailing durable marker if present."""
-
-    durable = text.endswith(_DURABLE_MARKER)
-    if durable:
-        text = text[: -len(_DURABLE_MARKER)].strip()
-    return Entry(date_stamp, text, durable)
 
 
 def render_short_term(project_id: str, sections: dict[str, list[Entry]]) -> str:
@@ -101,10 +101,15 @@ def render_short_term(project_id: str, sections: dict[str, list[Entry]]) -> str:
 
 
 def _render_entry(entry: Entry) -> str:
-    """Render one entry, appending the durable marker when set."""
+    """Render one entry, placing the durable marker in its out-of-band slot.
 
-    suffix = f" {_DURABLE_MARKER}" if entry.durable else ""
-    return f"- [{entry.date}] {entry.text}{suffix}"
+    The marker sits flush against the date bracket for a durable entry; a
+    transient entry keeps the plain space there, so the two are told apart
+    structurally rather than by inspecting the text (ADR 0017, #40).
+    """
+
+    marker = _DURABLE_MARKER if entry.durable else ""
+    return f"- [{entry.date}]{marker} {entry.text}"
 
 
 def merge_documents(target_content: str, source_content: str, target_id: str) -> str:
@@ -133,6 +138,52 @@ def merge_documents(target_content: str, source_content: str, target_id: str) ->
         merged[name] = entries
 
     return render_short_term(target_id, merged)
+
+
+def evict_transient(sections: dict[str, list[Entry]], cap: int) -> list[Entry]:
+    """Evict transient entries oldest-first until at ``cap``, or none remain.
+
+    Returns the evicted entries in eviction order. Durable entries are never
+    removed here — they leave short-term only by being promoted to a Concept
+    (ADR 0017) — so a caller can tell "cleared the cap" from "only durables left
+    over cap". This is the one cap-enforcement every writer to short-term shares
+    (the curated write and the digest refresh), so neither can grow the file past
+    the cap the other honours (#40).
+    """
+
+    def total() -> int:
+        return sum(len(entries) for entries in sections.values())
+
+    evicted: list[Entry] = []
+    while total() > cap:
+        oldest = min(
+            (
+                (name, index, entry)
+                for name, entries in sections.items()
+                for index, entry in enumerate(entries)
+                if not entry.durable
+            ),
+            key=lambda candidate: candidate[2].date,
+            default=None,
+        )
+        if oldest is None:
+            break
+        name, index, entry = oldest
+        sections[name].pop(index)
+        evicted.append(entry)
+    return evicted
+
+
+def aged_out_block(evicted: list[Entry], today: date) -> str:
+    """Render an aged-out daily-log block holding the evicted entries verbatim.
+
+    Ageing out is itself a write: the evicted entry is appended to today's daily
+    log so the cap never drops a word, only relocates it (ADR 0017).
+    """
+
+    lines = [f"## Aged out of short-term ({today.isoformat()})"]
+    lines.extend(f"- [{entry.date}] {entry.text}" for entry in evicted)
+    return "\n".join(lines) + "\n"
 
 
 def short_term_path(project_id: str, root: Path | None = None) -> Path:

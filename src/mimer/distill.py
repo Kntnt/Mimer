@@ -373,14 +373,37 @@ def _record_distilled(project_id: str, title: str, root: Path | None) -> None:
     append_text(_queue_path(project_id, root), title)
 
 
-def drain_distilled(project_id: str, root: Path | None = None) -> list[str]:
-    """Return and clear the titles queued for the next session's announcement."""
+def peek_distilled(project_id: str, root: Path | None = None) -> list[str]:
+    """Return the titles queued for the next session's announcement, without
+    clearing the queue.
+
+    Reading and clearing are split so the announcement can be cleared only after
+    the snapshot that carries it has been emitted: if a step between peek and
+    clear fails, the queue survives and the notice is re-announced next session
+    rather than lost — at-least-once, never zero (ADR 0014, #40).
+    """
 
     path = _queue_path(project_id, root)
     if not path.exists():
         return []
-    items = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    path.unlink()
+    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def clear_distilled(project_id: str, root: Path | None = None) -> None:
+    """Clear the announcement queue once its titles have been emitted (#40)."""
+
+    _queue_path(project_id, root).unlink(missing_ok=True)
+
+
+def drain_distilled(project_id: str, root: Path | None = None) -> list[str]:
+    """Return and clear the titles queued for the next session's announcement.
+
+    A convenience over :func:`peek_distilled` then :func:`clear_distilled` for a
+    caller that has no failure-sensitive step between reading and clearing.
+    """
+
+    items = peek_distilled(project_id, root)
+    clear_distilled(project_id, root)
     return items
 
 

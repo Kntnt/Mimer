@@ -34,7 +34,9 @@ from mimer.redaction import redact as strip_secrets
 from mimer.shortterm import (
     SHORT_TERM_CAP,
     Entry,
+    aged_out_block,
     ensure_short_term,
+    evict_transient,
     parse_short_term,
     render_short_term,
     short_term_path,
@@ -150,9 +152,9 @@ def remember(
             promoted = tuple(result.slug for result in results if result.slug is not None)
         with project_lock(project_id, root=root):
             sections = parse_short_term(path.read_text(encoding="utf-8"))
-            evicted = _evict_transient(sections, cap)
+            evicted = evict_transient(sections, cap)
             if evicted:
-                append_entry(project_id, today.isoformat(), _aged_out_block(evicted, today), root)
+                append_entry(project_id, today.isoformat(), aged_out_block(evicted, today), root)
             write_atomic(path, render_short_term(project_id, sections))
             remaining = sum(len(section_entries) for section_entries in sections.values())
             warning = (
@@ -170,44 +172,6 @@ def remember(
     if evicted:
         echo += f" Aged out {len(evicted)} transient entry(ies) to the daily log."
     return WriteResult(action, echo, warning, tuple(e.text for e in evicted), promoted)
-
-
-def _evict_transient(sections: dict[str, list[Entry]], cap: int) -> list[Entry]:
-    """Evict transient entries oldest-first until at the cap, or none remain.
-
-    Returns the evicted entries in eviction order. Durable entries are never
-    removed here, so the caller can warn when only durables remain over cap.
-    """
-
-    def total() -> int:
-        return sum(len(entries) for entries in sections.values())
-
-    evicted: list[Entry] = []
-    while total() > cap:
-        oldest = min(
-            (
-                (name, index, entry)
-                for name, entries in sections.items()
-                for index, entry in enumerate(entries)
-                if not entry.durable
-            ),
-            key=lambda candidate: candidate[2].date,
-            default=None,
-        )
-        if oldest is None:
-            break
-        name, index, entry = oldest
-        sections[name].pop(index)
-        evicted.append(entry)
-    return evicted
-
-
-def _aged_out_block(evicted: list[Entry], today: date) -> str:
-    """Render an aged-out daily-log block holding the evicted entries verbatim."""
-
-    lines = [f"## Aged out of short-term ({today.isoformat()})"]
-    lines.extend(f"- [{entry.date}] {entry.text}" for entry in evicted)
-    return "\n".join(lines) + "\n"
 
 
 def _remove_matching_from_short_term(text: str, *, project_id: str, root: Path) -> int:

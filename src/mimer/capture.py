@@ -86,8 +86,10 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
             append_entry(project_id, exchange.date, _render_entry(exchange), root)
             record_captured(project_id, exchange.turn_id, root)
 
-        # Keep the derived index in step, when one exists (ADR 0011).
-        index_if_present(project_id, exchange.date, root)
+        # The capture is durable now — the entry is in the daily log and the
+        # ledger — so index upkeep is a separate, best-effort step: index
+        # contention is not a capture failure (see _index_or_log).
+        _index_or_log(project_id, exchange.date, root)
         return CaptureResult("captured", exchange.turn_id, exchange.date)
 
     except Exception as exc:  # noqa: BLE001 - capture must never raise to the session
@@ -96,6 +98,24 @@ def capture_from_payload(payload: Mapping[str, Any], *, root: Path | None = None
         # cannot strip non-secret memory prose or PII from the health-surfaced log (#24).
         log_failure(f"capture: {type(exc).__name__}", root=root)
         return CaptureResult("failed")
+
+
+def _index_or_log(project_id: str, day: str, root: Path) -> None:
+    """Keep the derived index in step with the just-written entry, non-fatally.
+
+    The daily-log entry is already durable when this runs and the index is
+    derived and rebuildable (ADR 0011), so index trouble — a concurrent writer
+    hitting the busy timeout, most typically — is benign contention, not a
+    capture failure. Flipping an already-recorded capture to "failed" over it
+    would both mislead the caller and spend a spurious health-log line, so any
+    failure here is logged as non-fatal and swallowed rather than raised into
+    capture's broad handler (#40).
+    """
+
+    try:
+        index_if_present(project_id, day, root)
+    except Exception as exc:  # noqa: BLE001 - index upkeep is best-effort, not the capture
+        log_failure(f"capture: index update failed (non-fatal): {type(exc).__name__}", root=root)
 
 
 def _render_entry(exchange: Exchange) -> str:
@@ -132,8 +152,15 @@ def main(argv: list[str] | None = None) -> int:
 
     spool = Path(args[0])
     try:
+        # Read and parse the spool inside the same logging guard the rest of
+        # capture uses. This process is detached with stderr routed to DEVNULL, so
+        # a corrupt or unreadable spool raising here would vanish with no trace —
+        # breaking the module's "every failure is logged" contract (#40).
+        # capture_from_payload has its own broad handler and never raises.
         payload = json.loads(spool.read_text(encoding="utf-8"))
         capture_from_payload(payload)
+    except Exception as exc:  # noqa: BLE001 - a detached capture must never fail silently
+        log_failure(f"capture: spool read failed: {type(exc).__name__}", root=store_root())
     finally:
         spool.unlink(missing_ok=True)
     return 0

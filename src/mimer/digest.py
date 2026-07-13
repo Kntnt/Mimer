@@ -28,8 +28,11 @@ from mimer.redaction import redact
 from mimer.registry import Registry
 from mimer.shortterm import (
     AUTO_REFRESHED_SECTIONS,
+    SHORT_TERM_CAP,
     Entry,
+    aged_out_block,
     ensure_short_term,
+    evict_transient,
     parse_short_term,
     render_short_term,
 )
@@ -219,6 +222,15 @@ def _refresh_short_term(
     sections = parse_short_term(path.read_text(encoding="utf-8"))
     sections[AUTO_REFRESHED_SECTIONS[0]] = [Entry(today.isoformat(), text) for text in active]
     sections[AUTO_REFRESHED_SECTIONS[1]] = [Entry(today.isoformat(), text) for text in pending]
+
+    # Enforce the cap the same way every other writer to short-term does: the
+    # digest is a second auto-writer, so without this it is the one path that lets
+    # the file grow past the cap (#40). Evicted transient entries age out verbatim
+    # to today's daily log, so the cap relocates rather than drops (ADR 0017). The
+    # caller holds the project lock; append_entry is a lock-free O_APPEND, safe here.
+    evicted = evict_transient(sections, SHORT_TERM_CAP)
+    if evicted:
+        append_entry(project_id, today.isoformat(), aged_out_block(evicted, today), root)
     write_atomic(path, render_short_term(project_id, sections))
 
 

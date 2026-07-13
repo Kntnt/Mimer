@@ -76,10 +76,26 @@ def fresh_failures(root: Path | None = None, *, within_hours: int = 24) -> list[
     fresh = []
     for line in path.read_text(encoding="utf-8").splitlines():
         stamp, _, message = line.partition("\t")
-        try:
-            when = datetime.fromisoformat(stamp)
-        except ValueError:
-            continue
-        if when >= cutoff:
+        when = _parse_stamp(stamp)
+        if when is not None and when >= cutoff:
             fresh.append(redact(message))
     return fresh
+
+
+def _parse_stamp(stamp: str) -> datetime | None:
+    """Parse a log timestamp as an aware UTC datetime, or None when unparseable.
+
+    Every line log_failure writes carries an aware UTC stamp, but a legacy or
+    hand-written line may carry a naive one (no offset). A naive stamp parses
+    fine and only trips later, when it is compared to the aware cutoff — a
+    TypeError that, surfaced through the session-start health notice, would
+    suppress all memory injection for the session. So a naive stamp is assumed to
+    be UTC rather than allowed to crash the read: one bad line must never take
+    injection down (#40).
+    """
+
+    try:
+        when = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)

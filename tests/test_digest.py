@@ -108,9 +108,7 @@ def test_digest_writes_log_refreshes_short_term_and_archives(
     assert result.archive_path is not None and result.archive_path.exists()
 
 
-def test_digest_refresh_respects_the_short_term_cap(
-    store_root: Path, project_dir: Path
-) -> None:
+def test_digest_refresh_respects_the_short_term_cap(store_root: Path, project_dir: Path) -> None:
     """The digest's wholesale refresh of the auto-maintained sections is a second
     writer to short-term, so it must honour the cap every other write enforces.
     Without eviction after the refresh it is the one path that lets short-term
@@ -123,7 +121,9 @@ def test_digest_refresh_respects_the_short_term_cap(
 
     # Seed short-term at the cap with transient notes, so the digest's refresh of
     # the active/pending sections tips the file over and eviction must run.
-    notes = "\n".join(f"- [2026-06-{(i % 28) + 1:02d}] note number {i}" for i in range(SHORT_TERM_CAP))
+    notes = "\n".join(
+        f"- [2026-06-{(i % 28) + 1:02d}] note number {i}" for i in range(SHORT_TERM_CAP)
+    )
     path = short_term_path(pid, store_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

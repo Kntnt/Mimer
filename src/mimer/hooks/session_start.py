@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from mimer.bundle import concept_headlines, render_profile
-from mimer.distill import drain_distilled
+from mimer.distill import clear_distilled, peek_distilled
 from mimer.failure_log import fresh_failures
 from mimer.hooks.runner import run_hook
 from mimer.manifest import long_term_manifest
@@ -50,6 +50,10 @@ def handle(payload: Mapping[str, Any]) -> None:
     # the pinned profile, and the manifest (long-term coverage + Concept headlines).
     ensure_short_term(resolution.project_id, root)
     short_term_text = read_short_term(resolution.project_id, root)
+
+    # Peek the distilled-since-last-session queue rather than draining it, so it is
+    # cleared only after the snapshot below is emitted (#40).
+    distilled = peek_distilled(resolution.project_id, root)
     snapshot = build_snapshot(
         resolution.project_id,
         short_term_text,
@@ -57,12 +61,18 @@ def handle(payload: Mapping[str, Any]) -> None:
         source=source,
         manifest=_manifest(resolution.project_id, root),
         profile=render_profile(root),
-        distilled=drain_distilled(resolution.project_id, root),
+        distilled=distilled,
         health=_health_notice(root),
         paused=_pause_notice(root),
         capture_off=_capture_notice(resolution.project_id, root),
     )
     _emit(snapshot)
+
+    # Clear the announcement queue only now that the snapshot carrying it has been
+    # emitted: had any step above failed, the queue would survive and re-announce
+    # next session rather than drop the notice permanently (ADR 0014, #40).
+    if distilled:
+        clear_distilled(resolution.project_id, root)
 
 
 def _pause_notice(root: Path) -> str:
