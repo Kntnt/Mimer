@@ -135,3 +135,7 @@ _Avoid_: seed, backfill, migration.
 **Store walk**:
 The read-only enumeration of what the store holds: project ids (on disk, or known to the registry) and the dates a project's long-term memory covers. The one module that walks the projects tree — no other module lists its directories.
 _Avoid_: directory scan, file listing, crawl.
+
+**Lock discipline**:
+Which lock and write discipline each store artefact takes: short-term memory and the bundle are locked read-modify-write; daily logs, ledgers and the announcement queue are lockless appends; the registry takes its own named lock. Locks are per-project or named, and reentrant within a thread — stated once in storeio, re-derived nowhere.
+_Avoid_: mutex, synchronisation, critical section.

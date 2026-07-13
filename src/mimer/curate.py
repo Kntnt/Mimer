@@ -38,11 +38,8 @@ from mimer.shortterm import (
     aged_out_block,
     ensure_short_term,
     evict_transient,
-    parse_short_term,
-    render_short_term,
-    short_term_path,
+    rewrite_sections,
 )
-from mimer.storeio import project_lock, update_file, write_atomic
 from mimer.tombstones import write_tombstone
 
 # Curated writes land in the Notes section by default.
@@ -113,21 +110,23 @@ def remember(
     text = strip_secrets(text)
 
     root = root or store_root()
-    today = today or clock.today()
+    day = today or clock.today()
     ensure_short_term(project_id, root)
-    path = short_term_path(project_id, root)
 
-    # Add or update the entry under the lock. The cap-driven promote-then-evict
-    # runs afterwards, outside this lock: distillation takes the same per-project
-    # lock and flock is not re-entrant across separate open descriptions.
-    with project_lock(project_id, root=root):
-        sections = parse_short_term(path.read_text(encoding="utf-8"))
+    # Add or update the entry through the locked writer, reading the post-write
+    # totals inside the lock so the cap decision below keys off what was persisted.
+    action = "added"
+    total = 0
+    has_durable = False
+
+    def add(sections: dict[str, list[Entry]]) -> dict[str, list[Entry]]:
+        nonlocal action, total, has_durable
         entries = sections[section]
 
         # Dedup: update an existing entry rather than adding a duplicate.
         key = _key(text)
         index = next((i for i, entry in enumerate(entries) if _key(entry.text) == key), None)
-        entry = Entry(today.isoformat(), text, durable)
+        entry = Entry(day.isoformat(), text, durable)
         if index is None:
             entries.insert(0, entry)
             action = "added"
@@ -135,36 +134,44 @@ def remember(
             entries[index] = entry
             action = "updated"
 
-        write_atomic(path, render_short_term(project_id, sections))
         total = sum(len(section_entries) for section_entries in sections.values())
-        has_durable = any(
-            e.durable for section_entries in sections.values() for e in section_entries
-        )
+        has_durable = any(e.durable for group in sections.values() for e in group)
+        return sections
+
+    rewrite_sections(project_id, add, root=root)
 
     # Promote-then-evict when the write went over the cap: distil durable entries
     # into permanent memory (each removed only once its Concept is on disk), then
-    # age transient entries out under the lock until short-term is back at the cap.
+    # age transient entries out until short-term is back at the cap. Eviction stays
+    # a phase of its own, run over the file distillation left behind: distillation
+    # re-reads and rewrites short-term under its own lock (nesting is safe now, #49;
+    # the split is about ordering, not deadlock).
     promoted: tuple[str, ...] = ()
     evicted: list[Entry] = []
     warning: str | None = None
     if total > cap:
         if has_durable:
-            results = distill_durable_entries(project_id, root=root, today=today)
+            results = distill_durable_entries(project_id, root=root, today=day)
             promoted = tuple(result.slug for result in results if result.slug is not None)
-        with project_lock(project_id, root=root):
-            sections = parse_short_term(path.read_text(encoding="utf-8"))
+
+        remaining = 0
+
+        def evict(sections: dict[str, list[Entry]]) -> dict[str, list[Entry]]:
+            nonlocal evicted, remaining
             evicted = evict_transient(sections, cap)
             if evicted:
-                append_entry(project_id, today.isoformat(), aged_out_block(evicted, today), root)
-            write_atomic(path, render_short_term(project_id, sections))
+                append_entry(project_id, day.isoformat(), aged_out_block(evicted, day), root)
             remaining = sum(len(section_entries) for section_entries in sections.values())
-            warning = (
-                f"short-term memory is over its cap ({remaining}/{cap}); one or more durable "
-                "entries could not be promoted (their distillation failed and was logged), and "
-                "transient eviction alone could not clear the cap."
-                if remaining > cap
-                else None
-            )
+            return sections
+
+        rewrite_sections(project_id, evict, root=root)
+        warning = (
+            f"short-term memory is over its cap ({remaining}/{cap}); one or more durable "
+            "entries could not be promoted (their distillation failed and was logged), and "
+            "transient eviction alone could not clear the cap."
+            if remaining > cap
+            else None
+        )
 
     verb = "remembered" if action == "added" else "updated"
     echo = f'Mimer: {verb} "{text}" in short-term memory (project "{project_id}").'
@@ -185,16 +192,15 @@ def _remove_matching_from_short_term(text: str, *, project_id: str, root: Path) 
 
     removed = 0
 
-    def transform(content: str) -> str:
+    def transform(sections: dict[str, list[Entry]]) -> dict[str, list[Entry]]:
         nonlocal removed
-        sections = parse_short_term(content)
         for name, entries in sections.items():
             kept = [e for e in entries if not is_same_fact(e.text, text)]
             removed += len(entries) - len(kept)
             sections[name] = kept
-        return render_short_term(project_id, sections)
+        return sections
 
-    update_file(short_term_path(project_id, root), transform, project_id=project_id, root=root)
+    rewrite_sections(project_id, transform, root=root)
     return removed
 
 

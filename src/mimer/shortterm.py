@@ -15,6 +15,7 @@ Every entry is a date-stamped bullet: ``- [YYYY-MM-DD] text``.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -124,6 +125,33 @@ def _render_entry(entry: Entry) -> str:
 
     marker = _DURABLE_MARKER if entry.durable else ""
     return f"- [{entry.date}]{marker} {entry.text}"
+
+
+def rewrite_sections(
+    project_id: str,
+    transform: Callable[[dict[str, list[Entry]]], dict[str, list[Entry]]],
+    *,
+    root: Path | None = None,
+) -> None:
+    """The system's one locked writer for short-term memory (#51).
+
+    Take the project lock (reentrant per #49), parse the sections, apply
+    ``transform`` (sections in, sections out), render, write atomically. A missing
+    file parses as empty sections, so a first write starts from a blank slate. The
+    file is read and rewritten as one serialised unit under the lock, so two
+    writers cannot lose each other's update (ADR 0011); the lock's reentrancy lets
+    a caller already holding the project lock — the session digest — nest this
+    safely. Appends to the daily log inside a ``transform`` are safe: they are
+    lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`).
+    """
+
+    root = root or store_root()
+    path = short_term_path(project_id, root)
+
+    with project_lock(project_id, root=root):
+        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        sections = transform(parse_short_term(content))
+        write_atomic(path, render_short_term(project_id, sections))
 
 
 def _parse_legacy(content: str) -> dict[str, list[Entry]]:

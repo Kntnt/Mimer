@@ -28,7 +28,7 @@ from mimer.longterm import append_entry
 from mimer.paths import store_root
 from mimer.redaction import redact
 from mimer.registry import Registry, project_dir
-from mimer.shortterm import Entry, parse_short_term, render_short_term, short_term_path
+from mimer.shortterm import Entry, rewrite_sections, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
 from mimer.text import STOPWORDS, truncate
 from mimer.tombstones import is_tombstoned
@@ -194,14 +194,14 @@ def distill_durable_entries(
     """
 
     root = root or store_root()
-    today = today or clock.today()
+    day = today or clock.today()
     path = short_term_path(project_id, root)
     if not path.exists():
         return []
 
     results: list[DistillResult] = []
-    with project_lock(project_id, root=root):
-        sections = parse_short_term(path.read_text(encoding="utf-8"))
+
+    def distil(sections: dict[str, list[Entry]]) -> dict[str, list[Entry]]:
         rejected: list[Entry] = []
         for name, entries in sections.items():
             kept = []
@@ -231,8 +231,10 @@ def distill_durable_entries(
         # Age the rejected entries out to the daily log before short-term is
         # rewritten, so a crash never leaves one absent from both places (ADR 0017).
         if rejected:
-            append_entry(project_id, today.isoformat(), _rejected_block(rejected, today), root)
-        write_atomic(path, render_short_term(project_id, sections))
+            append_entry(project_id, day.isoformat(), _rejected_block(rejected, day), root)
+        return sections
+
+    rewrite_sections(project_id, distil, root=root)
     return results
 
 

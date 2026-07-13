@@ -31,10 +31,8 @@ from mimer.shortterm import (
     SHORT_TERM_CAP,
     Entry,
     aged_out_block,
-    ensure_short_term,
     evict_transient,
-    parse_short_term,
-    render_short_term,
+    rewrite_sections,
 )
 from mimer.storeio import project_lock, write_atomic
 from mimer.text import parse_bullets
@@ -231,27 +229,27 @@ def _refresh_short_term(
 ) -> None:
     """Rewrite the auto-maintained short-term sections from the digest.
 
-    The caller already holds the project lock, so the file is read and rewritten
-    directly with ``write_atomic``; re-locking via ``update_file`` would deadlock
-    on the same per-project advisory lock.
+    Runs inside the digest's project lock; :func:`rewrite_sections` re-takes that
+    lock, reentrant within the thread (#49), so the nested acquisition is safe.
     """
 
-    # Replace each auto-maintained section wholesale with today's digest lines,
-    # leaving the curated sections (Notes) untouched.
-    path = ensure_short_term(project_id, root)
-    sections = parse_short_term(path.read_text(encoding="utf-8"))
-    sections[AUTO_REFRESHED_SECTIONS[0]] = [Entry(today.isoformat(), text) for text in active]
-    sections[AUTO_REFRESHED_SECTIONS[1]] = [Entry(today.isoformat(), text) for text in pending]
+    def refresh(sections: dict[str, list[Entry]]) -> dict[str, list[Entry]]:
+        # Replace each auto-maintained section wholesale with today's digest lines,
+        # leaving the curated sections (Notes) untouched.
+        sections[AUTO_REFRESHED_SECTIONS[0]] = [Entry(today.isoformat(), text) for text in active]
+        sections[AUTO_REFRESHED_SECTIONS[1]] = [Entry(today.isoformat(), text) for text in pending]
 
-    # Enforce the cap the same way every other writer to short-term does: the
-    # digest is a second auto-writer, so without this it is the one path that lets
-    # the file grow past the cap (#40). Evicted transient entries age out verbatim
-    # to today's daily log, so the cap relocates rather than drops (ADR 0017). The
-    # caller holds the project lock; append_entry is a lock-free O_APPEND, safe here.
-    evicted = evict_transient(sections, SHORT_TERM_CAP)
-    if evicted:
-        append_entry(project_id, today.isoformat(), aged_out_block(evicted, today), root)
-    write_atomic(path, render_short_term(project_id, sections))
+        # Enforce the cap the same way every other writer to short-term does: the
+        # digest is a second auto-writer, so without this it is the one path that
+        # lets the file grow past the cap (#40). Evicted transient entries age out
+        # verbatim to today's daily log, so the cap relocates rather than drops
+        # (ADR 0017); the append is a lock-free O_APPEND, safe inside the transform.
+        evicted = evict_transient(sections, SHORT_TERM_CAP)
+        if evicted:
+            append_entry(project_id, today.isoformat(), aged_out_block(evicted, today), root)
+        return sections
+
+    rewrite_sections(project_id, refresh, root=root)
 
 
 def _archive_transcript(project_id: str, session_id: str, transcript: Path, root: Path) -> Path:

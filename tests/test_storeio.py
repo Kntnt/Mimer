@@ -17,25 +17,27 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mimer.store import ensure_store
-from mimer.storeio import append_text, named_lock, project_lock, update_file
+from mimer.storeio import append_text, named_lock, project_lock, write_atomic
 
 
-def _append_marker(marker: str) -> Callable[[str], str]:
-    """Return a transform that appends ``marker`` after a brief pause.
+def _locked_append(target: Path, marker: str, root: Path) -> None:
+    """Append ``marker`` to ``target`` as a locked read-modify-write.
 
-    The pause widens the read-modify-write window so an unlocked implementation
-    would reliably lose updates — proving the lock is what protects them.
+    The brief pause widens the read-modify-write window so an unlocked
+    implementation would reliably lose updates — proving the lock is what
+    protects them. This is the raw ``project_lock`` + ``write_atomic`` discipline
+    short-term memory now takes through ``shortterm.rewrite_sections``.
     """
 
-    def transform(content: str) -> str:
+    with project_lock("proj", root=root):
+        current = target.read_text(encoding="utf-8") if target.exists() else ""
         time.sleep(0.01)
-        return content + marker + "\n"
-
-    return transform
+        write_atomic(target, current + marker + "\n")
 
 
 def test_locked_rmw_has_no_lost_updates(store_root: Path, tmp_path: Path) -> None:
-    """Many concurrent locked read-modify-writes to one file all survive."""
+    """Many concurrent locked read-modify-writes to one file all survive: the
+    per-project lock around ``write_atomic`` serialises them with no lost update."""
 
     ensure_store(store_root)
     target = tmp_path / "short-term.md"
@@ -44,7 +46,7 @@ def test_locked_rmw_has_no_lost_updates(store_root: Path, tmp_path: Path) -> Non
     writers = [f"line-{i}" for i in range(15)]
 
     def write(marker: str) -> None:
-        update_file(target, _append_marker(marker), project_id="proj", root=store_root)
+        _locked_append(target, marker, store_root)
 
     threads = [threading.Thread(target=write, args=(m,)) for m in writers]
     for thread in threads:

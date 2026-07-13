@@ -7,7 +7,7 @@ single home of that map, and the primitive that implements each row:
 ======================================  =============================  ===========================
 Artefact                                Discipline                     Primitive
 ======================================  =============================  ===========================
-short-term memory (short-term.md)       locked RMW (per-project lock)  update_file
+short-term memory (short-term.md)       locked RMW (per-project lock)  project_lock + write_atomic
 capture/digest/git ledgers (#41)        locked RMW (per-project lock)  project_lock + write_atomic
 the permanent bundle (+ index.md)       locked RMW (store-wide named)  named_lock + write_atomic
 the registry (registry.json)            locked RMW (store-wide named)  named_lock + write_atomic
@@ -18,9 +18,10 @@ project-merge folds (ADR 0008)          lockless O_APPEND fold         append_fo
 ======================================  =============================  ===========================
 
 *Locked read-modify-write* re-reads the file inside the lock and rewrites it
-atomically (:func:`update_file`, or an explicit :func:`project_lock` /
-:func:`named_lock` around :func:`write_atomic`), so two writers serialise and
-neither update is lost. *Lockless O_APPEND* writes each short record with
+atomically — an explicit :func:`project_lock` / :func:`named_lock` around
+:func:`write_atomic` (short-term memory wraps this pair in
+:func:`mimer.shortterm.rewrite_sections`) — so two writers serialise and neither
+update is lost. *Lockless O_APPEND* writes each short record with
 ``O_APPEND`` (:func:`append_text`), so concurrent writers interleave whole
 records without a lock and without corruption; a project merge (ADR 0008) folds
 a whole append-only block the same way (:func:`append_fold`), so the fold can
@@ -46,7 +47,7 @@ import os
 import re
 import tempfile
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -269,26 +270,3 @@ def write_atomic(path: Path, content: str) -> None:
         # orphan .tmp files beside the real store artefacts.
         Path(tmp_name).unlink(missing_ok=True)
         raise
-
-
-def update_file(
-    path: Path,
-    transform: Callable[[str], str],
-    *,
-    project_id: str,
-    root: Path | None = None,
-) -> str:
-    """Read-modify-write ``path`` under the project lock, returning new content.
-
-    The file is re-read inside the lock and rewritten atomically, so a concurrent
-    writer cannot lose an update. A missing file is treated as empty.
-    """
-
-    root = root or store_root()
-
-    with project_lock(project_id, root=root):
-        current = path.read_text(encoding="utf-8") if path.exists() else ""
-        updated = transform(current)
-        write_atomic(path, updated)
-
-    return updated
