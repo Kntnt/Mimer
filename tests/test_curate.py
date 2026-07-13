@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +17,6 @@ import pytest
 
 from mimer.bundle import concept_headlines, create_concept, list_concepts, render_profile
 from mimer.curate import forget, main, redact, remember
-from mimer.project import resolve
 from mimer.registry import Registry
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
@@ -25,16 +25,12 @@ from mimer.tombstones import is_tombstoned, load_tombstones
 TODAY = date(2026, 7, 11)
 
 
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
-
-
-def test_remember_adds_dated_entry_with_echo(store_root: Path, project_dir: Path) -> None:
+def test_remember_adds_dated_entry_with_echo(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Remembering a fact adds a dated entry and echoes what happened."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
 
     result = remember("use sqlite-vec for the index", project_id=pid, root=store_root, today=TODAY)
 
@@ -45,10 +41,12 @@ def test_remember_adds_dated_entry_with_echo(store_root: Path, project_dir: Path
     assert notes[0].text == "use sqlite-vec for the index"
 
 
-def test_remember_duplicate_updates_not_duplicates(store_root: Path, project_dir: Path) -> None:
+def test_remember_duplicate_updates_not_duplicates(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Re-remembering an existing fact updates it rather than duplicating."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("prefer uv over pip", project_id=pid, root=store_root, today=date(2026, 7, 1))
 
     result = remember("prefer uv over pip", project_id=pid, root=store_root, today=TODAY)
@@ -59,12 +57,14 @@ def test_remember_duplicate_updates_not_duplicates(store_root: Path, project_dir
     assert notes[0].date == "2026-07-11"
 
 
-def test_over_cap_durable_write_promotes_to_permanent(store_root: Path, project_dir: Path) -> None:
+def test_over_cap_durable_write_promotes_to_permanent(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """An over-cap write drives distillation: durable entries are promoted into
     permanent Concepts and leave short-term, rather than being warned about and
     kept (ADR 0017's cap-driven promote-then-evict, issue #28)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     facts = (
         "the client prefers British English",
         "deployments run on Tuesdays",
@@ -96,11 +96,13 @@ def test_over_cap_durable_write_promotes_to_permanent(store_root: Path, project_
     assert notes == []
 
 
-def test_forget_removes_entry_and_writes_tombstone(store_root: Path, project_dir: Path) -> None:
+def test_forget_removes_entry_and_writes_tombstone(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Soft forget removes the entry, tombstones it, and says the raw record
     stays."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("the staging password is hunter2", project_id=pid, root=store_root, today=TODAY)
 
     result = forget("the staging password is hunter2", project_id=pid, root=store_root, today=TODAY)
@@ -113,10 +115,12 @@ def test_forget_removes_entry_and_writes_tombstone(store_root: Path, project_dir
     assert is_tombstoned("the staging password is hunter2", project_id=pid, root=store_root)
 
 
-def test_tombstoned_fact_stays_gone_across_reload(store_root: Path, project_dir: Path) -> None:
+def test_tombstoned_fact_stays_gone_across_reload(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A forgotten fact does not reappear in short-term memory on reload."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("drop the old cache table", project_id=pid, root=store_root, today=TODAY)
     forget("drop the old cache table", project_id=pid, root=store_root, today=TODAY)
 
@@ -126,7 +130,9 @@ def test_tombstoned_fact_stays_gone_across_reload(store_root: Path, project_dir:
     assert len(load_tombstones(store_root)) == 1
 
 
-def test_forget_removes_a_reworded_restatement(store_root: Path, project_dir: Path) -> None:
+def test_forget_removes_a_reworded_restatement(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Soft forget removes a reworded restatement, not just the exact wording (issue #18).
 
     forget delegates identity to the shared matcher, so a short-term entry that
@@ -134,7 +140,7 @@ def test_forget_removes_a_reworded_restatement(store_root: Path, project_dir: Pa
     substring test would have left it behind.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("The prototype used a Redis cache.", project_id=pid, root=store_root, today=TODAY)
 
     result = forget(
@@ -147,7 +153,7 @@ def test_forget_removes_a_reworded_restatement(store_root: Path, project_dir: Pa
 
 
 def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A short forget phrase must not over-remove an unrelated longer entry (issue #18).
 
@@ -156,7 +162,7 @@ def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
     unrelated memory.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     unrelated = "The analytics pipeline uses Redis Streams to buffer events before the load."
     remember(unrelated, project_id=pid, root=store_root, today=TODAY)
 
@@ -167,7 +173,7 @@ def test_forget_short_phrase_keeps_an_unrelated_longer_entry(
 
 
 def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A forget phrase past the guard must not over-remove an unrelated entry (issue #18).
 
@@ -178,7 +184,7 @@ def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
     site against over-removal on the path the guard alone does not cover.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     unrelated = (
         "The office moved the deploy schedule so the testing window is wider, "
         "and the celebration happens on friday."
@@ -192,14 +198,14 @@ def test_forget_phrase_whose_words_scatter_keeps_an_unrelated_longer_entry(
 
 
 def test_forget_retracts_a_matching_permanent_concept_across_short_term_and_injection(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A soft forget reaches permanent memory: it removes the short-term entry,
     retracts the matching pinned Concept, and stops the fact appearing in the
     injected profile and manifest headlines — the full ADR 0012 cascade (issue #32).
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     create_concept(
         title="Deploy day",
         body="Deployments run on Tuesdays.",
@@ -223,13 +229,13 @@ def test_forget_retracts_a_matching_permanent_concept_across_short_term_and_inje
 
 
 def test_forget_retracts_a_reworded_concept_even_with_no_short_term_entry(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Forget retracts a Concept restated in different words, even when nothing in
     short-term memory matches — identity is the shared matcher, so a forget still
     reaches the permanent layer it never touched before (issue #32)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     create_concept(
         title="Prototype cache",
         body="The prototype used a Redis cache.",
@@ -248,13 +254,13 @@ def test_forget_retracts_a_reworded_concept_even_with_no_short_term_entry(
 
 
 def test_redact_also_retracts_a_matching_permanent_concept(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Redact is a superset of forget (ADR 0012), so it too retracts a matching
     Concept — the hard tier must not leave in permanent memory what the soft tier
     would have retracted (issue #32)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     create_concept(
         title="Deploy day",
         body="Deployments run on Tuesdays.",
@@ -269,11 +275,13 @@ def test_redact_also_retracts_a_matching_permanent_concept(
     assert list_concepts(store_root) == []
 
 
-def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Path) -> None:
+def test_remembered_secret_is_stored_redacted(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A secret passed to remember is stripped before it lands in short-term memory
     (ADR-level guarantee: redaction is enforced at the sink, not by agent judgment)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
 
     remember(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
@@ -286,13 +294,13 @@ def test_remembered_secret_is_stored_redacted(store_root: Path, project_dir: Pat
 
 
 def test_forget_by_the_full_secret_removes_the_redacted_entry(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Forgetting by the exact secret string still removes the entry that remember
     stored in redacted form, and no raw secret is persisted to the tombstone
     ledger (forget runs the same redacting sink as remember — issue #23)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     remember(f"the deploy key is {secret}", project_id=pid, root=store_root, today=TODAY)
 
@@ -304,17 +312,21 @@ def test_forget_by_the_full_secret_removes_the_redacted_entry(
     assert tombstones and all(secret not in t["text"] for t in tombstones)
 
 
-def test_remember_persists_for_a_new_session(store_root: Path, project_dir: Path) -> None:
+def test_remember_persists_for_a_new_session(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A remembered fact is present when short-term memory is read afresh (the
     automated proxy for the manual restart residue)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("the client prefers British English", project_id=pid, root=store_root, today=TODAY)
 
     assert "the client prefers British English" in read_short_term(pid, store_root)
 
 
-def test_cli_remember_writes_and_echoes(store_root: Path, project_dir: Path) -> None:
+def test_cli_remember_writes_and_echoes(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The ``mimer-memory`` CLI the skill drives writes to the resolved project
     and echoes the outcome."""
 
@@ -332,11 +344,13 @@ def test_cli_remember_writes_and_echoes(store_root: Path, project_dir: Path) -> 
 
     assert result.returncode == 0, result.stderr
     assert "remembered" in result.stdout.lower()
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert "the CLI path works end to end" in read_short_term(pid, store_root)
 
 
-def test_cli_note_stores_redacted(store_root: Path, project_dir: Path) -> None:
+def test_cli_note_stores_redacted(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The ``note`` CLI verb runs the same redacting sink as remember, so a secret
     noted at the command line is stored redacted (AC1 names remember and note)."""
 
@@ -354,7 +368,7 @@ def test_cli_note_stores_redacted(store_root: Path, project_dir: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     stored = read_short_term(pid, store_root)
     assert secret not in stored
     assert "deploy key" in stored

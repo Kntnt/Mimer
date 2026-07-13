@@ -10,6 +10,9 @@ scattered copies are consolidated into.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 from mimer import distill, index
 from mimer import text as mtext
 
@@ -76,14 +79,12 @@ def test_parse_bullets_applies_the_transform_before_the_empty_and_none_check() -
     or 'none', so the transform runs first: a transform that empties a value
     drops it, and one that yields 'none' drops it too (issue #19)."""
 
-    result = mtext.parse_bullets(
-        ["- keep", "- drop"], transform=lambda t: "" if t == "drop" else t
-    )
+    result = mtext.parse_bullets(["- keep", "- drop"], transform=lambda t: "" if t == "drop" else t)
     assert result == ["keep"]
 
 
 def test_resolve_project_fixture_returns_the_bound_project_id(
-    resolve_project, project_dir
+    resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """The shared fixture replaces the resolve-then-assert helper copied across
     the test suite: it resolves a cwd to a non-None project id (issue #19)."""

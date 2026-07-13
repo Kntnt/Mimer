@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -21,18 +22,11 @@ import pytest
 from mimer.curate import _build_parser, forget, redact, remember
 from mimer.index import reindex, search
 from mimer.longterm import append_entry, daily_log_path, transcripts_dir
-from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.storeio import write_atomic
 from mimer.tombstones import is_tombstoned, load_tombstones
 
 TODAY = date(2026, 7, 11)
-
-
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
 
 
 def _transcript_line(text: str, timestamp: str = "2026-07-11T10:00:00Z") -> str:
@@ -48,12 +42,12 @@ def _transcript_line(text: str, timestamp: str = "2026-07-11T10:00:00Z") -> str:
 
 
 def test_redact_removes_short_term_entry_and_writes_a_redact_tombstone(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Redact does everything forget does: the entry leaves short-term memory and a
     tombstone (tier ``redact``) is written so the fact never resurfaces."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("the office moves to the fourth floor", project_id=pid, root=store_root, today=TODAY)
 
     result = redact("the office moves to the fourth floor", project_id=pid, root=store_root)
@@ -66,12 +60,12 @@ def test_redact_removes_short_term_entry_and_writes_a_redact_tombstone(
 
 
 def test_redact_erases_the_fact_from_the_daily_log_in_place(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Redact rewrites the append-only daily log, replacing the fact's span with a
     redaction marker — the one sanctioned mutation of the raw record (ADR 0012)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "the office moves to the fourth floor in august"
     append_entry(
         pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root
@@ -85,12 +79,12 @@ def test_redact_erases_the_fact_from_the_daily_log_in_place(
 
 
 def test_redact_is_surgical_and_keeps_unrelated_content_in_a_bundled_bullet(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """When the fact is one span inside a larger captured bullet, only that span is
     replaced; the unrelated content in the same bullet survives."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "the staging password is hunter2"
     bullet = f"- Assistant: session tokens live in Redis and {fact} until the next rotation.\n"
     append_entry(pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n{bullet}", store_root)
@@ -104,12 +98,12 @@ def test_redact_is_surgical_and_keeps_unrelated_content_in_a_bundled_bullet(
 
 
 def test_redact_erases_the_fact_from_the_transcript_archive_keeping_valid_json(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Redact rewrites the archived transcript in place, and the result is still a
     parseable JSONL record (the marker introduces no JSON-breaking characters)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "the office moves to the fourth floor in august"
     archive = transcripts_dir(pid, store_root) / "sess-1.jsonl"
     write_atomic(archive, _transcript_line(f"reminder: {fact}") + "\n")
@@ -123,13 +117,13 @@ def test_redact_erases_the_fact_from_the_transcript_archive_keeping_valid_json(
 
 
 def test_redact_erases_a_secret_that_slipped_past_the_storage_time_pass(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Redact scrubs a raw secret already sitting in the log, even though the
     tombstone ledger never records the raw secret (the erasure works on the raw
     text; the tombstone on the secret-stripped form — issue #23)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     append_entry(
         pid,
@@ -146,11 +140,13 @@ def test_redact_erases_a_secret_that_slipped_past_the_storage_time_pass(
     assert tombstones and all(secret not in record["text"] for record in tombstones)
 
 
-def test_redact_echo_states_the_honest_residual(store_root: Path, project_dir: Path) -> None:
+def test_redact_echo_states_the_honest_residual(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The echo relayed to the user names the erasure and the honest residual:
     content exported or backed up before the redact is beyond Mimer's reach (AC4)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("drop the temporary feature flag", project_id=pid, root=store_root, today=TODAY)
 
     echo = redact("drop the temporary feature flag", project_id=pid, root=store_root).echo.lower()
@@ -160,11 +156,13 @@ def test_redact_echo_states_the_honest_residual(store_root: Path, project_dir: P
     assert "export" in echo or "backed up" in echo
 
 
-def test_forget_echo_references_only_a_real_command(store_root: Path, project_dir: Path) -> None:
+def test_forget_echo_references_only_a_real_command(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The forget echo must not point the user at a command that does not exist
     (AC3): if it mentions redact, redact must be a real ``mimer-memory`` subcommand."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("the retro is on thursday", project_id=pid, root=store_root, today=TODAY)
 
     result = forget("the retro is on thursday", project_id=pid, root=store_root)
@@ -174,11 +172,13 @@ def test_forget_echo_references_only_a_real_command(store_root: Path, project_di
         assert args.command == "redact"
 
 
-def test_cli_redact_erases_across_layers(store_root: Path, project_dir: Path) -> None:
+def test_cli_redact_erases_across_layers(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The ``mimer-memory redact`` CLI the skill drives erases the fact and echoes
     the outcome, exit code zero."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "the office moves to the fourth floor in august"
     append_entry(
         pid, TODAY.isoformat(), f"### 10:00 — turn abcd1234\n- Assistant: {fact}\n", store_root
@@ -204,12 +204,12 @@ def test_cli_redact_erases_across_layers(store_root: Path, project_dir: Path) ->
 
 @pytest.mark.embedding
 def test_redacted_fact_absent_from_recall_logs_and_transcript(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """The full-erasure guarantee (AC2): after redact, the fact appears in neither
     recall, the daily logs, nor the transcript archive."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "the legacy billing endpoint is /v1/charge"
 
     # A daily log carrying the fact, plus an archived transcript carrying it.

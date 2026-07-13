@@ -6,6 +6,7 @@ and honoured by the capture, digest, distillation and recall paths.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,6 @@ from mimer.digest import digest_session
 from mimer.distill import distill_fact
 from mimer.hooks import session_end
 from mimer.pause import clear_paused, is_paused, set_paused
-from mimer.project import resolve
 from mimer.registry import Registry
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_end_payload, session_start_payload
@@ -34,12 +34,6 @@ def _payload(cwd: Path, transcript: Path) -> dict[str, object]:
         "cwd": str(cwd),
         "transcript_path": str(transcript),
     }
-
-
-def _project_id(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
 
 
 def _seeded_stop(project_dir: Path, text: str) -> dict[str, object]:
@@ -67,7 +61,9 @@ def test_pause_marker_round_trips(store_root: Path) -> None:
     assert not is_paused(store_root)
 
 
-def test_paused_session_captures_nothing(store_root: Path, project_dir: Path) -> None:
+def test_paused_session_captures_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """While paused, the Stop hook's capture records nothing to long-term memory."""
 
     ensure_store(store_root)
@@ -76,7 +72,7 @@ def test_paused_session_captures_nothing(store_root: Path, project_dir: Path) ->
     result = capture_from_payload(_seeded_stop(project_dir, "the secret plan"), root=store_root)
 
     assert result.status == "paused"
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     long_term = store_root / "projects" / pid / "long-term"
     assert not long_term.exists() or not any(long_term.iterdir())
 
@@ -174,11 +170,13 @@ def test_paused_session_end_records_nothing_at_the_boundary(
     assert calls == []
 
 
-def test_session_start_announces_a_standing_pause(store_root: Path, project_dir: Path) -> None:
+def test_session_start_announces_a_standing_pause(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """SessionStart announces a store-wide pause, so a forgotten one is visible (#35)."""
 
     ensure_store(store_root)
-    _project_id(store_root, project_dir)
+    resolve_project(project_dir)
     set_paused(store_root)
 
     result = run_hook(
@@ -205,11 +203,13 @@ def test_health_reports_a_standing_pause(store_root: Path) -> None:
 # --- Per-project setting: capture on/off -------------------------------------
 
 
-def test_capture_disabled_project_records_nothing(store_root: Path, project_dir: Path) -> None:
+def test_capture_disabled_project_records_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A project with capture disabled records nothing from the Stop hook."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     registry = Registry.load(store_root)
     registry.set_capture(pid, enabled=False)
     registry.save()
@@ -249,7 +249,7 @@ def test_capture_setting_round_trips_through_the_command(
 
 
 def test_capture_disabled_project_skips_digest_without_calling_the_model(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """With capture off, the digest returns without sending the transcript to the
     model (AC2: #35).
@@ -261,7 +261,7 @@ def test_capture_disabled_project_skips_digest_without_calling_the_model(
     """
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     registry = Registry.load(store_root)
     registry.set_capture(pid, enabled=False)
     registry.save()
@@ -279,7 +279,10 @@ def test_capture_disabled_project_skips_digest_without_calling_the_model(
 
 
 def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With capture off, SessionEnd folds no git yet still distils (AC2: #35).
 
@@ -289,7 +292,7 @@ def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
     """
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     registry = Registry.load(store_root)
     registry.set_capture(pid, enabled=False)
     registry.save()
@@ -305,7 +308,9 @@ def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
     assert calls == ["distill"]
 
 
-def test_health_reports_capture_disabled_projects(store_root: Path, project_dir: Path) -> None:
+def test_health_reports_capture_disabled_projects(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A project with capture off is enumerated in store health (#35).
 
     A per-project ``capture off`` is a standing, indefinite suppression, so — like
@@ -314,7 +319,7 @@ def test_health_reports_capture_disabled_projects(store_root: Path, project_dir:
     """
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert manage.store_health(store_root).capture_disabled_projects == []
 
     registry = Registry.load(store_root)
@@ -325,13 +330,13 @@ def test_health_reports_capture_disabled_projects(store_root: Path, project_dir:
 
 
 def test_session_start_announces_a_capture_disabled_project(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """SessionStart announces this project's standing capture-off, for parity with
     the pause notice, so a forgotten one is visible rather than silent (#35)."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     registry = Registry.load(store_root)
     registry.set_capture(pid, enabled=False)
     registry.save()
@@ -351,12 +356,12 @@ def test_session_start_announces_a_capture_disabled_project(
 
 
 def test_widening_setting_round_trips_through_the_command(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Turning widening off excludes the project from widened recall (ADR 0013)."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert Registry.load(store_root).is_widenable(pid)
 
     settings = manage.set_project_setting("widening", False, cwd=project_dir, root=store_root)
@@ -368,11 +373,13 @@ def test_widening_setting_round_trips_through_the_command(
 # --- Per-project setting: distill-to-global on/off ---------------------------
 
 
-def test_distill_to_global_off_downgrades_scope(store_root: Path, project_dir: Path) -> None:
+def test_distill_to_global_off_downgrades_scope(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """With distill-to-global off, a global distillation lands project-scoped."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     registry = Registry.load(store_root)
     registry.set_distill_to_global(pid, enabled=False)
     registry.save()
@@ -389,11 +396,13 @@ def test_distill_to_global_off_downgrades_scope(store_root: Path, project_dir: P
     assert concept.scope == "project"
 
 
-def test_distill_to_global_on_keeps_global_scope(store_root: Path, project_dir: Path) -> None:
+def test_distill_to_global_on_keeps_global_scope(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """With distill-to-global on (the default), a global distillation stays global."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
 
     result = distill_fact(
         text="The user prefers concise commit messages.",
@@ -424,6 +433,7 @@ def test_manage_pause_and_resume_cli(store_root: Path, monkeypatch: pytest.Monke
 
 def test_manage_settings_cli_shows_and_sets(
     store_root: Path,
+    resolve_project: Callable[[Path], str],
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -444,7 +454,7 @@ def test_manage_settings_cli_shows_and_sets(
 
     assert manage.main(["settings", "distill-to-global", "off"]) == 0
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert not Registry.load(store_root).distill_to_global_enabled(pid)
 
     # The new value is viewable through the same surface that set it.

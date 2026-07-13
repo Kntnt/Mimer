@@ -7,6 +7,7 @@ the next-session announcement queue (ADRs 0013, 0014, 0015, 0017).
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -26,7 +27,6 @@ from mimer.distill import (
 )
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
-from mimer.project import resolve
 from mimer.shortterm import read_short_term
 from mimer.store import ensure_store
 from mimer.tombstones import write_tombstone
@@ -36,12 +36,6 @@ from tests.transcript_fixture import write_transcript
 # Every test here loads the embedding model (directly or via a hook subprocess),
 # so the session fixture prefetches it once before the suite runs (conftest.py).
 pytestmark = pytest.mark.embedding
-
-
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
 
 
 def _all_daily_logs(store_root: Path, pid: str) -> str:
@@ -289,11 +283,11 @@ def test_reworded_tombstoned_fact_is_never_repromoted(store_root: Path) -> None:
 
 
 def test_successful_promotion_evicts_durable_after_verification(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A durable entry is promoted, then evicted only once its Concept is on disk."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember(
         "The team standardised on British English.",
         project_id=pid,
@@ -309,11 +303,14 @@ def test_successful_promotion_evicts_durable_after_verification(
 
 
 def test_failed_promotion_keeps_entry_and_logs(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed promotion leaves the durable entry in place and logs the failure."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("A durable fact to promote.", project_id=pid, root=store_root, durable=True)
 
     def boom(**_kwargs: object) -> None:
@@ -327,12 +324,15 @@ def test_failed_promotion_keeps_entry_and_logs(
 
 
 def test_failed_promotion_logs_identifier_not_fact_content(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed promotion logs a stable identifier for the fact, never the fact's
     content — the log is surfaced by health and must not quote memory (issue #24)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     fact = f"The wombat cutover credential is {secret} for the alpha region."
     remember(fact, project_id=pid, root=store_root, durable=True)
@@ -354,7 +354,10 @@ def test_failed_promotion_logs_identifier_not_fact_content(
 
 
 def test_failed_promotion_keeps_secret_out_of_exception_repr(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When a promotion raises an error whose repr quotes the content being
     processed, the failure log still must not surface a secret from it. The distill
@@ -362,7 +365,7 @@ def test_failed_promotion_keeps_secret_out_of_exception_repr(
     the exception type only — so the secret the repr quoted never reaches the log at
     all, independently of log_failure's shape-based redaction (issue #24)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
     fact = f"The billing credential is {secret}."
     remember(fact, project_id=pid, root=store_root, durable=True)
@@ -381,14 +384,17 @@ def test_failed_promotion_keeps_secret_out_of_exception_repr(
 
 
 def test_failed_promotion_keeps_non_secret_content_out_of_exception_repr(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Content redaction cannot recognise as a secret — personal data, plain prose —
     must not reach the log through an exception repr either. Shape-based redaction
     cannot strip a personnummer, so the promotion path must never log a repr that
     could quote the fact; it logs the exception type instead (issue #24)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     personnummer = "19850101-1234"
     fact = f"The client contact's national id is {personnummer} on file."
     remember(fact, project_id=pid, root=store_root, durable=True)
@@ -472,12 +478,12 @@ def test_secret_straddling_the_title_cut_is_not_leaked(store_root: Path) -> None
 
 
 def test_durable_remembered_secret_stays_redacted_through_distillation(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A secret remembered as durable is redacted at the remember sink and stays
     redacted end to end when it is later distilled into a Concept (issue #23)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     remember(
         f"the deploy key is {secret}",
@@ -497,7 +503,10 @@ def test_durable_remembered_secret_stays_redacted_through_distillation(
 
 
 def test_unclassified_distillation_status_fails_loud_not_stranded(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A terminal status the eviction classifier does not recognise must fail
     loudly rather than fall through to "kept": a new never-promotable status
@@ -505,7 +514,7 @@ def test_unclassified_distillation_status_fails_loud_not_stranded(
     durable entry in short-term forever, re-rejected every session end and never
     cap-evicted — reintroducing exactly the bug issue #27 fixes, silently."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember("A durable fact to promote.", project_id=pid, root=store_root, durable=True)
 
     def unclassified(**_kwargs: object) -> DistillResult:
@@ -518,7 +527,7 @@ def test_unclassified_distillation_status_fails_loud_not_stranded(
 
 
 def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A durable write distillation can never promote — here an imperative — is
     evicted from short-term and aged out to the daily log, not left durable to be
@@ -530,7 +539,7 @@ def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
     never evicts a durable entry either).
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     instruction = "You must rebase your branch before pushing."
     remember(instruction, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
@@ -543,7 +552,9 @@ def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
     assert instruction in _all_daily_logs(store_root, pid)
 
 
-def test_ordinary_remember_is_promoted_at_session_end(store_root: Path, project_dir: Path) -> None:
+def test_ordinary_remember_is_promoted_at_session_end(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A plain ``remember`` — no ``--durable`` flag typed by the user — becomes a
     permanent Concept once the session-boundary distillation runs.
 
@@ -551,7 +562,7 @@ def test_ordinary_remember_is_promoted_at_session_end(store_root: Path, project_
     yet durable knowledge they asked Mimer to remember lands in permanent memory.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "The project's primary datastore is PostgreSQL 16."
     remember(fact, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
@@ -563,7 +574,9 @@ def test_ordinary_remember_is_promoted_at_session_end(store_root: Path, project_
     assert fact not in read_short_term(pid, store_root)
 
 
-def test_session_end_hook_promotes_a_remembered_fact(store_root: Path, project_dir: Path) -> None:
+def test_session_end_hook_promotes_a_remembered_fact(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The fully wired session-end flow: after a plain remember, running the real
     SessionEnd hook leaves a permanent Concept — with no flag typed by the user.
 
@@ -571,7 +584,7 @@ def test_session_end_hook_promotes_a_remembered_fact(store_root: Path, project_d
     deterministic distillation runs, exercising the hook's promotion path.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     fact = "The team ships releases every second Tuesday."
     remember(fact, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
@@ -595,7 +608,7 @@ def test_session_end_hook_promotes_a_remembered_fact(store_root: Path, project_d
 
 
 def test_digest_refreshed_working_state_is_not_promoted(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Transient working state written by the *real* producer — the session
     digest refreshing short-term's auto-maintained sections — is never distilled
@@ -624,7 +637,7 @@ def test_digest_refreshed_working_state_is_not_promoted(
     }
     digest_session(payload, root=store_root, haiku=lambda _: reply, today=date(2026, 7, 12))
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     distill_session(pid, root=store_root)
 
     # The digest's threads reached short-term, but none became a Concept.

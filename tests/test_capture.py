@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,6 @@ from mimer.longterm import (
     record_captured,
 )
 from mimer.paths import LOG_FILENAME
-from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.harness import run_hook
 from tests.secret_samples import SAMPLES, Sample
@@ -43,13 +43,9 @@ def _payload(cwd: Path, transcript: Path) -> dict[str, object]:
     }
 
 
-def _project_id(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
-
-
-def test_same_turn_captured_twice_lands_once(store_root: Path, project_dir: Path) -> None:
+def test_same_turn_captured_twice_lands_once(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A double-fired capture of one turn is idempotent via the durable ledger."""
 
     ensure_store(store_root)
@@ -63,13 +59,13 @@ def test_same_turn_captured_twice_lands_once(store_root: Path, project_dir: Path
 
     assert first.status == "captured"
     assert second.status == "duplicate"
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert log.count("ship the parser") == 1
 
 
 def test_identical_turns_at_different_moments_are_both_captured(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Two turns with identical text but different timestamps are both recorded;
     content-only identity would have discarded the second as a duplicate (#38)."""
@@ -88,12 +84,14 @@ def test_identical_turns_at_different_moments_are_both_captured(
     assert first.status == "captured"
     assert second.status == "captured"
     assert first.turn_id != second.turn_id
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert log.count("- Assistant: Done.") == 2
 
 
-def test_seeded_secret_never_reaches_the_daily_log(store_root: Path, project_dir: Path) -> None:
+def test_seeded_secret_never_reaches_the_daily_log(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A secret in the exchange is redacted before it is stored."""
 
     ensure_store(store_root)
@@ -105,7 +103,7 @@ def test_seeded_secret_never_reaches_the_daily_log(store_root: Path, project_dir
 
     capture_from_payload(_payload(project_dir, transcript), root=store_root)
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert "s3cr3tPassw0rd" not in log
     assert "REDACTED" in log
@@ -113,7 +111,7 @@ def test_seeded_secret_never_reaches_the_daily_log(store_root: Path, project_dir
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=lambda s: s.name)
 def test_broadened_secret_class_never_reaches_the_daily_log(
-    store_root: Path, project_dir: Path, sample: Sample
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path, sample: Sample
 ) -> None:
     """Each broadened secret class is redacted before it lands in the daily log."""
 
@@ -125,7 +123,7 @@ def test_broadened_secret_class_never_reaches_the_daily_log(
 
     capture_from_payload(_payload(project_dir, transcript), root=store_root)
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert sample.sensitive not in log
 
@@ -154,7 +152,9 @@ def test_broadened_secret_classes_never_reach_the_index(
         assert sample.sensitive.encode() not in indexed, sample.name
 
 
-def test_turn_near_midnight_lands_in_its_own_day(store_root: Path, project_dir: Path) -> None:
+def test_turn_near_midnight_lands_in_its_own_day(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Day assignment follows the turn's timestamp, not wall-clock now."""
 
     ensure_store(store_root)
@@ -168,13 +168,15 @@ def test_turn_near_midnight_lands_in_its_own_day(store_root: Path, project_dir: 
     capture_from_payload(_payload(project_dir, late), root=store_root)
     capture_from_payload(_payload(project_dir, early), root=store_root)
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert "before midnight" in daily_log_path(pid, "2026-07-11", store_root).read_text()
     assert "after midnight" in daily_log_path(pid, "2026-07-12", store_root).read_text()
     assert "after midnight" not in daily_log_path(pid, "2026-07-11", store_root).read_text()
 
 
-def test_capture_failure_is_logged_and_loses_nothing(store_root: Path, project_dir: Path) -> None:
+def test_capture_failure_is_logged_and_loses_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A failing capture writes one failure line and keeps prior entries intact."""
 
     ensure_store(store_root)
@@ -190,7 +192,7 @@ def test_capture_failure_is_logged_and_loses_nothing(store_root: Path, project_d
 
     assert result.status == "failed"
     assert (store_root / "mimer.log").read_text().strip() != ""
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert "a good prior entry" in daily_log_path(pid, "2026-07-11", store_root).read_text()
 
 
@@ -218,7 +220,10 @@ def test_corrupt_spool_is_logged_not_silent(
 
 
 def test_index_contention_does_not_fail_a_durable_capture(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Benign index contention after a durable append never flips an already
     recorded capture to "failed": the daily-log entry stands and the index —
@@ -245,7 +250,7 @@ def test_index_contention_does_not_fail_a_durable_capture(
     result = capture_from_payload(_payload(project_dir, transcript), root=store_root)
 
     assert result.status == "captured"
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     assert "a durable answer" in daily_log_path(pid, "2026-07-11", store_root).read_text()
 
     # The contention raises no session-start health warning, but is still logged
@@ -254,7 +259,9 @@ def test_index_contention_does_not_fail_a_durable_capture(
     assert NON_FATAL_PREFIX in (store_root / LOG_FILENAME).read_text(encoding="utf-8")
 
 
-def test_concurrent_captures_lose_nothing(store_root: Path, project_dir: Path) -> None:
+def test_concurrent_captures_lose_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Concurrent captures of distinct turns all land (uses the store I/O layer)."""
 
     ensure_store(store_root)
@@ -276,18 +283,20 @@ def test_concurrent_captures_lose_nothing(store_root: Path, project_dir: Path) -
     for thread in threads:
         thread.join()
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root).read_text()
     for i in range(count):
         assert f"answer number {i}" in log
 
 
-def test_capture_ledger_stays_bounded_over_many_turns(store_root: Path, project_dir: Path) -> None:
+def test_capture_ledger_stays_bounded_over_many_turns(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The capture ledger holds a bounded window, not one id per turn forever —
     yet a recently captured turn still dedups, so idempotency holds (#41)."""
 
     ensure_store(store_root)
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
 
     # Record far more turns than any bounded window could hold.
     total = 4000
@@ -304,7 +313,9 @@ def test_capture_ledger_stays_bounded_over_many_turns(store_root: Path, project_
     assert is_captured(pid, f"turn-{total - 1:08d}", store_root)
 
 
-def test_stop_hook_is_detached_and_eventually_captures(store_root: Path, project_dir: Path) -> None:
+def test_stop_hook_is_detached_and_eventually_captures(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The Stop hook returns promptly and capture completes in the background."""
 
     ensure_store(store_root)
@@ -321,7 +332,7 @@ def test_stop_hook_is_detached_and_eventually_captures(store_root: Path, project
     assert result.returncode == 0, result.stderr
     assert elapsed < 5.0, f"hook blocked for {elapsed:.2f}s — capture was not detached"
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     log = daily_log_path(pid, "2026-07-11", store_root)
     deadline = time.time() + 15
     while time.time() < deadline:

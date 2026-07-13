@@ -12,6 +12,7 @@ so the split-file bug cannot come back.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -20,7 +21,6 @@ import pytest
 from mimer.capture import capture_from_payload
 from mimer.digest import digest_session
 from mimer.longterm import daily_log_path
-from mimer.project import resolve
 from mimer.shortterm import ensure_short_term, short_term_path
 from mimer.store import ensure_store
 from tests.transcript_fixture import write_transcript
@@ -40,14 +40,8 @@ We settled on a single UTC clock for capture and the digest.
 """
 
 
-def _project_id(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
-
-
 def test_capture_and_digest_share_one_utc_day_across_the_boundary(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A turn whose local (offset) date is the day before its UTC date records
     both its extractive capture and its session digest to the single UTC-dated
@@ -77,14 +71,16 @@ def test_capture_and_digest_share_one_utc_day_across_the_boundary(
     digest = digest_session(payload, root=store_root, haiku=lambda _: DIGEST_REPLY)
 
     assert digest.status == "digested"
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     utc_log = daily_log_path(pid, utc_day, store_root).read_text()
     assert "one coherent session on UTC" in utc_log
     assert "## Session digest" in utc_log
     assert not daily_log_path(pid, local_day, store_root).exists()
 
 
-def test_capture_time_label_reads_utc_not_the_offset(store_root: Path, project_dir: Path) -> None:
+def test_capture_time_label_reads_utc_not_the_offset(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """The extractive entry's time label is the turn's UTC wall clock, so it
     agrees with the day the entry is filed under (#37)."""
 
@@ -97,13 +93,14 @@ def test_capture_time_label_reads_utc_not_the_offset(store_root: Path, project_d
 
     capture_from_payload(payload, root=store_root)
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     utc_log = daily_log_path(pid, "2026-07-12", store_root).read_text()
     assert "### 04:30 — turn" in utc_log
 
 
 def test_age_labels_use_the_same_utc_clock(
     store_root: Path,
+    resolve_project: Callable[[Path], str],
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -119,7 +116,7 @@ def test_age_labels_use_the_same_utc_clock(
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     monkeypatch.setattr(clock, "today", lambda: date(2026, 7, 12))
 
-    pid = _project_id(store_root, project_dir)
+    pid = resolve_project(project_dir)
     ensure_short_term(pid, store_root)
     short_term_path(pid, store_root).write_text(
         f"# Short-term memory — {pid}\n\n## Notes\n\n- [2026-07-12] fresh UTC-day note\n",

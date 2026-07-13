@@ -5,6 +5,7 @@ Mimer-spawned sessions and degrading gracefully on an unknown format (ADR 0009).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,6 @@ from mimer.bundle import list_concepts, profile_concepts, render_profile, retrac
 from mimer.distill import distill_session
 from mimer.index import reindex, search
 from mimer.longterm import daily_log_path
-from mimer.project import resolve
 from mimer.shortterm import read_short_term
 from mimer.store import ensure_store
 from tests.transcript_fixture import write_transcript
@@ -26,12 +26,6 @@ pytestmark = pytest.mark.embedding
 MIMER_DIGEST_PROMPT = "You are Mimer's session digester. Summarise the following coding session."
 
 
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
-
-
 def _all_logs(store_root: Path, pid: str) -> str:
     directory = daily_log_path(pid, "2000-01-01", store_root).parent
     if not directory.exists():
@@ -39,10 +33,12 @@ def _all_logs(store_root: Path, pid: str) -> str:
     return "".join(log.read_text() for log in directory.glob("*.md"))
 
 
-def test_import_once_then_rerun_adds_nothing(store_root: Path, project_dir: Path) -> None:
+def test_import_once_then_rerun_adds_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A fixture history imports once; re-running a completed import adds nothing."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "answer one", "2026-06-01T10:00:00Z")])
     write_transcript(source / "b.jsonl", [("q2", "answer two", "2026-06-02T10:00:00Z")])
@@ -56,11 +52,14 @@ def test_import_once_then_rerun_adds_nothing(store_root: Path, project_dir: Path
 
 
 def test_crash_mid_import_resumes(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A crash mid-import resumes rather than restarting."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(
         source / "a.jsonl", [("q1", "first transcript answer", "2026-06-01T10:00:00Z")]
@@ -86,10 +85,12 @@ def test_crash_mid_import_resumes(
     assert "TWOMARKER answer" in logs
 
 
-def test_imported_conversation_is_recalled_and_cited(store_root: Path, project_dir: Path) -> None:
+def test_imported_conversation_is_recalled_and_cited(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A query about an imported pre-install conversation returns a cited result."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(
         source / "a.jsonl",
@@ -105,12 +106,12 @@ def test_imported_conversation_is_recalled_and_cited(store_root: Path, project_d
 
 
 def test_finishing_pass_yields_concepts_profile_and_short_term(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """The finishing distillation yields Concepts, a starter profile and an
     initial short-term working set, redaction- and scope-compliant."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     write_transcript(
@@ -131,14 +132,16 @@ def test_finishing_pass_yields_concepts_profile_and_short_term(
     assert all(secret not in c.body for c in list_concepts(store_root))
 
 
-def test_per_project_import_state_is_independent(store_root: Path, tmp_path: Path) -> None:
+def test_per_project_import_state_is_independent(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A project bootstrapped after another imports its own history."""
 
     ensure_store(store_root)
     dir_a, dir_b = tmp_path / "a", tmp_path / "b"
     dir_a.mkdir()
     dir_b.mkdir()
-    pid_a, pid_b = _project(store_root, dir_a), _project(store_root, dir_b)
+    pid_a, pid_b = resolve_project(dir_a), resolve_project(dir_b)
     write_transcript(dir_a / "h" / "a.jsonl", [("qa", "alpha history", "2026-06-01T10:00:00Z")])
     write_transcript(dir_b / "h" / "b.jsonl", [("qb", "beta history", "2026-06-02T10:00:00Z")])
 
@@ -149,10 +152,12 @@ def test_per_project_import_state_is_independent(store_root: Path, tmp_path: Pat
     assert "beta history" in _all_logs(store_root, pid_b)
 
 
-def test_mimer_spawned_transcripts_are_excluded(store_root: Path, project_dir: Path) -> None:
+def test_mimer_spawned_transcripts_are_excluded(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Mimer-spawned session transcripts are excluded from bootstrap."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(
         source / "spawned.jsonl", [(MIMER_DIGEST_PROMPT, "a digest reply", "2026-06-01T10:00:00Z")]
@@ -165,11 +170,11 @@ def test_mimer_spawned_transcripts_are_excluded(store_root: Path, project_dir: P
 
 
 def test_finishing_distillation_zero_concepts_is_logged(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A finishing pass that yields no concepts is logged, not silent."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q", "some durable content", "2026-06-01T10:00:00Z")])
 
@@ -182,11 +187,13 @@ def test_finishing_distillation_zero_concepts_is_logged(
     assert "distill" in log and "no concept" in log
 
 
-def test_finishing_distillation_is_retryable(store_root: Path, project_dir: Path) -> None:
+def test_finishing_distillation_is_retryable(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A finishing pass that yielded nothing retries on a later run over the
     already-imported record (not blocked by the completed transcript import)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(
         source / "a.jsonl", [("q", "durable content about uv", "2026-06-01T10:00:00Z")]
@@ -202,7 +209,7 @@ def test_finishing_distillation_is_retryable(store_root: Path, project_dir: Path
 
 
 def test_orientation_note_is_not_promoted_at_session_end(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Bootstrap's short-term orientation note is transient orientation, not durable
     knowledge: session-end distillation must not promote it into a Concept (AC2).
@@ -211,7 +218,7 @@ def test_orientation_note_is_not_promoted_at_session_end(
     durable, dropping the flag would turn the note into a standing Concept.
     """
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q", "durable content", "2026-06-01T10:00:00Z")])
 
@@ -258,10 +265,12 @@ def test_haiku_distiller_handles_none_and_missing(monkeypatch: pytest.MonkeyPatc
     assert _haiku_distiller("history") == []
 
 
-def test_unknown_transcript_format_degrades_gracefully(store_root: Path, project_dir: Path) -> None:
+def test_unknown_transcript_format_degrades_gracefully(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """An unrecognised transcript format degrades with a logged, actionable message."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     source.mkdir(parents=True)
     (source / "garbage.jsonl").write_text("this is not a transcript at all\n", encoding="utf-8")
@@ -273,11 +282,13 @@ def test_unknown_transcript_format_degrades_gracefully(store_root: Path, project
     assert "unrecognised" in log or "unrecognized" in log
 
 
-def test_bootstrapped_facts_default_to_project_scope(store_root: Path, project_dir: Path) -> None:
+def test_bootstrapped_facts_default_to_project_scope(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """Every distilled fact but the deliberate profile seed defaults to project
     scope, so a client project's facts stay confined to it (ADR 0013)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q", "client work", "2026-06-01T10:00:00Z")])
 
@@ -298,7 +309,7 @@ def test_bootstrapped_facts_default_to_project_scope(store_root: Path, project_d
 
 
 def test_project_scoped_bootstrap_fact_is_not_recallable_elsewhere(
-    store_root: Path, tmp_path: Path
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
 ) -> None:
     """A client-specific fact bootstrapped in project A is recallable there but
     invisible from another project — the cross-client leak ADR 0013 prevents."""
@@ -307,7 +318,7 @@ def test_project_scoped_bootstrap_fact_is_not_recallable_elsewhere(
     dir_a, dir_b = tmp_path / "a", tmp_path / "b"
     dir_a.mkdir()
     dir_b.mkdir()
-    pid_a, pid_b = _project(store_root, dir_a), _project(store_root, dir_b)
+    pid_a, pid_b = resolve_project(dir_a), resolve_project(dir_b)
     write_transcript(dir_a / "h" / "a.jsonl", [("q", "acme deploy", "2026-06-01T10:00:00Z")])
 
     def distiller(_text: str) -> list[str]:
@@ -325,12 +336,12 @@ def test_project_scoped_bootstrap_fact_is_not_recallable_elsewhere(
 
 
 def test_rerun_with_more_history_does_not_duplicate_pinned_profile(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A second bootstrap that re-derives the same first fact from the whole
     record must not create a duplicate pinned profile Concept."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 
@@ -346,11 +357,13 @@ def test_rerun_with_more_history_does_not_duplicate_pinned_profile(
     assert second.concept_count == 0
 
 
-def test_profile_seed_respects_a_tombstone(store_root: Path, project_dir: Path) -> None:
+def test_profile_seed_respects_a_tombstone(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """A profile seeded then forgotten is not resurrected by a later bootstrap —
     the seed passes through the same tombstone guard every other fact does."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 
@@ -368,13 +381,13 @@ def test_profile_seed_respects_a_tombstone(store_root: Path, project_dir: Path) 
 
 
 def test_instruction_shaped_profile_seed_creates_no_concept(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """An instruction-shaped first fact seeds no pinned Concept — the seed passes
     through the same instruction guard every other fact does, so an imperative is
     rejected rather than becoming a standing Concept (ADR 0014)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 
@@ -390,14 +403,14 @@ def test_instruction_shaped_profile_seed_creates_no_concept(
 
 
 def test_rerun_with_reworded_profile_does_not_duplicate_pinned_profile(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """A second bootstrap that re-derives the same-subject profile fact in
     different words supersedes the seed instead of adding a second pinned
     Concept: a superseded Concept leaves the profile, so exactly one pinned
     Concept is ever injected (ADR 0015)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 
@@ -421,13 +434,13 @@ def test_rerun_with_reworded_profile_does_not_duplicate_pinned_profile(
 
 
 def test_all_facts_rejected_finishing_pass_settles_and_does_not_rerun(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """When a finishing pass distils facts that are all rejected, the pass has
     settled: a later bootstrap over the same history does not re-run it, so the
     state stops churning instead of calling the distiller on every invocation."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     source = project_dir / "history"
     write_transcript(source / "a.jsonl", [("q1", "durable one", "2026-06-01T10:00:00Z")])
 

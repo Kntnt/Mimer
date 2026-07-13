@@ -8,6 +8,7 @@ the daily log.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -16,14 +17,7 @@ import pytest
 from mimer.bundle import list_concepts
 from mimer.curate import remember
 from mimer.longterm import daily_log_path
-from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
-
-
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
 
 
 def _total(store_root: Path, pid: str) -> int:
@@ -31,11 +25,13 @@ def _total(store_root: Path, pid: str) -> int:
     return sum(len(entries) for entries in sections.values())
 
 
-def test_over_cap_evicts_oldest_transient_to_daily_log(store_root: Path, project_dir: Path) -> None:
+def test_over_cap_evicts_oldest_transient_to_daily_log(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """An over-cap write ages out the oldest transient entry verbatim into the
     daily log under the aged-out heading, keeping short-term at the cap."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     for index, day in enumerate(("2026-07-01", "2026-07-02", "2026-07-03")):
         remember(
             f"transient {index}",
@@ -65,12 +61,14 @@ def test_over_cap_evicts_oldest_transient_to_daily_log(store_root: Path, project
     assert "aged out" in result.echo.lower()
 
 
-def test_over_cap_durables_are_promoted_to_permanent(store_root: Path, project_dir: Path) -> None:
+def test_over_cap_durables_are_promoted_to_permanent(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """When only durable entries remain, an over-cap write promotes them into
     permanent Concepts rather than warning and keeping them — the cap is the
     engine that feeds distillation (ADR 0017, issue #28)."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     facts = (
         "the client prefers British English spelling",
         "deployments run on Tuesday afternoons",
@@ -105,14 +103,14 @@ def test_over_cap_durables_are_promoted_to_permanent(store_root: Path, project_d
 
 
 def test_over_cap_write_promotes_durables_before_evicting(
-    store_root: Path, project_dir: Path
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
     """Promote-then-evict: an over-cap write promotes the durable entry first, and
     the room that frees keeps the transient entries in place — none is aged out
     (issue #28). Evict-first would have dropped the oldest transient and left the
     durable stranded with a warning."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     remember(
         "the client's database is PostgreSQL 16",
         project_id=pid,
@@ -151,11 +149,13 @@ def test_over_cap_write_promotes_durables_before_evicting(
     assert result.warning is None
 
 
-def test_eviction_loses_nothing(store_root: Path, project_dir: Path) -> None:
+def test_eviction_loses_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
     """An evicted entry is present in the daily log and absent from short-term —
     never lost from both."""
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     for index, day in enumerate(("2026-07-01", "2026-07-02")):
         remember(
             f"fact {index}",
@@ -177,7 +177,10 @@ def test_eviction_loses_nothing(store_root: Path, project_dir: Path) -> None:
 
 
 def test_failed_durable_promotion_keeps_the_entry_and_warns(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed promotion is surfaced, never swallowed (ADR 0017): the durable
     entry stays over-cap in short-term and the write warns, rather than the entry
@@ -190,7 +193,7 @@ def test_failed_durable_promotion_keeps_the_entry_and_warns(
 
     monkeypatch.setattr(distill_module, "distill_fact", boom)
 
-    pid = _project(store_root, project_dir)
+    pid = resolve_project(project_dir)
     for index in range(3):
         remember(
             f"durable topic number {index}",

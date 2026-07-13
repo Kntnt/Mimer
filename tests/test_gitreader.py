@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -17,19 +18,12 @@ from mimer.gitreader import fold_git_log
 from mimer.index import reindex, search
 from mimer.ledger import Ledger
 from mimer.longterm import append_entry, daily_log_path, long_term_dir
-from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.gitutil import init_repo
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
 # so the session fixture prefetches it once before the suite runs (conftest.py).
 pytestmark = pytest.mark.embedding
-
-
-def _project(store_root: Path, cwd: Path) -> str:
-    resolution = resolve(cwd, root=store_root)
-    assert resolution.project_id is not None
-    return resolution.project_id
 
 
 def _commit(repo: Path, message: str) -> str:
@@ -64,7 +58,9 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
-def test_commit_message_recalled_and_cited(store_root: Path, tmp_path: Path) -> None:
+def test_commit_message_recalled_and_cited(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A recent commit's message is recalled, cited with its git:<sha>."""
 
     ensure_store(store_root)
@@ -72,7 +68,7 @@ def test_commit_message_recalled_and_cited(store_root: Path, tmp_path: Path) -> 
         tmp_path / "repo", remotes={"origin": "git@github.com:x/repo.git"}, commit=True
     )
     sha = _commit(repo, "Add the streaming parser for OKF knowledge bundles")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     fold_git_log(pid, repo, root=store_root)
     reindex(store_root)
@@ -83,13 +79,15 @@ def test_commit_message_recalled_and_cited(store_root: Path, tmp_path: Path) -> 
     assert any("streaming parser" in c.text for c in hits)
 
 
-def test_excerpt_survives_a_history_rewrite(store_root: Path, tmp_path: Path) -> None:
+def test_excerpt_survives_a_history_rewrite(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """After a history rewrite the excerpt still checks out though the SHA is gone."""
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     sha = _commit(repo, "Ship the distinctive-phrase feature xyzzy")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
     fold_git_log(pid, repo, root=store_root)
 
     # Rewrite history and prune so the folded SHA truly no longer resolves.
@@ -110,7 +108,7 @@ def test_excerpt_survives_a_history_rewrite(store_root: Path, tmp_path: Path) ->
 
 
 def test_first_fold_backfills_full_history_beyond_100_commits(
-    store_root: Path, tmp_path: Path
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
 ) -> None:
     """First adoption of a repo with >100 prior commits folds the whole history.
 
@@ -125,7 +123,7 @@ def test_first_fold_backfills_full_history_beyond_100_commits(
     # A repository whose history is well past the old 100-commit window.
     for n in range(150):
         _commit(repo, f"Commit number {n:03d} marker-{n:03d}")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     folded = fold_git_log(pid, repo, root=store_root)
 
@@ -143,7 +141,10 @@ def test_first_fold_backfills_full_history_beyond_100_commits(
 
 
 def test_first_fold_is_bounded_and_logged(
-    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A first backfill honours a documented bound and logs the truncation.
 
@@ -158,7 +159,7 @@ def test_first_fold_is_bounded_and_logged(
     repo = init_repo(tmp_path / "repo", commit=True)
     for n in range(20):
         _commit(repo, f"Commit number {n:03d} boundmarker-{n:03d}")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     folded = fold_git_log(pid, repo, root=store_root)
 
@@ -172,7 +173,9 @@ def test_first_fold_is_bounded_and_logged(
     assert not any(f"boundmarker-{n:03d}" in stored for n in range(15))
 
 
-def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path) -> None:
+def test_later_fold_folds_only_the_new_commits(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A steady-state fold folds exactly the commits added since the previous fold.
 
     Exercises the incremental path directly: accumulate the not-yet-folded commits,
@@ -183,7 +186,7 @@ def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path)
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     _commit(repo, "Groundwork before the first fold")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
     fold_git_log(pid, repo, root=store_root)
 
     # Three commits added above the already-folded boundary.
@@ -197,7 +200,9 @@ def test_later_fold_folds_only_the_new_commits(store_root: Path, tmp_path: Path)
     assert all(f"git:{sha}" in stored for sha in shas)
 
 
-def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_path: Path) -> None:
+def test_merge_folds_commits_ordered_behind_a_folded_one(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A merge that orders new commits behind an already-folded one still folds them.
 
     A feature branch cut from an early commit, merged after main advanced, brings in
@@ -220,7 +225,7 @@ def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_p
     _git(repo, "branch", "feature")
     _commit_dated(repo, "B mainline beta-marker", "2026-01-05")
     _commit_dated(repo, "C mainline gamma-marker", "2026-01-06")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
     fold_git_log(pid, repo, root=store_root)
 
     # The feature branch's older-dated commits are merged back into main.
@@ -250,7 +255,10 @@ def test_merge_folds_commits_ordered_behind_a_folded_one(store_root: Path, tmp_p
 
 
 def test_merge_folds_commits_lagging_more_than_a_page_behind(
-    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A merge whose commits lag mainline by more than a page is still fully folded.
 
@@ -279,7 +287,7 @@ def test_merge_folds_commits_lagging_more_than_a_page_behind(
     _git(repo, "branch", "feature")
     for n in range(5):
         _commit_dated(repo, f"Mainline {n} main-marker-{n}", f"2026-02-0{n + 1}")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
     fold_git_log(pid, repo, root=store_root)
 
     # The feature branch's older-dated commits are merged back, landing below the
@@ -309,13 +317,15 @@ def test_merge_folds_commits_lagging_more_than_a_page_behind(
     assert "omega-marker" in stored
 
 
-def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> None:
+def test_rerunning_the_reader_adds_nothing(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """Re-running the git reader is idempotent."""
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     _commit(repo, "A single meaningful commit")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     first = fold_git_log(pid, repo, root=store_root)
     second = fold_git_log(pid, repo, root=store_root)
@@ -325,7 +335,10 @@ def test_rerunning_the_reader_adds_nothing(store_root: Path, tmp_path: Path) -> 
 
 
 def test_crash_mid_fold_folds_each_commit_once(
-    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A fold interrupted partway records each sha as it goes, so the next fold
     re-duplicates no already-folded commit — the crash window is one commit, not
@@ -334,7 +347,7 @@ def test_crash_mid_fold_folds_each_commit_once(
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     shas = [_commit(repo, f"Commit number {i}") for i in range(6)]
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     # Abort the fold after a few commits, standing in for a killed SessionEnd hook.
     real_append = append_entry
@@ -361,7 +374,10 @@ def test_crash_mid_fold_folds_each_commit_once(
 
 
 def test_git_ledger_stays_bounded(
-    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Folding more commits than the dedup window keeps only the most recent shas,
     so the git ledger stays bounded instead of growing one sha per commit (#41)."""
@@ -370,7 +386,7 @@ def test_git_ledger_stays_bounded(
     repo = init_repo(tmp_path / "repo", commit=True)
     for i in range(30):
         _commit(repo, f"Commit number {i}")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     # Shrink the window so a single fold overflows it deterministically.
     def small_ledger(path: Path) -> Ledger:
@@ -384,7 +400,10 @@ def test_git_ledger_stays_bounded(
 
 
 def test_still_reachable_commit_not_refolded_after_rotation(
-    store_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A linear history longer than the dedup window is still folded idempotently.
 
@@ -397,7 +416,7 @@ def test_still_reachable_commit_not_refolded_after_rotation(
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     # A dedup window (8) far narrower than the history it must keep idempotent.
     def small_ledger(path: Path) -> Ledger:
@@ -421,14 +440,16 @@ def test_still_reachable_commit_not_refolded_after_rotation(
     assert fold_git_log(pid, repo, root=store_root) == 0
 
 
-def test_secret_in_commit_message_never_stored(store_root: Path, tmp_path: Path) -> None:
+def test_secret_in_commit_message_never_stored(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A secret in a commit message is redacted before it reaches the store."""
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
     secret = "AKIA" + "IOSFODNN7" + "EXAMPLE"
     _commit(repo, f"Wire up deploy with key {secret}")
-    pid = _project(store_root, repo)
+    pid = resolve_project(repo)
 
     fold_git_log(pid, repo, root=store_root)
 
@@ -439,13 +460,15 @@ def test_secret_in_commit_message_never_stored(store_root: Path, tmp_path: Path)
     assert "REDACTED" in stored
 
 
-def test_non_git_project_is_skipped_cleanly(store_root: Path, tmp_path: Path) -> None:
+def test_non_git_project_is_skipped_cleanly(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
     """A non-git project folds nothing and does not error."""
 
     ensure_store(store_root)
     plain = tmp_path / "plain"
     plain.mkdir()
-    pid = _project(store_root, plain)
+    pid = resolve_project(plain)
 
     assert fold_git_log(pid, plain, root=store_root) == 0
 
