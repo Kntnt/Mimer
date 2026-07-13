@@ -29,3 +29,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: version-consistency
+        name: version consistency
+        entry: uv run python scripts/check_version.py
+        language: system
+        pass_filenames: false
+        always_run: true

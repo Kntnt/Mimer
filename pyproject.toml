@@ -60,7 +60,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 
 # Third-party libraries without type stubs.
 [[tool.mypy.overrides]]

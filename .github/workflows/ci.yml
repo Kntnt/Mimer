@@ -35,6 +35,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - name: Version consistency
+        run: uv run python scripts/check_version.py
+
       - name: Cache the embedding model
         uses: actions/cache@v4
         with:
