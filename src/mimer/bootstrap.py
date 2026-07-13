@@ -163,23 +163,28 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> tuple[i
     # through distill_fact makes a re-run over more history deduplicate rather
     # than duplicate the profile, and honour a tombstone if it was forgotten.
     # Every other fact defaults to project scope, keeping a client project's
-    # facts confined to it (ADR 0013).
+    # facts confined to it (ADR 0013). The whole loop holds the project lock so
+    # each distill_fact's announcement enqueue serialises with a live session's
+    # clear_distilled — a detached, resumable bootstrap can overlap one, and a
+    # lock-free enqueue here would let that clear clobber a freshly queued title
+    # (the lost-update #40 clear_distilled exists to prevent, ADR 0011).
     concept_count = 0
-    for index, fact in enumerate(facts):
-        if index == 0:
-            result = distill_fact(
-                text=fact,
-                project_id=project_id,
-                scope="global",
-                concept_type="Preference",
-                pinned=True,
-                confirmed=True,
-                root=root,
-            )
-        else:
-            result = distill_fact(text=fact, project_id=project_id, root=root)
-        if result.status in ("created", "superseded"):
-            concept_count += 1
+    with project_lock(project_id, root=root):
+        for index, fact in enumerate(facts):
+            if index == 0:
+                result = distill_fact(
+                    text=fact,
+                    project_id=project_id,
+                    scope="global",
+                    concept_type="Preference",
+                    pinned=True,
+                    confirmed=True,
+                    root=root,
+                )
+            else:
+                result = distill_fact(text=fact, project_id=project_id, root=root)
+            if result.status in ("created", "superseded"):
+                concept_count += 1
 
     # Seed an initial short-term working set so the next session starts oriented.
     # This is transient orientation, not durable knowledge, so it is not

@@ -7,6 +7,8 @@ the next-session announcement queue (ADRs 0013, 0014, 0015, 0017).
 from __future__ import annotations
 
 import os
+import threading
+import time
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -31,6 +33,7 @@ from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
 from mimer.shortterm import read_short_term
 from mimer.store import ensure_store
+from mimer.storeio import project_lock, write_atomic
 from mimer.tombstones import write_tombstone
 from tests.harness import run_hook
 from tests.transcript_fixture import write_transcript
@@ -737,3 +740,55 @@ def test_announcement_enqueued_between_peek_and_clear_survives(store_root: Path)
     clear_distilled("p", emitted, root=store_root)
 
     assert peek_distilled("p", root=store_root) == ["second concept"]
+
+
+def test_clear_distilled_serialises_against_a_concurrent_lock_holding_enqueue(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """clear_distilled's project lock is load-bearing, not decoration: a concurrent
+    enqueuer that holds the same lock — as the durable and bootstrap distill paths
+    do — cannot have its freshly queued title clobbered by clear's read-modify-write.
+    A real second thread holds the lock and enqueues inside clear's read-to-write
+    window; with the lock, clear serialises behind it and the title survives. Remove
+    the ``with project_lock`` from clear_distilled and this fails — the lost update
+    #40 exists to prevent (ADR 0011)."""
+
+    ensure_store(store_root)
+    # Seed one title to emit-and-remove and one to keep, so clear takes the rewrite
+    # path (not unlink), the path where a stale write overwrites a concurrent append.
+    distill_module._record_distilled("p", "emitted title", store_root)
+    distill_module._record_distilled("p", "kept title", store_root)
+
+    clear_read_done = threading.Event()
+
+    # Wrap write_atomic so clear signals it has read the queue and is about to
+    # rewrite, then dwells long enough for a lock-holding enqueue to land first —
+    # widening the read-to-write window the project lock has to close.
+    real_write_atomic = write_atomic
+
+    def slow_write_atomic(path: Path, content: str) -> None:
+        clear_read_done.set()
+        time.sleep(0.3)
+        real_write_atomic(path, content)
+
+    monkeypatch.setattr(distill_module, "write_atomic", slow_write_atomic)
+
+    # A concurrent writer enqueues a fresh title while holding the project lock,
+    # exactly as a live session's distiller does while a detached bootstrap clears
+    # (or vice versa). Under the lock it must serialise behind clear; without it it
+    # slips into the widened window and clear's rewrite drops it.
+    def concurrent_enqueue() -> None:
+        clear_read_done.wait(timeout=5)
+        with project_lock("p", root=store_root):
+            distill_module._record_distilled("p", "concurrent title", store_root)
+
+    writer = threading.Thread(target=concurrent_enqueue)
+    writer.start()
+    clear_distilled("p", ["emitted title"], root=store_root)
+    writer.join(timeout=5)
+
+    # The concurrently enqueued title survives, and only the emitted one is gone.
+    remaining = peek_distilled("p", root=store_root)
+    assert "concurrent title" in remaining
+    assert "kept title" in remaining
+    assert "emitted title" not in remaining
