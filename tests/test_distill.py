@@ -869,3 +869,40 @@ def test_clear_distilled_serialises_against_a_concurrent_lock_holding_enqueue(
     assert "concurrent title" in remaining
     assert "kept title" in remaining
     assert "emitted title" not in remaining
+
+
+def test_announcements_round_trips_through_the_context_manager(store_root: Path) -> None:
+    """A newly distilled Concept surfaces through the announcements context manager,
+    and a clean exit clears exactly what it yielded — the next session's queue is
+    empty (at-least-once, ADR 0014, #40)."""
+
+    ensure_store(store_root)
+    distill_fact(
+        text="Mimer stores knowledge in OKF.", project_id="p", scope="global", root=store_root
+    )
+
+    with distill_module.announcements("p", root=store_root) as announced:
+        assert any("OKF" in item for item in announced)
+
+    # A clean exit clears the queue: the next session finds nothing to re-announce.
+    with distill_module.announcements("p", root=store_root) as announced_again:
+        assert announced_again == []
+
+
+def test_exception_in_announcements_block_leaves_queue_intact(store_root: Path) -> None:
+    """An exception raised inside the announcements block leaves the queue intact, so
+    the notice is re-announced next session rather than lost — at-least-once, never
+    zero (ADR 0014, #40)."""
+
+    ensure_store(store_root)
+    distill_fact(
+        text="Mimer stores knowledge in OKF.", project_id="p", scope="global", root=store_root
+    )
+
+    with pytest.raises(RuntimeError), distill_module.announcements("p", root=store_root) as announced:
+        assert any("OKF" in item for item in announced)
+        raise RuntimeError("snapshot build failed")
+
+    # The failed session cleared nothing — the announcement survives to re-announce.
+    with distill_module.announcements("p", root=store_root) as survived:
+        assert any("OKF" in item for item in survived)
