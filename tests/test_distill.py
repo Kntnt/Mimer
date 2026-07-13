@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import mimer.distill as distill_module
-from mimer.bundle import concept_path, list_concepts, read_concept
+from mimer.bundle import INDEX_FILENAME, concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.digest import digest_session
 from mimer.distill import (
@@ -147,6 +147,83 @@ def test_failure_mid_supersession_leaves_no_two_active(
     monkeypatch.undo()
     active = [c for c in list_concepts(store_root) if c.status == "active"]
     assert len(active) <= 1
+
+
+def test_supersede_with_live_index_drops_predecessor_from_recall(store_root: Path) -> None:
+    """With the search index present, superseding a changed fact evicts the
+    predecessor's chunk so recall never returns the retired answer (issue #30).
+
+    ``test_changed_fact_supersedes_and_recall_returns_one_current`` rebuilds the
+    index with an explicit ``reindex()`` before searching, which masks this: it
+    exercises the incremental write path ``create_concept`` takes when an index
+    already exists, then searches with no intervening reindex — the exact sequence
+    recall follows, since the index exists in production (built at install) and
+    recall calls ``search()`` directly.
+    """
+
+    ensure_store(store_root)
+    # Build the index up front so create_concept keeps it in step incrementally,
+    # exactly as it does in a live store where the index is built at install.
+    reindex(store_root)
+    distill_fact(text="The deploy day is Friday.", project_id="p", scope="global", root=store_root)
+    result = distill_fact(
+        text="The deploy day is now Monday.", project_id="p", scope="global", root=store_root
+    )
+
+    assert result.status == "superseded"
+    # No reindex here: recall reads the index as create_concept left it.
+    hits = search("which day do we deploy", root=store_root, project_id="p")
+    assert any("Monday" in c.text for c in hits)
+    assert all("Friday" not in c.text for c in hits)
+
+
+def test_failure_writing_successor_restores_the_predecessor(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault writing the successor — after the predecessor is already retired —
+    never leaves the subject retired with no replacement (issue #30).
+
+    The predecessor is retired first, so this is the dangerous direction a crash
+    could strand: zero active Concepts and a ``superseded_by`` pointing at a
+    successor that was never written. The transition restores the predecessor to
+    active instead, so the subject always keeps an answer.
+    """
+
+    ensure_store(store_root)
+    first = distill_fact(
+        text="The deploy day is Friday.", project_id="p", scope="global", root=store_root
+    )
+    assert first.slug is not None
+    predecessor_path = concept_path(first.slug, store_root)
+
+    # Fault the atomic rename onto any Concept file other than the predecessor —
+    # i.e. the successor's write — so the predecessor's retirement lands and its
+    # restoration write is left free to succeed.
+    real_replace = os.replace
+
+    def crash_on_successor(src: str | Path, dst: str | Path) -> None:
+        dst_path = Path(dst)
+        if dst_path != predecessor_path and dst_path.name != INDEX_FILENAME:
+            raise OSError("simulated crash writing the successor")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash_on_successor)
+
+    with pytest.raises(OSError):
+        distill_fact(
+            text="The deploy day is now Monday.",
+            project_id="p",
+            scope="global",
+            root=store_root,
+        )
+
+    monkeypatch.undo()
+    # The predecessor is active again with no dangling supersede pointer, and no
+    # successor was stranded — the subject is never retired with no replacement.
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert len(active) == 1
+    assert "Friday" in active[0].body
+    assert active[0].superseded_by is None
 
 
 def test_rerunning_mints_no_duplicates(store_root: Path) -> None:

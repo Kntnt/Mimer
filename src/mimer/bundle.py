@@ -188,17 +188,33 @@ def create_concept(
         # single atomic os.replace, so ordering the retirement first means the only
         # state a lockless reader can observe between the two is "predecessor
         # superseded, successor not yet present" — never both active — and a crash
-        # between them leaves at most the predecessor retired, never a live pair
-        # (issue #30).
+        # between them leaves at most the predecessor retired, never a live pair.
+        # Should the successor write fail after the predecessor is retired, restore
+        # the predecessor to active, so the subject is never left with no answer and
+        # a superseded_by pointing at a Concept that was never written (issue #30).
         if supersede is not None:
             _supersede_in_place(supersede.slug, concept.id, root)
+            try:
+                _write(concept, root)
+            except Exception:
+                _write(supersede, root)
+                raise
+        else:
+            _write(concept, root)
 
-        _write(concept, root)
         if pinned:
             _enforce_pin_cap(root)
         regenerate_index(root)
 
-    _index_concept_if_present(concept, root)
+    # Bring the search index into step with the files. A plain create only adds the
+    # successor's chunk; superseding a predecessor must also evict its now-stale
+    # chunk, or recall — which reads the index directly, with no query-time status
+    # filter — still surfaces the retired answer. A reindex rebuilds from the files
+    # and excludes the superseded predecessor, as mark_superseded's path did (#30).
+    if supersede is not None:
+        _reindex_if_present(root)
+    else:
+        _index_concept_if_present(concept, root)
     return read_concept(concept.slug, root)
 
 
