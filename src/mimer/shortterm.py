@@ -272,6 +272,11 @@ def migrate_short_term_files(root: Path | None = None) -> int:
             if _has_structural_durable_marker(content):
                 continue
 
+            # The one deliberate exception to #51's single locked writer: the
+            # migration writes here directly because it must parse legacy content
+            # with _parse_legacy, whereas rewrite_sections is hardwired to the
+            # current structural parser and would misread — and so re-corrupt —
+            # the trailing-marker durable lines this sweep exists to repair (#40).
             write_atomic(path, migrate_short_term_content(project_id, content))
             migrated += 1
 
