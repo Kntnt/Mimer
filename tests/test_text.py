@@ -42,6 +42,21 @@ def test_stopwords_is_the_union_of_the_two_legacy_sets() -> None:
         assert word in mtext.STOPWORDS, word
 
 
+def test_fts_query_drops_a_word_that_became_glue_for_recall() -> None:
+    """The union pulled seven words (including "new") into recall's stopword set,
+    so a keyword query whose only content word is one of them now yields no FTS
+    match — recall leans on adjacent terms and semantic search rather than on the
+    newly-glue word. This pins that behavioural consequence of the merge directly,
+    without the embedding model the recall suite needs (issue #19)."""
+
+    # A lone "new" was a content word for recall before the merge; now it is glue,
+    # so the query has nothing left to keyword-search on.
+    assert index._fts_query("new") is None
+
+    # Beside a real content word the query still matches — on that word alone.
+    assert index._fts_query("new releases") == '"releases"'
+
+
 def test_truncate_returns_short_text_unchanged() -> None:
     assert mtext.truncate("a short line", 80) == "a short line"
 
