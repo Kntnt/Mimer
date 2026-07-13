@@ -217,8 +217,18 @@ def _retract_matching_concepts(text: str, *, project_id: str, root: Path) -> lis
     for concept in list_concepts(root):
         identity = concept_identity_text(concept.title, concept.body)
         if concept.origin == project_id and is_same_fact(identity, text):
-            retract_concept(concept.slug, root)
-            retracted.append(concept.title)
+            # Tolerate the file vanishing between the lockless list above and
+            # retract_concept's own lock: a concurrent writer (another curate call,
+            # a supersede, or a detached distiller — ADR 0011) may unlink the
+            # Concept in that window, so read_concept raises. That vanished slug is a
+            # retraction already completed, the same transient-removal window
+            # list_concepts skips (issue #17); skip it rather than crash the cascade,
+            # since forget is a trust operation that must not abort on a benign race.
+            try:
+                retract_concept(concept.slug, root)
+                retracted.append(concept.title)
+            except OSError:
+                continue
     return retracted
 
 

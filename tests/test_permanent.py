@@ -383,6 +383,48 @@ def test_injection_paths_suppress_a_tombstoned_concept_still_on_disk(store_root:
     assert render_profile(store_root) == ""
 
 
+def test_recall_suppresses_the_same_tombstoned_concept_as_the_injection_paths(
+    store_root: Path,
+) -> None:
+    """Recall consults a tombstone on the very identity string the manifest and the
+    profile do, so all three hide the same forgotten Concept consistently (issue #32,
+    AC3).
+
+    The Concept is indexed and left on disk; only the tombstone — matched against
+    ``concept_identity_text``, exactly as recall, the manifest and the profile all
+    do — hides it. Asserting the same identity against the same tombstone across
+    ``search`` and both injection paths pins the three-way consistency directly, so a
+    later drift between the recall suppression path and the injection paths fails here
+    rather than passing on unrelated recall/tombstone tests.
+    """
+
+    ensure_store(store_root)
+    create_concept(
+        title="Rate limit",
+        body="The API rate limit is one hundred requests per minute.",
+        concept_type="Reference",
+        origin="proj-a",
+        scope="global",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    reindex(store_root)
+    assert search("what is the API rate limit per minute?", root=store_root, project_id="proj-a")
+
+    write_tombstone(
+        "The API rate limit is one hundred requests per minute.",
+        project_id="proj-a",
+        root=store_root,
+    )
+
+    assert (
+        search("what is the API rate limit per minute?", root=store_root, project_id="proj-a") == []
+    )
+    assert concept_headlines(store_root, project_id="proj-a") == []
+    assert render_profile(store_root) == ""
+
+
 def test_crash_between_temp_write_and_rename_preserves_previous(
     store_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

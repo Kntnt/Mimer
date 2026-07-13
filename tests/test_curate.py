@@ -275,6 +275,71 @@ def test_redact_also_retracts_a_matching_permanent_concept(
     assert list_concepts(store_root) == []
 
 
+def test_forget_leaves_a_near_miss_concept_that_only_differs_by_a_value(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """Forget's retraction now drives irreversible Concept deletion, so the shared
+    matcher's value-substitution guard is what bounds the blast radius: a Concept
+    that differs from the forgotten fact by a single value (``port 8080`` versus
+    ``port 9090``) is a contradiction, not a restatement, so the deletion never
+    reaches it (issue #32, ADR 0012).
+
+    This is the near-miss the escalation from reversible suppression to irreversible
+    deletion makes load-bearing — a false positive here would permanently destroy a
+    distinct Concept — so it is pinned explicitly rather than left to the matcher's
+    own unit tests.
+    """
+
+    pid = resolve_project(project_dir)
+    create_concept(
+        title="Port",
+        body="The service listens on port 8080.",
+        concept_type="Reference",
+        origin=pid,
+        scope="project",
+        root=store_root,
+    )
+
+    forget("The service listens on port 9090.", project_id=pid, root=store_root, today=TODAY)
+
+    assert [c.body for c in list_concepts(store_root)] == ["The service listens on port 8080."]
+
+
+def test_forget_survives_a_concept_that_vanishes_mid_cascade(
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retraction loop lists Concepts without a lock, so a concurrent writer
+    (another curate call, a supersede, a detached distiller — ADR 0011) can unlink a
+    matching Concept between the list and retract_concept's own lock, making
+    read_concept raise. Forget is a trust operation, so it must skip the vanished
+    slug and finish the cascade — still writing the tombstone — rather than crash
+    (issue #32, the invariant issue #17 established for list_concepts).
+    """
+
+    pid = resolve_project(project_dir)
+    create_concept(
+        title="Deploy day",
+        body="Deployments run on Tuesdays.",
+        concept_type="Reference",
+        origin=pid,
+        scope="project",
+        root=store_root,
+    )
+
+    # Simulate the file vanishing in the window between the list and the lock.
+    def vanished(_slug: str, _root: Path) -> None:
+        raise FileNotFoundError(_slug)
+
+    monkeypatch.setattr("mimer.curate.retract_concept", vanished)
+
+    forget("Deployments run on Tuesdays.", project_id=pid, root=store_root, today=TODAY)
+
+    assert is_tombstoned("Deployments run on Tuesdays.", project_id=pid, root=store_root)
+
+
 def test_remembered_secret_is_stored_redacted(
     store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
