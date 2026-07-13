@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from mimer.distill import DISTILLED_QUEUE_FILENAME
+from mimer.distill import ANNOUNCEMENT_QUEUE_FILENAME
 from mimer.gitreader import GIT_LEDGER_FILENAME
 from mimer.longterm import (
     append_entry,
@@ -419,10 +419,10 @@ def test_merge_concatenates_colliding_distilled_queues(tmp_path: Path) -> None:
 
     # Seed the top-level distilled queue on both sides so it collides at the
     # project-dir root rather than under long-term/.
-    orphan_queue = project_dir("orphan", tmp_path) / DISTILLED_QUEUE_FILENAME
+    orphan_queue = project_dir("orphan", tmp_path) / ANNOUNCEMENT_QUEUE_FILENAME
     orphan_queue.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     orphan_queue.write_text("orphan title\n", encoding="utf-8")
-    canonical_queue = project_dir("canonical", tmp_path) / DISTILLED_QUEUE_FILENAME
+    canonical_queue = project_dir("canonical", tmp_path) / ANNOUNCEMENT_QUEUE_FILENAME
     canonical_queue.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     canonical_queue.write_text("canonical title\n", encoding="utf-8")
 

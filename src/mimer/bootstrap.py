@@ -165,9 +165,9 @@ def _finish(project_id: str, distiller: Distiller | None, root: Path) -> tuple[i
     # Every other fact defaults to project scope, keeping a client project's
     # facts confined to it (ADR 0013). The whole loop holds the project lock so
     # each distill_fact's announcement enqueue serialises with a live session's
-    # clear_distilled — a detached, resumable bootstrap can overlap one, and a
+    # announcement clear — a detached, resumable bootstrap can overlap one, and a
     # lock-free enqueue here would let that clear clobber a freshly queued title
-    # (the lost-update #40 clear_distilled exists to prevent, ADR 0011).
+    # (the lost-update #40 the announcement clear exists to prevent, ADR 0011).
     concept_count = 0
     with project_lock(project_id, root=root):
         for index, fact in enumerate(facts):

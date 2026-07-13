@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -31,7 +33,10 @@ from mimer.storeio import append_text, project_lock, write_atomic
 from mimer.text import STOPWORDS, truncate
 from mimer.tombstones import is_tombstoned
 
-DISTILLED_QUEUE_FILENAME = ".distilled-queue"
+# The on-disk announcement-queue file. The name predates the "Announcement
+# queue" term (CONTEXT.md) and stays as-is: renaming it would need a store
+# migration for zero gain.
+ANNOUNCEMENT_QUEUE_FILENAME = ".distilled-queue"
 
 # A Concept title is a fixed-width label; a longer fact is hard-cut to this.
 _TITLE_CHARS = 80
@@ -171,7 +176,7 @@ def distill_fact(
     )
 
     status = "superseded" if predecessor is not None else "created"
-    _record_distilled(project_id, concept.title, root)
+    _queue_announcement(project_id, concept.title, root)
     return DistillResult(status, concept.slug)
 
 
@@ -338,21 +343,41 @@ def _title(text: str) -> str:
 
 
 def _queue_path(project_id: str, root: Path | None) -> Path:
-    return project_dir(project_id, root or store_root()) / DISTILLED_QUEUE_FILENAME
+    return project_dir(project_id, root or store_root()) / ANNOUNCEMENT_QUEUE_FILENAME
 
 
-def _record_distilled(project_id: str, title: str, root: Path | None) -> None:
+def _queue_announcement(project_id: str, title: str, root: Path | None) -> None:
     append_text(_queue_path(project_id, root), title)
 
 
-def peek_distilled(project_id: str, root: Path | None = None) -> list[str]:
+@contextmanager
+def announcements(project_id: str, root: Path | None = None) -> Iterator[list[str]]:
+    """Yield the titles queued for this session's announcement line; on clean
+    exit clear exactly those titles — at-least-once (ADR 0014, #40). An
+    exception inside the block leaves the queue intact, so the notice is
+    re-announced next session rather than lost.
+
+    Locking is unchanged (ADR 0011): the peek is an unlocked read and the clear a
+    locked read-modify-write that re-reads the live queue and removes only the
+    yielded titles, so a title enqueued concurrently between peek and clear
+    survives. The project lock is never held across the yield.
+    """
+
+    queued = _peek_announcements(project_id, root)
+    yield queued
+    _clear_announcements(project_id, queued, root)
+
+
+def _peek_announcements(project_id: str, root: Path | None = None) -> list[str]:
     """Return the titles queued for the next session's announcement, without
     clearing the queue.
 
     Reading and clearing are split so the announcement can be cleared only after
-    the snapshot that carries it has been emitted: if a step between peek and
-    clear fails, the queue survives and the notice is re-announced next session
-    rather than lost — at-least-once, never zero (ADR 0014, #40).
+    the snapshot that carries it has been emitted: an exception between the peek
+    and the clear leaves the queue, and the notice is re-announced next session
+    rather than lost — at-least-once, never zero (ADR 0014, #40). The
+    :func:`announcements` context manager sequences the two; keeping the locked
+    clear its own function lets it be exercised in isolation.
     """
 
     path = _queue_path(project_id, root)
@@ -361,15 +386,16 @@ def peek_distilled(project_id: str, root: Path | None = None) -> list[str]:
     return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def clear_distilled(project_id: str, emitted: list[str], root: Path | None = None) -> None:
+def _clear_announcements(project_id: str, emitted: list[str], root: Path | None = None) -> None:
     """Remove exactly the announcements already emitted, leaving any enqueued
     concurrently between the peek and this call for a later session.
 
-    This replaces the whole-queue unlink that dropped an announcement a capture or
-    digest writer appended between :func:`peek_distilled` and here — the silent
-    loss #40 exists to prevent. Each emitted title removes its first matching
-    queued line and no more, so a title enqueued concurrently is absent from
-    ``emitted`` and survives to the next session (at-least-once, ADR 0014).
+    This drops only the emitted titles, never the whole queue — the silent loss
+    #40 exists to prevent, from an announcement a capture or digest writer
+    appends between :func:`_peek_announcements` and here. Each emitted title
+    removes its first matching queued line and no more, so a title enqueued
+    concurrently is absent from ``emitted`` and survives to the next session
+    (at-least-once, ADR 0014).
 
     The re-read and rewrite run under the project lock so the read-modify-write
     cannot clobber a concurrent distiller's append: that writer enqueues while
@@ -395,19 +421,6 @@ def clear_distilled(project_id: str, emitted: list[str], root: Path | None = Non
             write_atomic(path, "\n".join(remaining) + "\n")
         else:
             path.unlink(missing_ok=True)
-
-
-def drain_distilled(project_id: str, root: Path | None = None) -> list[str]:
-    """Return and clear the titles queued for the next session's announcement.
-
-    A convenience over :func:`peek_distilled` then :func:`clear_distilled` for a
-    caller that has no failure-sensitive step between reading and clearing; it
-    clears only the titles it read, so a concurrent enqueue is preserved (#40).
-    """
-
-    items = peek_distilled(project_id, root)
-    clear_distilled(project_id, items, root)
-    return items
 
 
 def distill_session(project_id: str, root: Path | None = None, *, scope: str = "project") -> None:

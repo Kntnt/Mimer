@@ -22,12 +22,9 @@ from mimer.digest import digest_session
 from mimer.distill import (
     DistillResult,
     _is_instruction_shaped,
-    clear_distilled,
     distill_durable_entries,
     distill_fact,
     distill_session,
-    drain_distilled,
-    peek_distilled,
 )
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
@@ -782,21 +779,6 @@ def test_project_scoped_fact_cannot_supersede_a_global_concept(store_root: Path)
     assert any("Fridays" in c.text for c in hits)
 
 
-def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None:
-    """A newly distilled Concept is queued for the next session's announcement."""
-
-    ensure_store(store_root)
-    distill_fact(
-        text="Mimer stores knowledge in OKF.", project_id="p", scope="global", root=store_root
-    )
-
-    announced = drain_distilled("p", root=store_root)
-
-    assert any("OKF" in item for item in announced)
-    # Draining is one-shot: the next read is empty.
-    assert drain_distilled("p", root=store_root) == []
-
-
 def test_announcement_enqueued_between_peek_and_clear_survives(store_root: Path) -> None:
     """An announcement a capture/digest writer enqueues between session start's peek
     and its clear must survive to a later session: clearing removes only the
@@ -805,36 +787,36 @@ def test_announcement_enqueued_between_peek_and_clear_survives(store_root: Path)
 
     ensure_store(store_root)
     # Session start peeks the queued announcement it is about to emit.
-    distill_module._record_distilled("p", "first concept", store_root)
-    emitted = peek_distilled("p", root=store_root)
+    distill_module._queue_announcement("p", "first concept", store_root)
+    emitted = distill_module._peek_announcements("p", root=store_root)
     assert emitted == ["first concept"]
 
     # A concurrent capture/digest writer enqueues a second announcement after the
     # peek but before session start clears.
-    distill_module._record_distilled("p", "second concept", store_root)
+    distill_module._queue_announcement("p", "second concept", store_root)
 
     # Clearing must drop only what was emitted, leaving the concurrent announcement.
-    clear_distilled("p", emitted, root=store_root)
+    distill_module._clear_announcements("p", emitted, root=store_root)
 
-    assert peek_distilled("p", root=store_root) == ["second concept"]
+    assert distill_module._peek_announcements("p", root=store_root) == ["second concept"]
 
 
-def test_clear_distilled_serialises_against_a_concurrent_lock_holding_enqueue(
+def test_clear_announcements_serialises_against_a_concurrent_lock_holding_enqueue(
     store_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """clear_distilled's project lock is load-bearing, not decoration: a concurrent
-    enqueuer that holds the same lock — as the durable and bootstrap distill paths
-    do — cannot have its freshly queued title clobbered by clear's read-modify-write.
-    A real second thread holds the lock and enqueues inside clear's read-to-write
-    window; with the lock, clear serialises behind it and the title survives. Remove
-    the ``with project_lock`` from clear_distilled and this fails — the lost update
-    #40 exists to prevent (ADR 0011)."""
+    """_clear_announcements's project lock is load-bearing, not decoration: a
+    concurrent enqueuer that holds the same lock — as the durable and bootstrap
+    distill paths do — cannot have its freshly queued title clobbered by clear's
+    read-modify-write. A real second thread holds the lock and enqueues inside
+    clear's read-to-write window; with the lock, clear serialises behind it and the
+    title survives. Remove the ``with project_lock`` from _clear_announcements and
+    this fails — the lost update #40 exists to prevent (ADR 0011)."""
 
     ensure_store(store_root)
     # Seed one title to emit-and-remove and one to keep, so clear takes the rewrite
     # path (not unlink), the path where a stale write overwrites a concurrent append.
-    distill_module._record_distilled("p", "emitted title", store_root)
-    distill_module._record_distilled("p", "kept title", store_root)
+    distill_module._queue_announcement("p", "emitted title", store_root)
+    distill_module._queue_announcement("p", "kept title", store_root)
 
     clear_read_done = threading.Event()
 
@@ -857,15 +839,15 @@ def test_clear_distilled_serialises_against_a_concurrent_lock_holding_enqueue(
     def concurrent_enqueue() -> None:
         clear_read_done.wait(timeout=5)
         with project_lock("p", root=store_root):
-            distill_module._record_distilled("p", "concurrent title", store_root)
+            distill_module._queue_announcement("p", "concurrent title", store_root)
 
     writer = threading.Thread(target=concurrent_enqueue)
     writer.start()
-    clear_distilled("p", ["emitted title"], root=store_root)
+    distill_module._clear_announcements("p", ["emitted title"], root=store_root)
     writer.join(timeout=5)
 
     # The concurrently enqueued title survives, and only the emitted one is gone.
-    remaining = peek_distilled("p", root=store_root)
+    remaining = distill_module._peek_announcements("p", root=store_root)
     assert "concurrent title" in remaining
     assert "kept title" in remaining
     assert "emitted title" not in remaining
@@ -899,7 +881,10 @@ def test_exception_in_announcements_block_leaves_queue_intact(store_root: Path) 
         text="Mimer stores knowledge in OKF.", project_id="p", scope="global", root=store_root
     )
 
-    with pytest.raises(RuntimeError), distill_module.announcements("p", root=store_root) as announced:
+    with (
+        pytest.raises(RuntimeError),
+        distill_module.announcements("p", root=store_root) as announced,
+    ):
         assert any("OKF" in item for item in announced)
         raise RuntimeError("snapshot build failed")
 

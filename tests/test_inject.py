@@ -141,14 +141,14 @@ def test_distillation_announcement_survives_a_later_failure(
     at-least-once, never zero (ADR 0014, #40)."""
 
     import mimer.hooks.session_start as session_start
-    from mimer.distill import _queue_path, _record_distilled
+    from mimer.distill import _queue_announcement, _queue_path
 
     ensure_store(store_root)
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     resolution = resolve(project_dir, root=store_root)
     assert resolution.project_id is not None
     pid = resolution.project_id
-    _record_distilled(pid, "A distilled concept", store_root)
+    _queue_announcement(pid, "A distilled concept", store_root)
 
     # Force a failure strictly after the queue would be drained: snapshot rendering
     # raises, standing in for any post-drain step that can fail.
