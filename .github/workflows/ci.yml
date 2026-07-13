@@ -4,6 +4,14 @@ on:
   push:
   pull_request:
 
+# uv-managed CPython (python-build-standalone) is built with loadable SQLite
+# extensions enabled, which sqlite-vec requires. Some runners' preinstalled
+# interpreter — notably macOS — is not, which fails every index-backed test with
+# "sqlite3.Connection has no attribute enable_load_extension". Force uv to use
+# its own managed interpreter on every platform so the extension check passes.
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
