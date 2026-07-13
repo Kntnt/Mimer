@@ -20,10 +20,16 @@ from datetime import date
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.registry import project_dir
-from mimer.storeio import write_atomic
+from mimer.registry import PROJECTS_DIRNAME, project_dir
+from mimer.storeio import project_lock, write_atomic
 
 SHORT_TERM_FILENAME = "short-term.md"
+
+# A store-level sentinel recording that every project's short-term file has been
+# rewritten from the pre-#40 trailing durable-marker format into the current
+# structural-slot format. Its presence gates the one-time migration below, which
+# must never re-run over already-migrated content (see migrate_short_term_files).
+SHORT_TERM_FORMAT_MARKER = ".short-term-format-v2"
 
 # Section headings, in the order they appear in the file.
 AUTO_REFRESHED_SECTIONS = ("Active threads", "Pending decisions")
@@ -45,6 +51,13 @@ _DURABLE_MARKER = "[durable]"
 # A date-stamped bullet entry, ``- [YYYY-MM-DD] text``, optionally carrying the
 # durable marker flush against the date bracket: ``- [YYYY-MM-DD][durable] text``.
 _ENTRY_RE = re.compile(r"^-\s*\[(\d{4}-\d{2}-\d{2})\](\[durable\])?\s*(.*)$")
+
+# The pre-#40 on-disk format, where the durable marker was a trailing free-text
+# suffix (``- [YYYY-MM-DD] text [durable]``). Read only by the one-time migration,
+# which alone knows a legacy file's trailing ``[durable]`` was always a durable
+# flag — a fact the current parser cannot recover, since a legacy durable line and
+# a new-format transient whose text legitimately ends in ``[durable]`` collide.
+_LEGACY_ENTRY_RE = re.compile(r"^-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$")
 
 
 @dataclass(frozen=True)
@@ -110,6 +123,105 @@ def _render_entry(entry: Entry) -> str:
 
     marker = _DURABLE_MARKER if entry.durable else ""
     return f"- [{entry.date}]{marker} {entry.text}"
+
+
+def _parse_legacy(content: str) -> dict[str, list[Entry]]:
+    """Parse short-term content written in the pre-#40 trailing-marker format.
+
+    In that format the durable flag rode as a trailing ``[durable]`` suffix on the
+    free text, so a line ending in the marker was durable and the marker was
+    stripped from the text. This is faithful to how the pre-#40 parser read the
+    file: because it sniffed the same trailing substring, a transient entry whose
+    text genuinely ended in ``[durable]`` could never have been persisted — it was
+    always read (and re-rendered) as durable — so treating every trailing
+    ``[durable]`` here as durable recovers exactly what that version stored.
+    """
+
+    sections: dict[str, list[Entry]] = {name: [] for name in SECTIONS}
+
+    # Walk the file as parse_short_term does, but split the durable flag off the
+    # trailing suffix rather than the structural slot.
+    current: str | None = None
+    for line in content.splitlines():
+        if line.startswith("## "):
+            heading = line[3:].strip()
+            current = heading if heading in sections else None
+        elif current is not None:
+            match = _LEGACY_ENTRY_RE.match(line.strip())
+            if match:
+                date_stamp, text = match.group(1), match.group(2).strip()
+                durable = text.endswith(_DURABLE_MARKER)
+                if durable:
+                    text = text[: -len(_DURABLE_MARKER)].strip()
+                sections[current].append(Entry(date_stamp, text, durable))
+
+    return sections
+
+
+def migrate_short_term_content(project_id: str, content: str) -> str:
+    """Rewrite one pre-#40 short-term document into the current structural format."""
+
+    return render_short_term(project_id, _parse_legacy(content))
+
+
+def migrate_short_term_files(root: Path | None = None) -> int:
+    """One-time upgrade of every project's short-term file to the structural
+    durable-marker format (#40); returns the number of files rewritten.
+
+    The pre-#40 code wrote the durable marker as a trailing free-text suffix
+    (``- [date] text [durable]``); the current format carries it in a structural
+    slot flush against the date bracket (``- [date][durable] text``). Read with
+    the current parser a legacy durable line yields ``durable=False`` and leaks the
+    literal ``[durable]`` into its text — a silent loss the parser cannot later
+    undo, since the next render persists the corruption in the new format. This
+    sweep rewrites each legacy file once, before any new-format read misreads it.
+
+    It is the counterpart of :func:`mimer.store.heal_permissions`: run at
+    install/upgrade, gated by a store-level marker so the rewrite happens exactly
+    once. The gate is load-bearing — a legacy durable line and a new-format
+    transient whose text legitimately ends in ``[durable]`` are byte-identical, so
+    re-running the trailing-marker rewrite over already-migrated content would
+    corrupt the very entries the structural format protects. A no-op when the store
+    does not yet exist or has already been migrated.
+
+    Args:
+        root: Store root to migrate; defaults to :func:`mimer.paths.store_root`.
+
+    Returns:
+        The number of project short-term files rewritten.
+    """
+
+    root = root or store_root()
+
+    # Gate the rewrite on the store-level marker: legacy and new content are
+    # byte-ambiguous, so this must run exactly once, on the first upgrade.
+    marker = root / SHORT_TERM_FORMAT_MARKER
+    if not root.exists() or marker.exists():
+        return 0
+
+    # Rewrite every project's legacy file — found on disk, so an orphan not in the
+    # registry is migrated too — each under its own lock, so a live writer (the
+    # memory skill or the digest) cannot lose an update (ADR 0011).
+    migrated = 0
+    for path in sorted((root / PROJECTS_DIRNAME).glob(f"*/{SHORT_TERM_FILENAME}")):
+        project_id = path.parent.name
+        with project_lock(project_id, root=root):
+            content = path.read_text(encoding="utf-8")
+
+            # Skip a file already in the new format: the marker is written only
+            # after this loop, so a crash mid-sweep would otherwise let a retry
+            # re-parse an already-rewritten durable line — ``][durable]`` — with the
+            # legacy parser and corrupt it. Its presence is the unambiguous tell.
+            if f"]{_DURABLE_MARKER}" in content:
+                continue
+
+            write_atomic(path, migrate_short_term_content(project_id, content))
+            migrated += 1
+
+    # Record that the structural format is established, so the ambiguous rewrite
+    # never runs again over content the new writers have since produced.
+    write_atomic(marker, "")
+    return migrated
 
 
 def merge_documents(target_content: str, source_content: str, target_id: str) -> str:

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from mimer.capture import capture_from_payload
+from mimer.failure_log import NON_FATAL_PREFIX, fresh_failures
 from mimer.index import index_db_path, reindex
 from mimer.longterm import (
     CAPTURE_LEDGER_FILENAME,
@@ -20,6 +21,7 @@ from mimer.longterm import (
     long_term_dir,
     record_captured,
 )
+from mimer.paths import LOG_FILENAME
 from mimer.project import resolve
 from mimer.store import ensure_store
 from tests.harness import run_hook
@@ -223,7 +225,8 @@ def test_index_contention_does_not_fail_a_durable_capture(
     derived and rebuildable (ADR 0011) — is simply retried on the next write.
 
     A concurrent writer hitting the index's busy timeout is contention, not a
-    capture failure, so it must not spend a spurious health-log line either (#40)."""
+    capture failure, so it must not raise a spurious session-start health warning
+    either — yet it stays observable in the log itself (#40)."""
 
     import sqlite3
 
@@ -244,6 +247,11 @@ def test_index_contention_does_not_fail_a_durable_capture(
     assert result.status == "captured"
     pid = _project_id(store_root, project_dir)
     assert "a durable answer" in daily_log_path(pid, "2026-07-11", store_root).read_text()
+
+    # The contention raises no session-start health warning, but is still logged
+    # non-fatally so it stays observable via `mimer-manage health`.
+    assert fresh_failures(store_root) == []
+    assert NON_FATAL_PREFIX in (store_root / LOG_FILENAME).read_text(encoding="utf-8")
 
 
 def test_concurrent_captures_lose_nothing(store_root: Path, project_dir: Path) -> None:

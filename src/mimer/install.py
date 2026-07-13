@@ -19,6 +19,7 @@ import sqlite_vec
 from mimer.embedding import MODEL_NAME, embed
 from mimer.index import reindex
 from mimer.paths import store_root
+from mimer.shortterm import migrate_short_term_files
 from mimer.store import ensure_store, heal_permissions
 from mimer.storeio import write_atomic
 
@@ -79,6 +80,11 @@ def run_install(root: Path | None = None) -> InstallReport:
     # Re-pin an older store's whole tree owner-only: install is also the upgrade
     # path, and subdirectories from a pre-fix version are never healed otherwise.
     heal_permissions(root)
+
+    # Rewrite any pre-#40 short-term files to the structural durable-marker format
+    # before a new-format read misreads a legacy durable line — the sibling
+    # upgrade-time migration to the permission heal above, gated so it runs once.
+    migrate_short_term_files(root)
 
     # Fail early when the interpreter cannot load SQLite extensions — the
     # sqlite-vec index cannot work without them.

@@ -107,15 +107,17 @@ def _index_or_log(project_id: str, day: str, root: Path) -> None:
     derived and rebuildable (ADR 0011), so index trouble — a concurrent writer
     hitting the busy timeout, most typically — is benign contention, not a
     capture failure. Flipping an already-recorded capture to "failed" over it
-    would both mislead the caller and spend a spurious health-log line, so any
-    failure here is logged as non-fatal and swallowed rather than raised into
-    capture's broad handler (#40).
+    would mislead the caller, and raising a health warning over it would be the
+    spurious-failure symptom of #40. So any failure here is swallowed rather than
+    raised into capture's broad handler, and logged non-fatally: it stays visible
+    to ``mimer-manage health`` for observability but does not trip the session-start
+    health notice (see :func:`mimer.failure_log.fresh_failures`).
     """
 
     try:
         index_if_present(project_id, day, root)
     except Exception as exc:  # noqa: BLE001 - index upkeep is best-effort, not the capture
-        log_failure(f"capture: index update failed (non-fatal): {type(exc).__name__}", root=root)
+        log_failure(f"capture: index update failed: {type(exc).__name__}", root=root, fatal=False)
 
 
 def _render_entry(exchange: Exchange) -> str:

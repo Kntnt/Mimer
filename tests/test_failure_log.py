@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mimer.failure_log import fresh_failures, log_failure
+from mimer.failure_log import NON_FATAL_PREFIX, fresh_failures, log_failure
 from mimer.paths import LOG_FILENAME
 from mimer.store import ensure_store
 
@@ -70,3 +70,24 @@ def test_naive_timestamp_line_does_not_suppress_injection(store_root: Path) -> N
     surfaced = fresh_failures(store_root)
 
     assert any("boom" in message for message in surfaced)
+
+
+def test_non_fatal_note_is_logged_but_excluded_from_the_health_notice(store_root: Path) -> None:
+    """A non-fatal note (benign index contention) lands in the log for observability
+    but is skipped by fresh_failures, so it never raises the spurious session-start
+    health warning a real failure would (#40)."""
+
+    ensure_store(store_root)
+    log_failure("capture: index update failed: OperationalError", root=store_root, fatal=False)
+    log_failure("distill: promotion failed", root=store_root)
+
+    surfaced = fresh_failures(store_root)
+
+    # Only the real failure drives the health notice; the non-fatal note does not.
+    assert any("promotion failed" in message for message in surfaced)
+    assert all("index update failed" not in message for message in surfaced)
+
+    # Yet the non-fatal note is still on disk, tagged, for `mimer-manage health`.
+    contents = (store_root / LOG_FILENAME).read_text(encoding="utf-8")
+    assert NON_FATAL_PREFIX in contents
+    assert "index update failed" in contents
