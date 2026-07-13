@@ -9,10 +9,15 @@ claims are constrained like any other behaviour.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from mimer import bundle, manage
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -260,6 +265,61 @@ def test_adr_0020_states_both_halves_and_the_spool_exemption() -> None:
     assert "seam" in lowered
     assert "sink" in lowered
     assert "spool" in lowered
+
+
+# The presentation surfaces that show Concepts — every one must reach the bundle
+# only through the Visible seam, never the raw enumeration (issue #54).
+PRESENTATION_SURFACES: list[Callable[..., Any]] = [
+    bundle.profile_concepts,
+    bundle.concept_headlines,
+    bundle.render_profile,
+    manage.profile,
+    manage.recent_concepts,
+]
+
+
+def test_raw_enumeration_docstring_names_it_mechanical_and_points_at_the_seam() -> None:
+    """``list_concepts``' docstring must state it is the mechanical read — no
+    status, scope or tombstone filter — and point presentation surfaces at the
+    ``visible_concepts`` seam, so a reader is not tempted to enumerate Concepts for
+    display through the raw read (issue #54)."""
+
+    doc = inspect.getdoc(bundle.list_concepts) or ""
+    assert "mechanical" in doc.lower()
+    assert "visible_concepts" in doc
+
+
+def test_no_presentation_surface_calls_the_raw_enumeration() -> None:
+    """Every surface that shows Concepts reaches the bundle only through the
+    ``visible_concepts`` seam; none calls the raw ``list_concepts`` directly, so
+    status, scope and tombstone filtering can never be reintroduced by hand and
+    drift between surfaces (issue #54). ``visible_concepts`` is the one sanctioned
+    caller of the raw read for presentation."""
+
+    offenders = [
+        fn.__qualname__ for fn in PRESENTATION_SURFACES if "list_concepts" in inspect.getsource(fn)
+    ]
+    assert offenders == [], f"presentation surface(s) bypass the Visible seam: {offenders}"
+
+
+def test_context_carries_the_visible_glossary_entry() -> None:
+    """CONTEXT.md carries the Visible entry under Mechanics, the canonical term for
+    the presentation predicate every surface uses (issue #54)."""
+
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert "**Visible** (of a Concept):" in text
+    assert "The presentation predicate" in text
+
+
+def test_vision_stage5c_gate_names_the_injected_profile() -> None:
+    """The Stage 5c gate sentence now reads 'profile enumeration matches the injected
+    profile exactly' — the seam makes the enumerated and injected profiles one set,
+    so the gate asserts that equality rather than the looser 'pinned set' (issue
+    #54)."""
+
+    text = VISION.read_text(encoding="utf-8")
+    assert "profile enumeration matches the injected profile exactly" in text
+    assert "profile enumeration matches the pinned set exactly" not in text
 
 
 def test_storeio_write_discipline_map_names_the_announcement_queue_canonically() -> None:

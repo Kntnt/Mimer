@@ -19,6 +19,7 @@ from mimer.manage import _print_concepts, main, profile, recent_concepts, store_
 from mimer.paths import LOG_FILENAME
 from mimer.registry import Registry
 from mimer.store import ensure_store
+from mimer.tombstones import write_tombstone
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
 # so the session fixture prefetches it once before the suite runs (conftest.py).
@@ -113,6 +114,72 @@ def test_recent_concepts_lists_newest_first_and_empty_before_any(store_root: Pat
 
     recent = recent_concepts(store_root)
     assert [c.title for c in recent] == ["Newer", "Older"]
+
+
+def test_profile_enumeration_hides_a_tombstoned_pinned_concept(store_root: Path) -> None:
+    """Deliberate behaviour change (issue #54): profile enumeration now filters
+    tombstoned Concepts, so a forgotten pinned fact disappears from "what do you
+    know about me?" — closing the divergence where the injected profile already
+    hid it but the enumerated profile did not. Enumeration routes through the
+    Visible seam, so the two sets agree by construction."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="Concise answers",
+        body="The user prefers concise answers.",
+        concept_type="Preference",
+        origin="p",
+        scope="global",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    create_concept(
+        title="Verbose logs",
+        body="Enable verbose debug logging in staging.",
+        concept_type="Preference",
+        origin="p",
+        scope="global",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    write_tombstone("Enable verbose debug logging in staging.", project_id="p", root=store_root)
+
+    titles = [concept.title for concept in profile(store_root)]
+
+    assert titles == ["Concise answers"]
+
+
+def test_recent_concepts_hides_a_tombstoned_concept(store_root: Path) -> None:
+    """Deliberate behaviour change (issue #54): the recent-Concepts listing now
+    filters tombstoned Concepts, so a forgotten fact disappears from "what did you
+    learn recently?" — the same seam that hides it from injection and recall."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="Kept fact",
+        body="Deployments run on Tuesday afternoons.",
+        concept_type="Fact",
+        origin="p",
+        scope="global",
+        root=store_root,
+    )
+    create_concept(
+        title="Forgotten fact",
+        body="The API rate limit is one hundred requests per minute.",
+        concept_type="Fact",
+        origin="p",
+        scope="global",
+        root=store_root,
+    )
+    write_tombstone(
+        "The API rate limit is one hundred requests per minute.", project_id="p", root=store_root
+    )
+
+    titles = [concept.title for concept in recent_concepts(store_root)]
+
+    assert titles == ["Kept fact"]
 
 
 def test_store_health_reports_counts_sizes_and_failures(store_root: Path) -> None:

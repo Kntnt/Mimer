@@ -24,10 +24,12 @@ from mimer.bundle import (
     index_md_path,
     list_concepts,
     mark_superseded,
+    profile_concepts,
     read_concept,
     rename_concept,
     render_profile,
     retract_concept,
+    visible_concepts,
 )
 from mimer.index import reindex, search
 from mimer.manage import store_health
@@ -423,6 +425,141 @@ def test_recall_suppresses_the_same_tombstoned_concept_as_the_injection_paths(
     )
     assert concept_headlines(store_root, project_id="proj-a") == []
     assert render_profile(store_root) == ""
+
+
+def test_visible_concepts_hides_superseded_out_of_scope_and_tombstoned(store_root: Path) -> None:
+    """The Visible seam shows only active, in-scope, un-tombstoned Concepts — the
+    one presentation read every surface that shows Concepts filters through, so
+    status, scope and tombstones can never be applied inconsistently (issue #54)."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="Trunk based",
+        body="Prefer trunk-based development over long-lived branches.",
+        concept_type="Preference",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+    create_concept(
+        title="Admin route",
+        body="The alpha client uses the internal admin route.",
+        concept_type="Decision",
+        origin="proj-a",
+        scope="project",
+        root=store_root,
+    )
+    old = create_concept(
+        title="Friday deploys",
+        body="Deploys run on Friday afternoons.",
+        concept_type="Fact",
+        origin="proj-b",
+        scope="global",
+        root=store_root,
+    )
+    create_concept(
+        title="Tuesday deploys",
+        body="Deploys run on Tuesday afternoons.",
+        concept_type="Fact",
+        origin="proj-b",
+        scope="global",
+        supersede=old,
+        root=store_root,
+    )
+    create_concept(
+        title="Rate limit",
+        body="The API rate limit is one hundred requests per minute.",
+        concept_type="Reference",
+        origin="proj-b",
+        scope="global",
+        root=store_root,
+    )
+    write_tombstone(
+        "The API rate limit is one hundred requests per minute.",
+        project_id="proj-b",
+        root=store_root,
+    )
+
+    titles = {concept.title for concept in visible_concepts(store_root, project_id="proj-b")}
+
+    assert "Trunk based" in titles  # global is visible cross-project
+    assert "Tuesday deploys" in titles  # the current answer shows
+    assert "Admin route" not in titles  # project-scoped to another origin
+    assert "Friday deploys" not in titles  # superseded
+    assert "Rate limit" not in titles  # tombstoned
+
+
+def test_visible_concepts_with_no_project_applies_no_scope_filter(store_root: Path) -> None:
+    """``project_id=None`` is the store-wide inspection case: it applies no scope
+    filter, so a project-scoped Concept is enumerable. This is deliberately looser
+    than recall's chunk rule, where a ``None`` home shows only global Concepts
+    (issue #54)."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="Global fact",
+        body="A globally visible fact.",
+        concept_type="Fact",
+        origin="proj-a",
+        scope="global",
+        root=store_root,
+    )
+    create_concept(
+        title="Scoped fact",
+        body="A fact scoped to project A.",
+        concept_type="Fact",
+        origin="proj-a",
+        scope="project",
+        root=store_root,
+    )
+
+    titles = {concept.title for concept in visible_concepts(store_root)}
+
+    assert titles == {"Global fact", "Scoped fact"}
+
+
+def test_profile_concepts_is_the_tombstone_filtered_pinned_subset_of_the_seam(
+    store_root: Path,
+) -> None:
+    """``profile_concepts`` is the pinned subset of :func:`visible_concepts`, so it
+    gains the seam's tombstone filter. The injected profile and the enumerated
+    profile now draw the same set by construction, closing the divergence where a
+    forgotten pinned fact could still be enumerated (issue #54)."""
+
+    ensure_store(store_root)
+    create_concept(
+        title="Concise answers",
+        body="The user prefers concise answers.",
+        concept_type="Preference",
+        origin="p",
+        scope="global",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    create_concept(
+        title="Verbose logs",
+        body="Enable verbose debug logging in staging.",
+        concept_type="Preference",
+        origin="p",
+        scope="global",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    create_concept(
+        title="Packaging tool",
+        body="The project uses uv for packaging.",
+        concept_type="Fact",
+        origin="p",
+        scope="global",
+        root=store_root,
+    )
+    write_tombstone("Enable verbose debug logging in staging.", project_id="p", root=store_root)
+
+    titles = [concept.title for concept in profile_concepts(store_root)]
+
+    assert titles == ["Concise answers"]
 
 
 def test_crash_between_temp_write_and_rename_preserves_previous(

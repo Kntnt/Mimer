@@ -17,10 +17,11 @@ import pytest
 
 from mimer.bundle import concept_headlines, create_concept, list_concepts, render_profile
 from mimer.curate import forget, main, redact, remember
+from mimer.manage import profile
 from mimer.registry import Registry
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
-from mimer.tombstones import is_tombstoned, load_tombstones
+from mimer.tombstones import is_tombstoned, load_tombstones, write_tombstone
 
 TODAY = date(2026, 7, 11)
 
@@ -249,6 +250,59 @@ def test_forget_retracts_a_matching_permanent_concept_across_short_term_and_inje
     assert concept_headlines(store_root, project_id=pid) == []
     assert render_profile(store_root) == ""
     assert is_tombstoned("Deployments run on Tuesdays.", project_id=pid, root=store_root)
+
+
+def test_forget_keeps_the_management_surface_consistent_with_injection(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """Once a pinned fact is forgotten, the enumerated profile ("what do you know
+    about me?") shows exactly what the injected profile shows and the manifest
+    headlines lack it — issue #32's three-way consistency extended to the management
+    surface (issue #54). Before this ticket the management surface could still show a
+    pinned fact the injection already hid.
+
+    The tombstone is written with the Concept left on disk, so the assertion isolates
+    the management surface's own tombstone-awareness rather than the retraction
+    sweep's file removal — the isolation
+    ``test_injection_paths_suppress_a_tombstoned_concept_still_on_disk`` uses.
+    """
+
+    pid = resolve_project(project_dir)
+    create_concept(
+        title="Concise answers",
+        body="The user prefers concise answers.",
+        concept_type="Preference",
+        origin=pid,
+        scope="project",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    create_concept(
+        title="Verbose logs",
+        body="Enable verbose debug logging in staging.",
+        concept_type="Preference",
+        origin=pid,
+        scope="project",
+        pinned=True,
+        confirmed=True,
+        root=store_root,
+    )
+    write_tombstone("Enable verbose debug logging in staging.", project_id=pid, root=store_root)
+
+    enumerated = [concept.title for concept in profile(store_root)]
+    injected = render_profile(store_root)
+    headlines = concept_headlines(store_root, project_id=pid)
+
+    # The enumerated profile equals the injected profile: the forgotten fact is in
+    # neither, and every enumerated Concept is rendered in the injected profile.
+    assert enumerated == ["Concise answers"]
+    assert all(f"### {title}" in injected for title in enumerated)
+    assert "Verbose logs" not in injected
+
+    # The manifest headlines lack the forgotten fact.
+    assert any("Concise answers" in headline for headline in headlines)
+    assert not any("Verbose logs" in headline for headline in headlines)
 
 
 def test_forget_retracts_a_reworded_concept_even_with_no_short_term_entry(
