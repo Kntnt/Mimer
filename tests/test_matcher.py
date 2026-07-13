@@ -226,14 +226,23 @@ def test_short_token_carries_subject_identity() -> None:
 def test_non_ascii_fact_matches_a_rewording_in_subject_mode() -> None:
     """A reworded non-ASCII (Swedish) fact is the same subject (issue #52).
 
-    The shared Unicode-aware tokenizer keeps non-ASCII letters, so a non-English
-    fact is matched on its real content words rather than on the ASCII fragments a
-    ``[a-z0-9]+`` scan would leave behind.
+    The two facts share their whole subject — an offering of ``öl`` (beer) and
+    ``ål`` (eel) — reworded around it (a different venue and verb). Both shared
+    words are non-ASCII and no pure-ASCII content word is shared, so the match
+    rides entirely on the accented tokens. That is what makes this assertion
+    load-bearing for the Unicode-aware ``[^\\W_]+`` tokenizer: it keeps ``öl`` and
+    ``ål`` whole, finding the two shared subject words the absolute floor requires.
+    A regression to an ASCII-only ``[a-z0-9]+`` scan shreds each word down to a
+    bare ``l``, collapsing the two shared subject words into a single shared token
+    — one below the floor of two — so the facts would no longer match and this test
+    would turn red. A pair sharing a multi-character accented word (its fragments
+    survive as shared tokens) or any pure-ASCII content word would not isolate the
+    tokenizer: the ASCII scan would match it too and the test would guard nothing.
     """
 
     assert is_same_subject(
-        "Prototypen använde en Redis-cache.",
-        "Vi använde Redis för prototypens cache",
+        "Krogen serverar öl, ål.",
+        "Värdshuset bjuder öl, ål.",
     )
 
 
