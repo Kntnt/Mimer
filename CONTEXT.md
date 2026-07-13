@@ -124,6 +124,10 @@ _Avoid_: heuristics, policy.
 The durable record of a forgotten fact's identity, consulted by distillation (never re-promote) and recall (never surface).
 _Avoid_: blocklist entry, deletion marker.
 
+**Announcement queue**:
+The per-project queue of newly distilled Concept titles awaiting the next snapshot's announcement line. Appends are lockless; clearing is at-least-once — only the titles a snapshot actually carried, only after it was emitted.
+_Avoid_: notification list, pending titles, distilled queue.
+
 **Bootstrap**:
 The per-project, opt-in, resumable import of pre-existing session and git history into memory, finishing with a distillation pass that populates permanent memory.
 _Avoid_: seed, backfill, migration.
