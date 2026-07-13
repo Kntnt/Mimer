@@ -42,6 +42,10 @@ _RULES: list[tuple[re.Pattern[str], _Replacement]] = [
     # GitHub fine-grained PATs: the `github_pat_` prefix the `gh[pousr]_` rule
     # cannot reach, since its third character `i` is outside that class.
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"), REDACTED),
+    # GitLab tokens by their routable prefix: personal-access (`glpat-`), deploy
+    # (`gldt-`) and runner (`glrt-`). The body carries `_` and `-`, so the token
+    # runs to the first character outside the class rather than to a word boundary.
+    (re.compile(r"\bgl(?:pat|dt|rt)-[A-Za-z0-9_-]{20,}"), REDACTED),
     # Google API keys.
     (re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), REDACTED),
     # Google OAuth access tokens.
@@ -52,7 +56,13 @@ _RULES: list[tuple[re.Pattern[str], _Replacement]] = [
     # Stripe secret/restricted keys and webhook signing secrets (the publishable
     # `pk_` form is public).
     (re.compile(r"\b(?:[sr]k_(?:live|test)_|whsec_)[0-9A-Za-z]{16,}\b"), REDACTED),
-    # OpenAI-style secret keys.
+    # OpenAI project-scoped keys (`sk-proj-`, `sk-svcacct-`, `sk-admin-`): the
+    # dashboard default since 2024, which the bare `sk-` rule below cannot reach —
+    # the `-` after `proj`/`svcacct`/`admin` falls outside its character class, so
+    # it stops at the prefix (4-7 chars, below the 20 minimum). The body carries
+    # `_` and `-`, so it runs to the first character outside the class.
+    (re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}"), REDACTED),
+    # OpenAI-style secret keys (the classic bare `sk-` form).
     (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), REDACTED),
     # Slack tokens: bot/user/etc. (`xox[baprs]-`) and app-level (`xapp-`).
     (re.compile(r"\b(?:xox[baprs]|xapp)-[A-Za-z0-9-]{10,}\b"), REDACTED),
