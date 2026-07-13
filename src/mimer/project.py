@@ -17,16 +17,12 @@ from enum import Enum
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.registry import Registry
+from mimer.registry import Registry, registry_lock
 from mimer.store import ensure_store
-from mimer.storeio import project_lock
 from mimer.vcs import git_remotes, git_toplevel
 
 # The opt-in marker file at a project root carrying its project id.
 MARKER_FILENAME = ".mimer"
-
-# Reserved lock id serialising registry read-modify-write across sessions.
-REGISTRY_LOCK = "__registry__"
 
 # URL schemes stripped during remote normalisation.
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -188,10 +184,10 @@ def resolve(cwd: Path, *, root: Path | None = None) -> Resolution:
     # happen before the lock.
     signals = gather_signals(cwd)
 
-    # The whole registry read-modify-write runs under a store-level lock, so two
-    # concurrent sessions cannot lose each other's binding or race the atomic
-    # write (ADR 0011).
-    with project_lock(REGISTRY_LOCK, root=root):
+    # The whole registry read-modify-write runs under the store-level registry
+    # lock, so two concurrent sessions cannot lose each other's binding or race the
+    # atomic write (ADR 0011).
+    with registry_lock(root=root):
         registry = Registry.load(root)
         if signals.marker_id is not None:
             return _resolve_marker(registry, signals)
@@ -303,7 +299,7 @@ def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> R
     ensure_store(root)
     signals = gather_signals(cwd)
 
-    with project_lock(REGISTRY_LOCK, root=root):
+    with registry_lock(root=root):
         registry = Registry.load(root)
         if registry.find_by_id(candidate_id) is None:
             raise ValueError(f"unknown project id: {candidate_id}")

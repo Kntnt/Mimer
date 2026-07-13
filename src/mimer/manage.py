@@ -18,10 +18,9 @@ from mimer.bundle import Concept, list_concepts, profile_concepts, retract_conce
 from mimer.framing import frame, neutralise
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
-from mimer.project import REGISTRY_LOCK, confirm_link, resolve
+from mimer.project import confirm_link, resolve
 from mimer.redaction import redact
-from mimer.registry import Registry
-from mimer.storeio import project_lock
+from mimer.registry import Registry, registry_lock
 from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
 
 _RECENT_FAILURES = 5
@@ -91,7 +90,7 @@ def set_project_setting(
     # could have folded this project away between resolve() and here; when it has,
     # there is nothing to set, so report the same "needs confirmation" signal
     # rather than raising a KeyError from the setters.
-    with project_lock(REGISTRY_LOCK, root=root):
+    with registry_lock(root=root):
         registry = Registry.load(root)
         if registry.find_by_id(project_id) is None:
             return None

@@ -52,7 +52,7 @@ def test_registry_lock_is_the_named_registry_lock(store_root: Path) -> None:
     with registry.registry_lock(root=store_root):
         worker = threading.Thread(target=take_named, daemon=True)
         worker.start()
-        assert not acquired.wait(0.5), "named_lock('registry') did not block on a held registry_lock()"
+        assert not acquired.wait(0.5), "named_lock('registry') did not block on registry_lock()"
 
     # Released, the worker acquires the very same lock and finishes.
     assert acquired.wait(2), "named_lock('registry') never acquired the lock after release"
