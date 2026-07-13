@@ -27,10 +27,11 @@ import pytest
 import sqlite_vec
 
 from mimer import index
+from mimer.embedding import EMBEDDING_DIMENSIONS
 
 # Width of an index vector — the same constant the real schema is built with, so
 # a hand-made vector always matches ``vec_chunks``.
-DIM = index.EMBEDDING_DIMENSIONS
+DIM = EMBEDDING_DIMENSIONS
 
 
 def _unit(vector: list[float]) -> list[float]:

@@ -41,9 +41,9 @@ _PERMANENT_SOURCE_PREFIX = "permanent/"
 
 # Retrieval breadth and fusion/rerank tuning — the simplest values that work.
 _CANDIDATES = 20
-_RRF_K = 30
+_RRF_K = 60
 _MIN_SIMILARITY = 0.12
-_RECENCY_WEIGHT = 0.5
+_RECENCY_WEIGHT = 0.3
 _EXCERPT_CHARS = 240
 
 # Heading of a Markdown block; each block becomes one chunk.
@@ -410,9 +410,9 @@ def _source_weight(heading: str) -> float:
 
     lowered = heading.lower()
     if lowered.startswith("session digest"):
-        return 1.5
+        return 1.2
     if lowered.startswith("aged out"):
-        return 0.7
+        return 0.9
     return 1.0
 
 
