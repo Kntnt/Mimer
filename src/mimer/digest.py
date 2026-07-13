@@ -37,6 +37,7 @@ from mimer.shortterm import (
     render_short_term,
 )
 from mimer.storeio import project_lock, write_atomic
+from mimer.text import parse_bullets
 from mimer.transcript import Exchange, conversation_text, last_exchange
 
 Haiku = Callable[[str], str | None]
@@ -192,17 +193,11 @@ def _bullets(lines: list[str]) -> list[str]:
     Each bullet is neutralised before it is returned: it is model output derived
     from an untrusted transcript and lands verbatim in short-term memory, which
     is injected next session, so any framing marker it carries is stripped here
-    (ADR 0014).
+    (ADR 0014). Neutralisation runs as the shared parser's transform — ahead of
+    the empty/'none' test — so a bullet defanged to nothing is dropped.
     """
 
-    texts = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            text = neutralise(stripped[2:].strip())
-            if text and text.lower() != "none":
-                texts.append(text)
-    return texts
+    return parse_bullets(lines, transform=neutralise)
 
 
 def _session_day(anchor: Exchange | None) -> date:

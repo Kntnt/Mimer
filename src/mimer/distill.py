@@ -28,9 +28,13 @@ from mimer.redaction import redact
 from mimer.registry import Registry, project_dir
 from mimer.shortterm import Entry, parse_short_term, render_short_term, short_term_path
 from mimer.storeio import append_text, project_lock, write_atomic
+from mimer.text import STOPWORDS, truncate
 from mimer.tombstones import is_tombstoned
 
 DISTILLED_QUEUE_FILENAME = ".distilled-queue"
+
+# A Concept title is a fixed-width label; a longer fact is hard-cut to this.
+_TITLE_CHARS = 80
 
 # Two facts are the same subject only when they share at least this many content
 # words *and* clear the overlap ratio below. The absolute floor is the counterweight
@@ -44,48 +48,10 @@ _MIN_SUBJECT_OVERLAP = 2
 # dropped from recall in every other project (issue #29). Higher rank = broader.
 _SCOPE_RANK = {"project": 0, "global": 1}
 
-# Content words shorter than this, and these glue words, are ignored when
-# deciding whether two facts are about the same subject.
-_STOP = frozenset(
-    [
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "but",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "to",
-        "of",
-        "in",
-        "on",
-        "at",
-        "for",
-        "from",
-        "with",
-        "by",
-        "we",
-        "our",
-        "you",
-        "your",
-        "it",
-        "its",
-        "this",
-        "that",
-        "these",
-        "those",
-        "now",
-        "new",
-        "then",
-        "than",
-        "as",
-    ]
-)
+# The shared stopword set: content words shorter than three characters, and
+# these glue words, are ignored when deciding whether two facts are about the
+# same subject. One source shared with recall so the two never disagree (#19).
+_STOP = STOPWORDS
 
 # Markers of an imperative addressed to the agent (ADR 0014). This filter is
 # advisory: it is a best-effort pre-filter, not the gate. The gate is the
@@ -360,10 +326,15 @@ def _normalise(text: str) -> str:
 
 
 def _title(text: str) -> str:
-    """A readable Concept title derived from a fact."""
+    """A readable Concept title derived from a fact: a hard-cut, ellipsis-free
+    fixed-width line with any trailing period dropped.
+
+    The period is stripped after whitespace is collapsed but before the cut, so a
+    short fact ending in "." loses it; the cut is ellipsis-free because a title is
+    a fixed-width label, not a visibly abridged excerpt."""
 
     collapsed = " ".join(text.split()).rstrip(".")
-    return collapsed[:80]
+    return truncate(collapsed, _TITLE_CHARS, marker="")
 
 
 def _queue_path(project_id: str, root: Path | None) -> Path:

@@ -31,6 +31,7 @@ from mimer.redaction import redact
 from mimer.registry import Registry
 from mimer.store import ensure_store
 from mimer.storeio import project_lock
+from mimer.text import parse_bullets, truncate
 from mimer.transcript import Exchange, all_exchanges
 
 # The signature of a Mimer-spawned session, so bootstrap never re-imports one.
@@ -216,10 +217,7 @@ def _render(exchange: Exchange) -> str:
 
 
 def _condense(text: str) -> str:
-    collapsed = " ".join(text.split())
-    if len(collapsed) > _MAX_BULLET_CHARS:
-        return collapsed[:_MAX_BULLET_CHARS].rstrip() + "…"
-    return collapsed
+    return truncate(text, _MAX_BULLET_CHARS)
 
 
 def _ensure_registered(project_id: str, root: Path) -> None:
@@ -279,15 +277,7 @@ def _haiku_distiller(conversation: str) -> list[str]:
     reply = run_haiku(prompt)
     if reply is None:
         return []
-
-    facts = []
-    for line in reply.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            fact = stripped[2:].strip()
-            if fact and fact.lower() != "none":
-                facts.append(fact)
-    return facts
+    return parse_bullets(reply.splitlines())
 
 
 def main(argv: list[str] | None = None) -> int:

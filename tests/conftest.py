@@ -5,11 +5,13 @@ fails loudly if any test ever creates the real ``~/.mimer``.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from mimer.project import resolve
 
 
 def needs_embedding_model(items: Iterable[Any]) -> bool:
@@ -65,6 +67,24 @@ def project_dir(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
     return project
+
+
+@pytest.fixture
+def resolve_project(store_root: Path) -> Callable[[Path], str]:
+    """Resolve a cwd to its bound project id, asserting the binding succeeded.
+
+    Replaces the resolve-then-assert helper that was copy-pasted across the suite
+    (issue #19). Returns a factory closed over the test's ``store_root`` so a test
+    can resolve any cwd — its standard ``project_dir`` or a purpose-built git
+    working tree — with one call.
+    """
+
+    def _resolve(cwd: Path) -> str:
+        resolution = resolve(cwd, root=store_root)
+        assert resolution.project_id is not None
+        return resolution.project_id
+
+    return _resolve
 
 
 @pytest.fixture(autouse=True)

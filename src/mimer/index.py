@@ -30,6 +30,7 @@ from mimer.longterm import daily_log_path
 from mimer.paths import store_root
 from mimer.registry import PROJECTS_DIRNAME
 from mimer.store import ensure_store
+from mimer.text import STOPWORDS, truncate
 from mimer.tombstones import is_suppressed, load_tombstones
 
 INDEX_FILENAME = "index.db"
@@ -49,54 +50,9 @@ _EXCERPT_CHARS = 240
 _HEADING_RE = re.compile(r"^(#{2,6})\s+(.*)$")
 
 # Common words dropped from keyword queries so FTS matches on content, not glue.
-_STOPWORDS = frozenset(
-    [
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "but",
-        "by",
-        "do",
-        "does",
-        "for",
-        "from",
-        "how",
-        "in",
-        "into",
-        "is",
-        "it",
-        "its",
-        "of",
-        "on",
-        "or",
-        "our",
-        "so",
-        "that",
-        "the",
-        "their",
-        "them",
-        "they",
-        "this",
-        "to",
-        "was",
-        "we",
-        "were",
-        "what",
-        "when",
-        "where",
-        "which",
-        "who",
-        "why",
-        "will",
-        "with",
-        "you",
-        "your",
-    ]
-)
+# One source shared with distillation so the two never disagree about what a
+# content word is (issue #19).
+_STOPWORDS = STOPWORDS
 
 
 class ConceptLike(Protocol):
@@ -464,8 +420,7 @@ def _excerpt(text: str) -> str:
     """A short, checkable quote of a chunk (body preferred over the heading)."""
 
     body = text.split("\n", 1)[1].strip() if "\n" in text else text
-    collapsed = " ".join(body.split())
-    return collapsed[:_EXCERPT_CHARS] + ("…" if len(collapsed) > _EXCERPT_CHARS else "")
+    return truncate(body, _EXCERPT_CHARS)
 
 
 def _fts_query(query: str) -> str | None:
