@@ -164,3 +164,200 @@ def test_crashed_holder_does_not_deadlock(store_root: Path, tmp_path: Path) -> N
     grabber.start()
     grabber.join(5)
     assert acquired.is_set(), "the lock deadlocked after a crash"
+
+
+def _completes_within(target: Callable[[], None], timeout: float = 5.0) -> bool:
+    """Run ``target`` on a daemon thread; return whether it finished in time.
+
+    A lock that self-deadlocks on a reentrant acquisition never returns, so a
+    timed-out worker is the observable signature of the bug these tests guard
+    against. The worker is a daemon so a genuinely wedged thread — the failure
+    being asserted — never blocks the rest of the suite, and each test owns its
+    own store root, so an abandoned holder cannot leak into another test.
+    """
+
+    done = threading.Event()
+
+    def run() -> None:
+        target()
+        done.set()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return done.wait(timeout)
+
+
+def test_same_thread_reentrant_project_lock(store_root: Path) -> None:
+    """The same thread nests one project lock without self-deadlocking."""
+
+    ensure_store(store_root)
+
+    def nest() -> None:
+        with project_lock("proj", root=store_root):
+            with project_lock("proj", root=store_root):
+                pass
+
+    assert _completes_within(nest), "same-thread project_lock nesting deadlocked"
+
+
+def test_same_thread_reentrant_named_lock(store_root: Path) -> None:
+    """The same thread nests one named lock without self-deadlocking."""
+
+    from mimer.storeio import named_lock
+
+    ensure_store(store_root)
+
+    def nest() -> None:
+        with named_lock("bundle", root=store_root):
+            with named_lock("bundle", root=store_root):
+                pass
+
+    assert _completes_within(nest), "same-thread named_lock nesting deadlocked"
+
+
+def test_same_thread_reentrant_mixed_locks(store_root: Path) -> None:
+    """One thread holds a project lock and a named lock (distinct names) at once,
+    nesting each, without deadlock."""
+
+    from mimer.storeio import named_lock
+
+    ensure_store(store_root)
+
+    def nest() -> None:
+        with project_lock("proj", root=store_root):
+            with named_lock("bundle", root=store_root):
+                with project_lock("proj", root=store_root):
+                    with named_lock("bundle", root=store_root):
+                        pass
+
+    assert _completes_within(nest), "mixed same-thread lock nesting deadlocked"
+
+
+def test_nested_hold_releases_only_at_outermost_exit(store_root: Path) -> None:
+    """A reentrant hold stays exclusive until the outermost holder exits: a waiter
+    in another thread gets in only after the outer block ends, never when the
+    inner one does."""
+
+    ensure_store(store_root)
+
+    outer_entered = threading.Event()
+    inner_exited = threading.Event()
+    allow_outer_exit = threading.Event()
+    waiter_acquired = threading.Event()
+
+    def holder() -> None:
+        with project_lock("proj", root=store_root):
+            outer_entered.set()
+            with project_lock("proj", root=store_root):
+                pass
+            inner_exited.set()
+            allow_outer_exit.wait(2)
+
+    def waiter() -> None:
+        outer_entered.wait(2)
+        with project_lock("proj", root=store_root):
+            waiter_acquired.set()
+
+    threads = [
+        threading.Thread(target=holder, daemon=True),
+        threading.Thread(target=waiter, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    # The inner block must exit (proving the nest did not deadlock) while the lock
+    # is still held, so the waiter cannot have acquired it yet.
+    assert inner_exited.wait(2), "nested project_lock acquisition deadlocked"
+    time.sleep(0.1)
+    assert not waiter_acquired.is_set(), "the lock released when the inner hold exited"
+
+    # Only once the outermost hold exits may the waiter proceed.
+    allow_outer_exit.set()
+    for thread in threads:
+        thread.join(3)
+    assert waiter_acquired.is_set(), "the waiter never acquired the released lock"
+
+
+def test_distinct_named_locks_are_independent(store_root: Path) -> None:
+    """Two named locks with different names never serialise against each other."""
+
+    from mimer.storeio import named_lock
+
+    ensure_store(store_root)
+
+    alpha_held = threading.Event()
+    beta_acquired = threading.Event()
+    release_alpha = threading.Event()
+
+    def hold_alpha() -> None:
+        with named_lock("alpha", root=store_root):
+            alpha_held.set()
+            release_alpha.wait(2)
+
+    def take_beta() -> None:
+        alpha_held.wait(2)
+        with named_lock("beta", root=store_root):
+            beta_acquired.set()
+
+    threads = [
+        threading.Thread(target=hold_alpha, daemon=True),
+        threading.Thread(target=take_beta, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    # `beta` must be acquirable while `alpha` is still held; independence means no
+    # wait on the unrelated name.
+    assert beta_acquired.wait(2), "a distinct named lock blocked on an unrelated one"
+    release_alpha.set()
+    for thread in threads:
+        thread.join(3)
+
+
+def test_named_lock_and_project_lock_do_not_collide(store_root: Path) -> None:
+    """A project id and a named lock spelled the same are independent locks: the
+    dunder lock-file naming keeps them in disjoint files."""
+
+    from mimer.storeio import named_lock
+
+    ensure_store(store_root)
+
+    project_held = threading.Event()
+    named_acquired = threading.Event()
+    release_project = threading.Event()
+
+    def hold_project() -> None:
+        with project_lock("registry", root=store_root):
+            project_held.set()
+            release_project.wait(2)
+
+    def take_named() -> None:
+        project_held.wait(2)
+        with named_lock("registry", root=store_root):
+            named_acquired.set()
+
+    threads = [
+        threading.Thread(target=hold_project, daemon=True),
+        threading.Thread(target=take_named, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    # The named lock must be acquirable while the same-spelled project lock is
+    # held — a marker-chosen project id can never collide with a lock name.
+    assert named_acquired.wait(2), "named_lock collided with a same-named project_lock"
+    release_project.set()
+    for thread in threads:
+        thread.join(3)
+
+
+def test_named_lock_uses_dunder_lock_file(store_root: Path) -> None:
+    """A named lock's file keeps the dunder naming, so it cannot collide with a
+    sanitised project id's lock file."""
+
+    from mimer.storeio import named_lock
+
+    ensure_store(store_root)
+
+    with named_lock("registry", root=store_root):
+        assert (store_root / "locks" / "__registry__.lock").exists()
