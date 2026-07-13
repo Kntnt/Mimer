@@ -20,8 +20,9 @@ from datetime import date
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.registry import PROJECTS_DIRNAME, project_dir
+from mimer.registry import project_dir
 from mimer.storeio import project_lock, write_atomic
+from mimer.storewalk import disk_project_ids
 
 SHORT_TERM_FILENAME = "short-term.md"
 
@@ -217,12 +218,17 @@ def migrate_short_term_files(root: Path | None = None) -> int:
     if not root.exists() or marker.exists():
         return 0
 
-    # Rewrite every project's legacy file — found on disk, so an orphan not in the
-    # registry is migrated too — each under its own lock, so a live writer (the
-    # memory skill or the digest) cannot lose an update (ADR 0011).
+    # Rewrite every project's legacy file — enumerated on disk via the store walk,
+    # so an orphan not in the registry is migrated too — each under its own lock,
+    # so a live writer (the memory skill or the digest) cannot lose an update
+    # (ADR 0011).
     migrated = 0
-    for path in sorted((root / PROJECTS_DIRNAME).glob(f"*/{SHORT_TERM_FILENAME}")):
-        project_id = path.parent.name
+    for project_id in disk_project_ids(root):
+        # A project directory without a short-term file yet has nothing to migrate.
+        path = short_term_path(project_id, root)
+        if not path.exists():
+            continue
+
         with project_lock(project_id, root=root):
             content = path.read_text(encoding="utf-8")
 

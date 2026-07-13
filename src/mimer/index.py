@@ -28,8 +28,8 @@ from mimer.bundle import concept_identity_text
 from mimer.embedding import EMBEDDING_DIMENSIONS, embed
 from mimer.longterm import daily_log_path
 from mimer.paths import store_root
-from mimer.registry import PROJECTS_DIRNAME
 from mimer.store import ensure_store
+from mimer.storewalk import daily_log_days, disk_project_ids
 from mimer.text import STOPWORDS, truncate
 from mimer.tombstones import is_suppressed, load_tombstones
 
@@ -244,14 +244,12 @@ def reindex(root: Path | None = None) -> int:
         path.unlink(missing_ok=True)
     _connect(root).close()
 
+    # Rebuild from every day of every project's long-term memory, enumerated by
+    # the store walk so the indexer knows nothing of the projects tree's layout.
     total = 0
-    projects_root = root / PROJECTS_DIRNAME
-    if projects_root.exists():
-        for project_dir in sorted(projects_root.iterdir()):
-            long_term = project_dir / "long-term"
-            if long_term.is_dir():
-                for log in sorted(long_term.glob("*.md")):
-                    total += index_daily_log(project_dir.name, log.stem, root)
+    for project_id in disk_project_ids(root):
+        for day in daily_log_days(project_id, root):
+            total += index_daily_log(project_id, day, root)
 
     # Index the permanent-memory Concepts too (late import avoids a cycle).
     from mimer.bundle import list_concepts

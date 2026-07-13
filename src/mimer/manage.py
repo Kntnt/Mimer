@@ -16,13 +16,13 @@ from pathlib import Path
 
 from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept
 from mimer.framing import frame, neutralise
-from mimer.longterm import LONG_TERM_DIRNAME
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
 from mimer.project import REGISTRY_LOCK, confirm_link, resolve
 from mimer.redaction import redact
-from mimer.registry import PROJECTS_DIRNAME, Registry
+from mimer.registry import Registry
 from mimer.storeio import project_lock
+from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
 
 _RECENT_FAILURES = 5
 
@@ -176,15 +176,11 @@ def store_health(root: Path | None = None) -> HealthReport:
     concepts = list_concepts(root)
     registry = Registry.load(root)
 
-    projects_root = root / PROJECTS_DIRNAME
-    project_dirs = (
-        [d for d in projects_root.iterdir() if d.is_dir()] if projects_root.exists() else []
-    )
-    long_term_days = sum(
-        len(list((directory / LONG_TERM_DIRNAME).glob("*.md")))
-        for directory in project_dirs
-        if (directory / LONG_TERM_DIRNAME).is_dir()
-    )
+    # Every day of long-term memory across the store, enumerated once by the store
+    # walk so the day count and the last-activity timestamp read the same set.
+    days = [
+        day for project_id in disk_project_ids(root) for day in daily_log_days(project_id, root)
+    ]
 
     # Enumerate every project whose capture is switched off; a per-project
     # capture-off is a standing, indefinite suppression that must be auditable
@@ -193,10 +189,11 @@ def store_health(root: Path | None = None) -> HealthReport:
 
     return HealthReport(
         concept_count=len(concepts),
-        project_count=len(registry.project_ids()) or len(project_dirs),
-        long_term_days=long_term_days,
+        # The registry ∪ disk union, so a disk-only orphan is counted (issue #48).
+        project_count=len(known_project_ids(root)),
+        long_term_days=len(days),
         store_bytes=_store_bytes(root),
-        last_digest=_latest_daily_log(project_dirs),
+        last_digest=max(days, default=None),
         last_distillation=max((c.timestamp for c in concepts), default=None),
         recent_failures=_recent_failures(root),
         paused=is_paused(root),
@@ -206,16 +203,6 @@ def store_health(root: Path | None = None) -> HealthReport:
 
 def _store_bytes(root: Path) -> int:
     return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-
-
-def _latest_daily_log(project_dirs: list[Path]) -> str | None:
-    days = [
-        log.stem
-        for directory in project_dirs
-        for log in (directory / LONG_TERM_DIRNAME).glob("*.md")
-        if (directory / LONG_TERM_DIRNAME).is_dir()
-    ]
-    return max(days, default=None)
 
 
 def _recent_failures(root: Path) -> list[str]:

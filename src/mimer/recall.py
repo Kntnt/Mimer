@@ -16,7 +16,8 @@ from mimer.framing import frame, neutralise
 from mimer.index import Citation, search
 from mimer.paths import store_root
 from mimer.project import confirm_hint, resolve
-from mimer.registry import PROJECTS_DIRNAME, Registry
+from mimer.registry import Registry
+from mimer.storewalk import known_project_ids
 
 
 @dataclass(frozen=True)
@@ -100,15 +101,11 @@ def _widenable_projects(root: Path, *, current: str) -> list[str]:
 
     registry = Registry.load(root)
 
-    # Consider both registered projects and any on disk, so a not-yet-registered
-    # project's memory is reachable.
-    known = set(registry.project_ids())
-    projects_root = root / PROJECTS_DIRNAME
-    if projects_root.exists():
-        known |= {directory.name for directory in projects_root.iterdir() if directory.is_dir()}
-
+    # Reach every project the store knows of — registered or a disk-only orphan —
+    # then keep those that have not excluded themselves from widening. The store
+    # walk loads the registry too, an accepted double-load at this one call site.
     participating = {current}
-    for project_id in known:
+    for project_id in known_project_ids(root):
         if project_id != current and registry.is_widenable(project_id):
             participating.add(project_id)
     return sorted(participating)
