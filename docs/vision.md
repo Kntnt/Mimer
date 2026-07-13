@@ -153,7 +153,7 @@ The whole system is the goal – Mimer is adopted only once every stage is built
 
 **Build.** The index and recall extended over permanent memory with scope enforcement in search; the inspection surface in the skill: profile enumeration ("what do you know about me?"), recent distillations with citations, store health (sizes, counts, last digest and distillation, recent failures from `mimer.log`); a correction affordance that retracts or edits a Concept on request.
 
-**Verify.** Automated: a global Concept distilled under project A recalls, cited, from project B, while a project-scoped one does not; profile enumeration matches the pinned set exactly; a retracted Concept stops surfacing.
+**Verify.** Automated: a global Concept distilled under project A recalls, cited, from project B, while a project-scoped one does not; profile enumeration matches the injected profile exactly; a retracted Concept stops surfacing.
 
 ### Stage 6 – Git as a capture source
 

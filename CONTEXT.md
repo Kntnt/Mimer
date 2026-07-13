@@ -147,3 +147,7 @@ _Avoid_: mutex, synchronisation, critical section.
 **Matcher**:
 The one module answering fact identity. Three notions, one home: *same fact?* (forget, tombstones, recall suppression — never matches a value substitution, so a correction is never suppressed), *same subject?* (distillation's dedup and supersession targeting — must match one, so a changed fact finds its predecessor) and the *normalised* exact identity they and remember-dedup share. One tokenizer, one stopword policy.
 _Avoid_: similarity, dedup logic, fuzzy match.
+
+**Visible** (of a Concept):
+Whether a Concept may be shown from a given project right now: active (not superseded), within scope, and not tombstoned. The presentation predicate — the one test every surface that shows Concepts uses; scope is one of its three inputs, not a synonym.
+_Avoid_: live, in force, unsuppressed.

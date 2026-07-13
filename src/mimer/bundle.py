@@ -222,14 +222,23 @@ def read_concept(slug: str, root: Path | None = None) -> Concept:
 
 
 def list_concepts(root: Path | None = None) -> list[Concept]:
-    """Every parseable Concept in the bundle, sorted by slug.
+    """Every parseable Concept in the bundle, sorted by slug — the mechanical read.
 
-    ``list_concepts`` sits under recall reindex, distillation, the manifest,
-    ``mimer-manage`` and session-start injection, so a single truncated or
-    hand-mangled file must not take all of those down at once. A file that is
+    The raw enumeration: it applies no status, scope or tombstone filter, so it
+    returns superseded, out-of-scope and forgotten Concepts alike. It is for the
+    mechanical readers that must see the bundle as it is on disk — reindex and
+    per-Concept indexing, the forget/redact retraction sweep, distillation's
+    supersession-target sweep, ``index.md`` regeneration, the pin cap, the rename
+    link sweep, bootstrap's have-Concepts check and store health's counts. Any
+    surface that *shows* Concepts must instead enumerate through
+    :func:`visible_concepts`, the one presentation read that filters status, scope
+    and tombstones consistently (issue #54).
+
+    ``list_concepts`` sits under all of those in a session, so a single truncated or
+    hand-mangled file must not take them all down at once. A file that is
     unparseable, or that a concurrent writer has removed or left transiently
-    unreadable, is skipped and logged rather than allowed to propagate (issue
-    #17); a direct :func:`read_concept` on a named slug still raises.
+    unreadable, is skipped and logged rather than allowed to propagate (issue #17);
+    a direct :func:`read_concept` on a named slug still raises.
     """
 
     directory = bundle_dir(root)
@@ -254,26 +263,12 @@ def list_concepts(root: Path | None = None) -> list[Concept]:
     return concepts
 
 
-def profile_concepts(root: Path | None = None) -> list[Concept]:
-    """The active pinned Concepts that form the profile.
-
-    A superseded pinned Concept is no longer current, so — as recall already
-    does — it is excluded, leaving exactly the pinned Concepts in force. Without
-    the status filter a reworded re-derivation would leave both the superseded
-    predecessor and its successor pinned, duplicating the profile (ADR 0015).
-    """
-
-    return [
-        concept for concept in list_concepts(root) if concept.pinned and concept.status == "active"
-    ]
-
-
 def concept_identity_text(title: str, body: str) -> str:
     """The text a Concept presents when asking "is this the same fact?".
 
     Its title and body joined, exactly as the search index stores a Concept's
     chunk (:func:`mimer.index.concept_chunk`). Recall matches tombstones against
-    this text, so a forget's retraction and the injection paths below all test the
+    this text, so a forget's retraction and the Visible seam below all test the
     very same string — the sites that must agree on what a Concept's fact *is*
     cannot drift apart (issue #32).
     """
@@ -282,38 +277,74 @@ def concept_identity_text(title: str, body: str) -> str:
 
 
 def _not_tombstoned(concept: Concept, tombstones: list[dict[str, str]]) -> bool:
-    """Whether ``concept`` has not been forgotten, for the injection filters.
+    """Whether ``concept`` has not been forgotten, for the Visible seam.
 
     Suppression is keyed on the Concept's origin — the same origin-keyed rule
-    recall applies to a Concept row (ADR 0013) — so the manifest and the profile
-    hide a forgotten Concept exactly as recall does (issue #32).
+    recall applies to a Concept row (ADR 0013) — so :func:`visible_concepts` hides
+    a forgotten Concept exactly as recall does (issue #32).
     """
 
     text = concept_identity_text(concept.title, concept.body)
     return not is_suppressed(text, project_id=concept.origin, tombstones=tombstones)
 
 
-def concept_headlines(root: Path | None = None, *, project_id: str | None = None) -> list[str]:
-    """A one-line headline per Concept visible to ``project_id``, for the manifest.
+def visible_concepts(root: Path | None = None, *, project_id: str | None = None) -> list[Concept]:
+    """The Concepts a presentation surface may show to ``project_id``.
 
-    A global Concept is visible everywhere; a project-scoped one only within its
-    origin (ADR 0013). Without a project id, all Concepts are listed. A superseded
-    Concept is filtered out — only the current answer belongs in the manifest, the
-    way recall returns just the active one (ADR 0015, #40) — as is a Concept a
-    forget has tombstoned, so a forgotten fact stops appearing in the manifest the
-    way it already stops appearing in recall (issue #32).
+    The one presentation read for permanent memory: every surface that shows
+    Concepts — the manifest headlines, the injected profile, profile enumeration
+    and the recent-Concepts listing — filters through here, so status, scope and
+    tombstones can never be applied to them inconsistently (issue #54).
+
+    A Concept is visible when it is active (not superseded — only the current
+    answer shows, ADR 0015), scope-visible (global, or its origin is
+    ``project_id`` — ADR 0013) and not tombstoned (a forgotten fact stops
+    surfacing, ADR 0012, issue #32). ``project_id=None`` applies no scope filter —
+    the store-wide inspection case. That is deliberately looser than recall's chunk
+    rule, where a ``None`` home shows only global Concepts
+    (:func:`mimer.index._in_scope`): a chunk is text reached by a possibly widened
+    log search, whereas enumeration answers "what is in the bundle for this surface
+    to show", and the store-wide surfaces want every Concept.
+
+    The tombstone ledger is loaded once per call and reused across every Concept.
     """
 
     tombstones = load_tombstones(root)
-    visible = [
-        c
-        for c in list_concepts(root)
-        if c.status == "active"
-        and (project_id is None or c.scope == "global" or c.origin == project_id)
-        and _not_tombstoned(c, tombstones)
+    return [
+        concept
+        for concept in list_concepts(root)
+        if concept.status == "active"
+        and (project_id is None or concept.scope == "global" or concept.origin == project_id)
+        and _not_tombstoned(concept, tombstones)
     ]
+
+
+def profile_concepts(root: Path | None = None) -> list[Concept]:
+    """The profile: the pinned subset of :func:`visible_concepts`.
+
+    Deepened onto the seam, so the enumerated profile and the injected profile
+    (:func:`render_profile`) are the same set by construction — a pinned Concept a
+    forget tombstoned or a supersession retired is absent from both, never shown by
+    one surface while hidden by the other (issue #54). The superseded Concept is
+    excluded by the seam's status filter because it is no longer current; without
+    it a reworded re-derivation would leave both predecessor and successor pinned,
+    duplicating the profile (ADR 0015).
+    """
+
+    return [concept for concept in visible_concepts(root) if concept.pinned]
+
+
+def concept_headlines(root: Path | None = None, *, project_id: str | None = None) -> list[str]:
+    """A one-line headline per Concept visible to ``project_id``, for the manifest.
+
+    A thin presentation over :func:`visible_concepts`: each visible Concept becomes
+    ``title — detail`` (or the bare title when no distinct detail exists), so the
+    manifest hides a superseded, out-of-scope or forgotten Concept exactly as the
+    other presentation surfaces do (issue #54).
+    """
+
     headlines = []
-    for concept in visible:
+    for concept in visible_concepts(root, project_id=project_id):
         detail = concept.description or _first_line(concept.body)
         headlines.append(
             f"{concept.title} — {detail}" if detail and detail != concept.title else concept.title
@@ -324,18 +355,17 @@ def concept_headlines(root: Path | None = None, *, project_id: str | None = None
 def render_profile(root: Path | None = None) -> str:
     """Render the pinned profile Concepts for injection, or empty when none.
 
+    The pinned set comes from :func:`profile_concepts`, so a forgotten or
+    superseded pinned Concept is already gone — the injected profile and the
+    enumerated profile draw the same set through the one seam (issue #54).
+
     Each Concept body is an untrusted leaf, so it is neutralised before it is
     placed under Mimer's own ``## Profile`` / ``### title`` structure (ADR 0014):
     a heading or framing marker inside a body cannot then reopen the surrounding
     context as instructions once the snapshot is framed and injected.
-
-    A pinned Concept a forget has tombstoned is filtered out, so a forgotten fact
-    stops being injected into every session — the "theatre" ADR 0012 rejects — the
-    way recall already suppresses it (issue #32).
     """
 
-    tombstones = load_tombstones(root)
-    pinned = [c for c in profile_concepts(root) if _not_tombstoned(c, tombstones)]
+    pinned = profile_concepts(root)
     if not pinned:
         return ""
     blocks = "\n\n".join(f"### {concept.title}\n{neutralise(concept.body)}" for concept in pinned)

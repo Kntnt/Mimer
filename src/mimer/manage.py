@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept
+from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept, visible_concepts
 from mimer.framing import frame, neutralise
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
@@ -148,7 +148,12 @@ def confirm_identity(
 
 
 def profile(root: Path | None = None) -> list[Concept]:
-    """The pinned profile Concepts, with their citations."""
+    """The pinned profile Concepts, with their citations.
+
+    Enumerates through :func:`mimer.bundle.profile_concepts` — the pinned subset of
+    the Visible seam — so "what do you know about me?" shows exactly the pinned set
+    injection shows, a forgotten pinned fact absent from both (issue #54).
+    """
 
     return profile_concepts(root)
 
@@ -156,14 +161,14 @@ def profile(root: Path | None = None) -> list[Concept]:
 def recent_concepts(
     root: Path | None = None, *, project_id: str | None = None, limit: int = 10
 ) -> list[Concept]:
-    """Active Concepts visible to a project, newest first."""
+    """The recently learned Concepts visible to a project, newest first.
 
-    visible = [
-        concept
-        for concept in list_concepts(root)
-        if concept.status == "active"
-        and (project_id is None or concept.scope == "global" or concept.origin == project_id)
-    ]
+    Enumerates through the Visible seam (:func:`mimer.bundle.visible_concepts`), so
+    "what did you learn recently?" hides a superseded, out-of-scope or forgotten
+    Concept exactly as injection and recall do (issue #54).
+    """
+
+    visible = visible_concepts(root, project_id=project_id)
     visible.sort(key=lambda concept: concept.timestamp, reverse=True)
     return visible[:limit]
 
