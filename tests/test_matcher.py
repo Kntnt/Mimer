@@ -1,6 +1,14 @@
-"""Tests for the shared "same fact?" matcher (issue #18): the single answer that
-tombstoning, recall suppression and forget all delegate to, so a forgotten fact
-means the same thing whether it is being written, recalled or re-distilled.
+"""Tests for the shared matcher — the one home of fact identity (issues #18, #52).
+
+Two fuzzy questions live here. ``is_same_fact`` answers "are these the same fact?"
+for tombstoning, recall suppression and forget, so a forgotten fact means the same
+thing whether it is being written, recalled or re-distilled. ``is_same_subject``
+answers "are these about the same subject?" for distillation's dedup and
+supersession targeting. The two deliberately disagree on a value substitution
+(``port 8080`` → ``port 9090``): fact mode must reject it (matching would suppress
+a fact's own correction, ADR 0012), subject mode must accept it (a changed fact
+must find the predecessor it supersedes, ADR 0015, issue #29). That divergence is
+pinned below so neither mode is ever "fixed" to match the other.
 
 The two behaviours the previous per-site logic got wrong are pinned here: a
 reworded restatement of a fact must still count as the same fact (exact-equality
@@ -10,7 +18,7 @@ longer, unrelated text that merely contains it (substring over-matched).
 
 from __future__ import annotations
 
-from mimer.matcher import is_same_fact
+from mimer.matcher import is_same_fact, is_same_subject, normalised
 
 
 def test_identical_text_is_the_same_fact() -> None:
@@ -173,3 +181,71 @@ def test_forgotten_fact_embedded_verbatim_in_a_larger_chunk_is_the_same_fact() -
         "Assistant: tokens live in redis and the staging password is hunter2 until "
         "rotation. User: how do we handle secrets?",
     )
+
+
+def test_value_substitution_is_the_same_subject_but_not_the_same_fact() -> None:
+    """The two modes' stances on a value substitution, pinned against each other (issue #52).
+
+    ``port 8080`` → ``port 9090`` shares its subject and verb but swaps its one
+    distinguishing value. Fact mode must reject it — matching would tombstone the
+    old fact and suppress its correction (ADR 0012). Subject mode must accept it — a
+    changed fact must find the predecessor it supersedes (ADR 0015, issue #29). The
+    two assertions together forbid ever "fixing" one mode to agree with the other.
+    """
+
+    a = "The API runs on port 8080"
+    b = "The API runs on port 9090"
+    assert is_same_subject(a, b)
+    assert not is_same_fact(a, b)
+
+
+def test_absolute_floor_rejects_two_short_facts_sharing_one_word() -> None:
+    """Two short facts sharing a single content word are not the same subject (issue #52).
+
+    ``uses redis`` and ``uses postgres`` share only ``uses``; the ÷smaller ratio
+    alone would clear the bar (one shared word over a two-word set is 50 %), so the
+    absolute floor of two shared content words is what keeps unrelated short facts
+    from colliding and one silently superseding the other.
+    """
+
+    assert not is_same_subject("uses redis", "uses postgres")
+
+
+def test_short_token_carries_subject_identity() -> None:
+    """A ≤2-character token carries subject identity in subject mode (issue #52).
+
+    Subject overlap has no length filter, so short tech tokens (``uv``, ``ci``,
+    ``s3``) count. Here the shared subject is carried entirely by the two-character
+    tokens ``uv`` and ``ci``; distillation's dropped ``len > 2`` filter would have
+    discarded both and left the facts sharing nothing.
+    """
+
+    assert is_same_subject("uv drives ci", "uv blocks ci")
+
+
+def test_non_ascii_fact_matches_a_rewording_in_subject_mode() -> None:
+    """A reworded non-ASCII (Swedish) fact is the same subject (issue #52).
+
+    The shared Unicode-aware tokenizer keeps non-ASCII letters, so a non-English
+    fact is matched on its real content words rather than on the ASCII fragments a
+    ``[a-z0-9]+`` scan would leave behind.
+    """
+
+    assert is_same_subject(
+        "Prototypen använde en Redis-cache.",
+        "Vi använde Redis för prototypens cache",
+    )
+
+
+def test_is_same_subject_is_symmetric() -> None:
+    """The order of the two texts never changes the subject answer."""
+
+    a = "The API runs on port 8080"
+    b = "The API runs on port 9090"
+    assert is_same_subject(a, b) == is_same_subject(b, a)
+
+
+def test_normalised_collapses_case_and_whitespace() -> None:
+    """``normalised`` lowercases and collapses runs of whitespace to a single space (issue #52)."""
+
+    assert normalised("The  Staging   Password is HUNTER2") == "the staging password is hunter2"
