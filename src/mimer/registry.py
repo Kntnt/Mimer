@@ -2,21 +2,21 @@
 known remotes and paths, per-project settings and import state. It is the
 mechanism that reconciles moved, renamed or cloned projects (ADR 0008).
 
-The registry is a single JSON file at the store root. Writes are atomic
-(write-temp-then-replace) so a crash never leaves a half-written registry; the
-richer per-project lock discipline arrives in #3 and layers on top.
+The registry is a single JSON file at the store root, persisted through storeio's
+atomic write primitive (ADR 0011's write-discipline map) so a crash never leaves a
+half-written registry; the richer per-project lock discipline arrives in #3 and
+layers on top.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from mimer.paths import store_root
-from mimer.store import DIR_MODE, FILE_MODE, ensure_store
+from mimer.store import DIR_MODE, ensure_store
 from mimer.storeio import append_fold, project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
@@ -84,22 +84,22 @@ class Registry:
         return cls(root, records)
 
     def save(self) -> None:
-        """Persist the registry atomically with owner-only permissions."""
+        """Persist the registry atomically with owner-only permissions.
+
+        Routes through :func:`mimer.storeio.write_atomic` — the store's single
+        atomic, owner-only write primitive (ADR 0011's write-discipline map) — so
+        the registry stays on the one storeio write path and inherits its
+        temp-reap on a failed write, rather than repeating an inline
+        temp-file-then-replace recipe here.
+        """
 
         ensure_store(self._root)
 
+        # Serialise every record and persist it through storeio, so a reader never
+        # sees a partial registry and a failed write leaves no orphan temp behind.
         payload = {"projects": [asdict(record) for record in self._records.values()]}
         serialised = json.dumps(payload, indent=2, ensure_ascii=False)
-
-        # Write to a uniquely-named temp file then atomically replace, so a
-        # reader never sees a partial registry and two concurrent writers never
-        # collide on a shared temp path.
-        target = registry_path(self._root)
-        handle, tmp_name = tempfile.mkstemp(dir=self._root, prefix="registry.", suffix=".tmp")
-        with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
-            tmp_file.write(serialised + "\n")
-        os.chmod(tmp_name, FILE_MODE)
-        os.replace(tmp_name, target)
+        write_atomic(registry_path(self._root), serialised + "\n")
 
     def find_by_id(self, project_id: str) -> ProjectRecord | None:
         """Return the record with this id, or None."""

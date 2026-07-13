@@ -12,13 +12,12 @@ recognised secret shape.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.redaction import redact
-from mimer.store import FILE_MODE
+from mimer.storeio import append_text
 
 # The severity tag a non-fatal note carries at the head of its message. It keeps
 # the log a single grep-able column while letting the session-start health notice
@@ -38,8 +37,11 @@ def log_failure(message: str, *, root: Path | None = None, fatal: bool = True) -
     shape-based, so it does not strip non-secret personal data or memory prose;
     callers must not pass raw memory content (log an identifier or exception type
     instead). Newlines are then flattened so a single failure is always a single
-    physical line, keeping the log grep-able. Assumes the store already exists (its
-    creation is :func:`mimer.store.ensure_store`'s job).
+    physical line, keeping the log grep-able. The append runs through storeio's
+    ``O_APPEND`` primitive, which creates the store directory and the log itself
+    owner-only when absent, so a failure logged before
+    :func:`mimer.store.ensure_store` has run — as capture's last-resort handler can
+    — still lands 0600 (issue #26).
 
     Args:
         message: A description of what went wrong.
@@ -61,18 +63,15 @@ def log_failure(message: str, *, root: Path | None = None, fatal: bool = True) -
     if not fatal:
         safe = f"{NON_FATAL_PREFIX} {safe}"
 
+    # Frame the record as a single grep-able physical line — the timestamp, then
+    # the redacted message with newlines flattened — and append it through
+    # storeio's O_APPEND primitive (ADR 0011's write-discipline map). append_text
+    # creates a missing log owner-only, so a log recreated before ensure_store runs
+    # — this can fire from capture's last-resort handler, ahead of it — is still
+    # 0600, never the umask default (issue #26).
     timestamp = datetime.now(UTC).isoformat()
     line = f"{timestamp}\t{safe}".replace("\n", " ").replace("\r", " ")
-
-    # Append with an explicit owner-only creation mode. ensure_store normally
-    # seeds mimer.log at FILE_MODE first, but this runs from capture's last-resort
-    # handler, which can fire before ensure_store — a recreated log must still be
-    # 0600, never the umask default (issue #26).
-    fd = os.open(root / LOG_FILENAME, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
-    try:
-        os.write(fd, (line + "\n").encode("utf-8"))
-    finally:
-        os.close(fd)
+    append_text(root / LOG_FILENAME, line)
 
 
 def fresh_failures(root: Path | None = None, *, within_hours: int = 24) -> list[str]:

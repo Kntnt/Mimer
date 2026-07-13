@@ -8,6 +8,12 @@ columns, so scoping, citations and reranking are plain SQL. Transcripts are not
 indexed. Search merges vector and keyword hits (reciprocal-rank fusion), reranks
 by recency, source weight and project, suppresses tombstoned facts, and admits
 ignorance by returning nothing when nothing is relevant.
+
+Chunk text is never redacted at insert, and needs no redaction of its own: every
+insert reads from an artefact already redacted before it reached disk — the daily
+logs and the permanent bundle, written through storeio — or from a Concept
+redacted at creation. Because the index is derived state, redacting again at insert
+could only make it diverge from the files its citations quote.
 """
 
 from __future__ import annotations
