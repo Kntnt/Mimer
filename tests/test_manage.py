@@ -14,8 +14,10 @@ from mimer.bundle import Source, create_concept, retract_concept
 from mimer.failure_log import log_failure
 from mimer.framing import DATA_FRAME_HEADER
 from mimer.index import reindex, search
+from mimer.longterm import append_entry
 from mimer.manage import _print_concepts, main, profile, recent_concepts, store_health
 from mimer.paths import LOG_FILENAME
+from mimer.registry import Registry
 from mimer.store import ensure_store
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
@@ -134,6 +136,31 @@ def test_store_health_reports_counts_sizes_and_failures(store_root: Path) -> Non
     assert report.store_bytes > 0
     assert report.last_distillation == "2026-07-05T00:00:00Z"
     assert any("something went wrong" in line for line in report.recent_failures)
+
+
+def test_store_health_project_count_is_registry_disk_union(store_root: Path) -> None:
+    """Store health counts projects as the registry ∪ disk union, so a disk-only
+    orphan whose memory was captured before it was ever registered still counts.
+
+    Deliberate behaviour change (issue #48): the previous count was the registry
+    count, falling back to the disk count only when the registry was empty, which
+    hid every orphan the moment any project was registered. Routing the count
+    through the store walk's ``known_project_ids`` makes it the full set of
+    projects the store is aware of — the same set widened recall already reaches.
+    """
+
+    ensure_store(store_root)
+    registry = Registry.load(store_root)
+    registry.create("registered")
+    registry.save()
+
+    # An orphan captured before registration: writing its daily log materialises
+    # the project directory on disk without ever entering it in the registry.
+    append_entry("orphan", "2026-07-10", "- captured before registration\n", store_root)
+
+    report = store_health(store_root)
+
+    assert report.project_count == 2
 
 
 def test_inspection_output_frames_concept_bodies_as_data(

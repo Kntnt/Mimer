@@ -129,3 +129,24 @@ def test_context_md_carries_the_store_walk_entry() -> None:
     """CONTEXT.md carries the Store walk glossary entry verbatim (issue #47)."""
 
     assert CONTEXT_ENTRY in (ROOT / "CONTEXT.md").read_text(encoding="utf-8")
+
+
+def test_only_the_store_walk_lists_the_projects_tree() -> None:
+    """No module outside the store walk enumerates the projects tree (issue #48).
+
+    The projects-directory name lives in ``PROJECTS_DIRNAME``; the only two source
+    files that may name it are ``storewalk.py``, the sole module that lists the
+    tree, and ``registry.py``, which defines the constant and builds a single
+    project's path from it. Any other reference means an inline walk survived the
+    routing, so this grep is the standing guard the acceptance criteria demand.
+    """
+
+    source = ROOT / "src" / "mimer"
+    allowed = {"storewalk.py", "registry.py"}
+    offenders = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in source.rglob("*.py")
+        if path.name not in allowed and "PROJECTS_DIRNAME" in path.read_text(encoding="utf-8")
+    )
+
+    assert offenders == [], f"projects-tree walk outside the store walk: {offenders}"
