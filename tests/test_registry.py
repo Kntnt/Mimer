@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import stat
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,48 @@ def test_round_trips_records(tmp_path: Path) -> None:
     assert record is not None
     assert record.remotes == ["github.com/x/a"]
     assert record.paths == ["/work/a"]
+
+
+def test_registry_round_trips_populated_records_through_write_atomic(tmp_path: Path) -> None:
+    """A fully populated registry — remotes, paths, per-project settings and import
+    state, carrying the provenance identifiers Mimer cites (a git SHA, a ULID, an
+    ISO date, remote URLs) plus a secret-shaped setting key — survives a save/load
+    cycle field-for-field equal.
+
+    ``save`` persists through the shared ``write_atomic`` primitive (#56). This is
+    the positive proof the migration demands: once that primitive redacts at the
+    write seam, a false positive on this structural JSON would be silent corruption
+    rather than a leak, so the guarantee has to be shown present, not inferred from
+    the suite merely staying green. The identifiers seeded here are exactly the
+    shape-safe provenance the redaction pass is designed to pass through untouched,
+    and the ``api_token`` key proves the JSON quoting keeps a secret-shaped setting
+    name from tripping the assigned-secret rule.
+    """
+
+    ensure_store(tmp_path)
+    reg = Registry.load(tmp_path)
+    reg.create(
+        "proj-a",
+        remotes=["github.com/acme/widgets", "git@github.com:acme/widgets.git"],
+        paths=["/work/widgets", "/Users/dev/widgets"],
+    )
+    reg.set_capture("proj-a", enabled=False)
+    reg.set_widening("proj-a", participate=False)
+    reg.set_import_state(
+        "proj-a",
+        {
+            "cursor": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+            "last_ulid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "started": "2026-07-14",
+            "api_token": "structural-key-must-survive",
+        },
+    )
+    reg.save()
+
+    original = reg.find_by_id("proj-a")
+    reloaded = Registry.load(tmp_path).find_by_id("proj-a")
+    assert original is not None and reloaded is not None
+    assert asdict(reloaded) == asdict(original)
 
 
 def test_lookup_by_remote_and_path(tmp_path: Path) -> None:

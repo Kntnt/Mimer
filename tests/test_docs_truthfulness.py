@@ -27,6 +27,7 @@ PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 INIT = ROOT / "src" / "mimer" / "__init__.py"
 CONTEXT = ROOT / "CONTEXT.md"
 STOREIO = ROOT / "src" / "mimer" / "storeio.py"
+INDEX = ROOT / "src" / "mimer" / "index.py"
 
 
 def _user_facing_commands() -> set[str]:
@@ -233,3 +234,17 @@ def test_storeio_write_discipline_map_names_the_announcement_queue_canonically()
     forbidden = [term for term in _avoid_terms_for("Announcement queue") if term in source]
     assert forbidden == [], f"storeio's write-discipline map uses forbidden term(s): {forbidden}"
     assert "announcement queue" in source, "storeio's map omits the canonical 'announcement queue'"
+
+
+def test_index_docstring_explains_why_inserts_trust_their_sources() -> None:
+    """The indexer's docstring must state why an insert needs no redaction of its
+    own: chunk text is never redacted at insert because every insert reads from an
+    artefact already redacted before it reached disk, or from a Concept redacted at
+    creation, and the index is derived state — so redacting again at insert could
+    only make it diverge from the files its citations quote (#56)."""
+
+    source = INDEX.read_text(encoding="utf-8").lower()
+    assert "never redacted at insert" in source
+    assert "redacted at creation" in source
+    assert "derived state" in source
+    assert "diverge" in source
