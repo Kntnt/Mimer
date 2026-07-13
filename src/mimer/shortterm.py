@@ -164,6 +164,24 @@ def migrate_short_term_content(project_id: str, content: str) -> str:
     return render_short_term(project_id, _parse_legacy(content))
 
 
+def _has_structural_durable_marker(content: str) -> bool:
+    """Whether any entry carries the durable marker in its structural slot — the
+    unambiguous tell that a file is already in the post-#40 format.
+
+    Only the structural slot counts: the marker flush against the date bracket,
+    which :data:`_ENTRY_RE` captures as its second group. The legacy format always
+    wrote a space after that bracket, so a match here cannot be a legacy line, and
+    free text merely containing ``][durable]`` — an array index, say — never
+    matches. This is why the migration sweep tests it rather than a raw substring,
+    which would wrongly flag such a legacy file as already migrated (#40).
+    """
+
+    return any(
+        (match := _ENTRY_RE.match(line.strip())) is not None and match.group(2) is not None
+        for line in content.splitlines()
+    )
+
+
 def migrate_short_term_files(root: Path | None = None) -> int:
     """One-time upgrade of every project's short-term file to the structural
     durable-marker format (#40); returns the number of files rewritten.
@@ -208,11 +226,16 @@ def migrate_short_term_files(root: Path | None = None) -> int:
         with project_lock(project_id, root=root):
             content = path.read_text(encoding="utf-8")
 
-            # Skip a file already in the new format: the marker is written only
-            # after this loop, so a crash mid-sweep would otherwise let a retry
-            # re-parse an already-rewritten durable line — ``][durable]`` — with the
-            # legacy parser and corrupt it. Its presence is the unambiguous tell.
-            if f"]{_DURABLE_MARKER}" in content:
+            # Skip a file already in the new format: the store marker is written
+            # only after this loop, so a crash mid-sweep would otherwise let a retry
+            # re-parse an already-rewritten durable line with the legacy parser and
+            # corrupt it. The tell is the marker in its structural slot — flush
+            # against the date bracket — which the legacy format, always writing a
+            # space there, can never produce. A raw ``][durable]`` substring test
+            # would also fire on free text such as ``arr[i][durable]``, wrongly
+            # skipping a genuine legacy file and letting that very corruption
+            # through (issue #40).
+            if _has_structural_durable_marker(content):
                 continue
 
             write_atomic(path, migrate_short_term_content(project_id, content))

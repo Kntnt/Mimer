@@ -734,6 +734,6 @@ def test_announcement_enqueued_between_peek_and_clear_survives(store_root: Path)
     distill_module._record_distilled("p", "second concept", store_root)
 
     # Clearing must drop only what was emitted, leaving the concurrent announcement.
-    clear_distilled("p", root=store_root)
+    clear_distilled("p", emitted, root=store_root)
 
     assert peek_distilled("p", root=store_root) == ["second concept"]

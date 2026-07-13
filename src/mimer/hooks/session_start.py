@@ -69,10 +69,12 @@ def handle(payload: Mapping[str, Any]) -> None:
     _emit(snapshot)
 
     # Clear the announcement queue only now that the snapshot carrying it has been
-    # emitted: had any step above failed, the queue would survive and re-announce
+    # emitted, and clear only the titles just emitted — not the whole queue — so a
+    # concurrent capture/digest writer's enqueue between the peek and here is not
+    # dropped. Had any step above failed, the queue would survive and re-announce
     # next session rather than drop the notice permanently (ADR 0014, #40).
     if distilled:
-        clear_distilled(resolution.project_id, root)
+        clear_distilled(resolution.project_id, distilled, root)
 
 
 def _pause_notice(root: Path) -> str:

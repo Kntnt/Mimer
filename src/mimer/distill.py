@@ -361,21 +361,52 @@ def peek_distilled(project_id: str, root: Path | None = None) -> list[str]:
     return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def clear_distilled(project_id: str, root: Path | None = None) -> None:
-    """Clear the announcement queue once its titles have been emitted (#40)."""
+def clear_distilled(project_id: str, emitted: list[str], root: Path | None = None) -> None:
+    """Remove exactly the announcements already emitted, leaving any enqueued
+    concurrently between the peek and this call for a later session.
 
-    _queue_path(project_id, root).unlink(missing_ok=True)
+    This replaces the whole-queue unlink that dropped an announcement a capture or
+    digest writer appended between :func:`peek_distilled` and here — the silent
+    loss #40 exists to prevent. Each emitted title removes its first matching
+    queued line and no more, so a title enqueued concurrently is absent from
+    ``emitted`` and survives to the next session (at-least-once, ADR 0014).
+
+    The re-read and rewrite run under the project lock so the read-modify-write
+    cannot clobber a concurrent distiller's append: that writer enqueues while
+    holding the same lock, so it and this clear serialise (ADR 0011).
+    """
+
+    if not emitted:
+        return
+
+    path = _queue_path(project_id, root)
+
+    # Re-read the live queue under the lock, drop only the emitted titles, and
+    # write back the remainder — a concurrently enqueued title is not in emitted,
+    # so it stays; when nothing remains the queue file is removed.
+    with project_lock(project_id, root=root):
+        if not path.exists():
+            return
+        remaining = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        for title in emitted:
+            if title in remaining:
+                remaining.remove(title)
+        if remaining:
+            write_atomic(path, "\n".join(remaining) + "\n")
+        else:
+            path.unlink(missing_ok=True)
 
 
 def drain_distilled(project_id: str, root: Path | None = None) -> list[str]:
     """Return and clear the titles queued for the next session's announcement.
 
     A convenience over :func:`peek_distilled` then :func:`clear_distilled` for a
-    caller that has no failure-sensitive step between reading and clearing.
+    caller that has no failure-sensitive step between reading and clearing; it
+    clears only the titles it read, so a concurrent enqueue is preserved (#40).
     """
 
     items = peek_distilled(project_id, root)
-    clear_distilled(project_id, root)
+    clear_distilled(project_id, items, root)
     return items
 
 
