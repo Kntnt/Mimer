@@ -20,10 +20,12 @@ from mimer.digest import digest_session
 from mimer.distill import (
     DistillResult,
     _is_instruction_shaped,
+    clear_distilled,
     distill_durable_entries,
     distill_fact,
     distill_session,
     drain_distilled,
+    peek_distilled,
 )
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
@@ -713,3 +715,25 @@ def test_distilled_concepts_queue_for_the_announcement(store_root: Path) -> None
     assert any("OKF" in item for item in announced)
     # Draining is one-shot: the next read is empty.
     assert drain_distilled("p", root=store_root) == []
+
+
+def test_announcement_enqueued_between_peek_and_clear_survives(store_root: Path) -> None:
+    """An announcement a capture/digest writer enqueues between session start's peek
+    and its clear must survive to a later session: clearing removes only the
+    announcements already emitted, never the whole queue — the silent loss #40
+    exists to prevent (ADR 0014)."""
+
+    ensure_store(store_root)
+    # Session start peeks the queued announcement it is about to emit.
+    distill_module._record_distilled("p", "first concept", store_root)
+    emitted = peek_distilled("p", root=store_root)
+    assert emitted == ["first concept"]
+
+    # A concurrent capture/digest writer enqueues a second announcement after the
+    # peek but before session start clears.
+    distill_module._record_distilled("p", "second concept", store_root)
+
+    # Clearing must drop only what was emitted, leaving the concurrent announcement.
+    clear_distilled("p", root=store_root)
+
+    assert peek_distilled("p", root=store_root) == ["second concept"]

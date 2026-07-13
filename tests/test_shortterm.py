@@ -116,6 +116,41 @@ def test_migration_preserves_a_legacy_durable_entry_and_is_gated(store_root: Pat
     assert preserved == [literal]
 
 
+def test_migration_does_not_skip_a_legacy_file_whose_text_contains_the_marker_substring(
+    store_root: Path,
+) -> None:
+    """A genuine pre-#40 file whose free text merely contains ``][durable]`` (an
+    array-index note, say) must still be migrated: the skip guard keys on the
+    marker's structural slot, not a raw substring, so the file's real
+    trailing-durable entry is not left for the new parser to misread and corrupt —
+    the very corruption the sweep exists to prevent (#40)."""
+
+    ensure_store(store_root)
+    path = short_term_path("proj", store_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = (
+        "# Short-term memory — proj\n\n"
+        "## Active threads\n\n"
+        "## Pending decisions\n\n"
+        "## Notes\n\n"
+        "- [2026-07-11] access arr[i][durable] carefully\n"
+        "- [2026-07-11] the client uses PostgreSQL [durable]\n"
+    )
+    path.write_text(legacy, encoding="utf-8")
+
+    migrated = migrate_short_term_files(store_root)
+
+    assert migrated == 1
+    notes = parse_short_term(path.read_text())["Notes"]
+    # The genuine trailing-durable entry became a durable structural entry.
+    durable = next(entry for entry in notes if entry.durable)
+    assert durable.text == "the client uses PostgreSQL"
+    # The free-text entry stays transient with its text intact.
+    assert any(
+        entry.text == "access arr[i][durable] carefully" and not entry.durable for entry in notes
+    )
+
+
 def test_migration_leaves_an_already_migrated_durable_file_untouched(store_root: Path) -> None:
     """A crash mid-sweep leaves the marker unwritten, so a retry re-runs; a file
     already rewritten to the structural format must survive that retry intact
