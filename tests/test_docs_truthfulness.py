@@ -25,6 +25,8 @@ SKILL = ROOT / "skills" / "memory" / "SKILL.md"
 PYPROJECT = ROOT / "pyproject.toml"
 PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 INIT = ROOT / "src" / "mimer" / "__init__.py"
+CONTEXT = ROOT / "CONTEXT.md"
+STOREIO = ROOT / "src" / "mimer" / "storeio.py"
 
 
 def _user_facing_commands() -> set[str]:
@@ -202,3 +204,32 @@ def test_skill_documents_the_claude_plugin_root_dependency() -> None:
     text = SKILL.read_text(encoding="utf-8")
     assert "${CLAUDE_PLUGIN_ROOT}" in text
     assert "resolves in skill-run Bash" in text
+
+
+def _avoid_terms_for(glossary_term: str) -> list[str]:
+    """The lowercased names CONTEXT.md's glossary entry for *glossary_term* lists
+    under its _Avoid_ line — the names that concept must never be called."""
+
+    text = CONTEXT.read_text(encoding="utf-8")
+    entry = re.search(
+        rf"^\*\*{re.escape(glossary_term)}\*\*:.*?(?=^\*\*|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert entry is not None, f"CONTEXT.md has no glossary entry for {glossary_term!r}"
+    avoid = re.search(r"^_Avoid_:\s*(.+?)\s*$", entry.group(0), re.MULTILINE)
+    assert avoid is not None, f"CONTEXT.md's {glossary_term!r} entry has no _Avoid_ line"
+    return [term.strip().rstrip(".").strip().lower() for term in avoid.group(1).split(",")]
+
+
+def test_storeio_write_discipline_map_names_the_announcement_queue_canonically() -> None:
+    """storeio.py is the single home of the store's write-discipline map (#49), so
+    it must name the announcement queue by its canonical glossary term (#57) and
+    never a name CONTEXT.md's 'Announcement queue' entry forbids under _Avoid_
+    (notably 'distilled queue'). The on-disk filename '.distilled-queue' is a
+    hyphenated identifier, not the forbidden phrase, so it stays."""
+
+    source = STOREIO.read_text(encoding="utf-8").lower()
+    forbidden = [term for term in _avoid_terms_for("Announcement queue") if term in source]
+    assert forbidden == [], f"storeio's write-discipline map uses forbidden term(s): {forbidden}"
+    assert "announcement queue" in source, "storeio's map omits the canonical 'announcement queue'"
