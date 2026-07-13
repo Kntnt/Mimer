@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import mimer.distill as distill_module
+from mimer import matcher
 from mimer.bundle import INDEX_FILENAME, concept_path, list_concepts, read_concept
 from mimer.curate import remember
 from mimer.digest import digest_session
@@ -743,6 +744,81 @@ def test_two_short_facts_sharing_one_word_do_not_supersede(store_root: Path) -> 
     # Both survive as current knowledge: one shared word is not the same subject.
     active = [c for c in list_concepts(store_root) if c.status == "active"]
     assert len(active) == 2
+
+
+def test_non_english_fact_supersedes_its_reworded_predecessor(store_root: Path) -> None:
+    """A reworded non-English fact now finds the predecessor it supersedes (issue #53).
+
+    DELIBERATE behaviour change: distillation's old ASCII-only ``[a-z0-9]+`` scan saw
+    only fragments of the Swedish content words ``öl`` and ``ål`` — a bare ``l`` each,
+    both discarded by the old ``len > 2`` filter — so the two facts shared nothing and
+    a reworded non-English fact was minted as a second Concept instead of superseding
+    its predecessor. The matcher's Unicode tokenizer keeps ``öl`` and ``ål`` whole, so
+    the two facts share their real subject and the changed fact supersedes the earlier
+    one, leaving one current answer. Before this migration the second fact was
+    ``created`` and both stayed active.
+    """
+
+    ensure_store(store_root)
+    distill_fact(text="Krogen serverar öl, ål.", project_id="p", scope="global", root=store_root)
+    result = distill_fact(
+        text="Värdshuset bjuder öl, ål.", project_id="p", scope="global", root=store_root
+    )
+
+    assert result.status == "superseded"
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert len(active) == 1
+    assert "Värdshuset" in active[0].body
+
+
+def test_subject_carried_by_a_short_token_supersedes_its_predecessor(store_root: Path) -> None:
+    """A fact whose shared subject rides on ≤2-character tokens finds its
+    predecessor (issue #53).
+
+    DELIBERATE behaviour change: distillation's old ``len > 2`` filter dropped the
+    two-character tech tokens ``uv`` and ``ci``, so ``uv drives ci`` and ``uv blocks
+    ci`` shared nothing and neither superseded the other. The matcher applies no
+    length filter — short tech tokens carry subject identity — so the changed fact now
+    supersedes its predecessor. Before this migration the second fact was ``created``
+    and both stayed active.
+    """
+
+    ensure_store(store_root)
+    distill_fact(text="uv drives ci", project_id="p", scope="global", root=store_root)
+    result = distill_fact(text="uv blocks ci", project_id="p", scope="global", root=store_root)
+
+    assert result.status == "superseded"
+    active = [c for c in list_concepts(store_root) if c.status == "active"]
+    assert len(active) == 1
+    assert "blocks" in active[0].body
+
+
+def test_distillation_owns_no_private_fact_identity_engine() -> None:
+    """Distillation delegates every fuzzy fact-identity question to the matcher and
+    keeps only its supersession *policy* (issue #53).
+
+    Its private engine — the subject test, the ASCII-only content-word tokenizer, the
+    normalise copy and the overlap-floor constant — is gone; a grep for any of them
+    finds nothing. What stays is the policy: scope ranks and the supersession-target
+    choice. The matcher answers matching; distillation answers what to do about a match.
+    """
+
+    # The private engine's names are gone from the module (the policy helper
+    # ``_same_subject_concept`` is a distinct name and stays).
+    for gone in ("_content_words", "_same_subject", "_normalise", "_STOP", "_MIN_SUBJECT_OVERLAP"):
+        assert not hasattr(distill_module, gone), gone
+
+    # No private tokenizer regex and no reach into the retrieval stopword set survive
+    # in the source — matching is imported from the matcher.
+    source = Path(distill_module.__file__).read_text(encoding="utf-8")
+    assert "STOPWORDS" not in source
+    assert "[a-z0-9]" not in source
+    assert distill_module.is_same_subject is matcher.is_same_subject
+    assert distill_module.normalised is matcher.normalised
+
+    # The supersession policy stays put.
+    assert distill_module._SCOPE_RANK == {"project": 0, "global": 1}
+    assert hasattr(distill_module, "_same_subject_concept")
 
 
 def test_project_scoped_fact_cannot_supersede_a_global_concept(store_root: Path) -> None:

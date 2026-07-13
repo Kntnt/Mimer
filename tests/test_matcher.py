@@ -18,7 +18,30 @@ longer, unrelated text that merely contains it (substring over-matched).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from mimer.matcher import is_same_fact, is_same_subject, normalised
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# The Matcher glossary entry pins into CONTEXT.md verbatim, in the plain sibling
+# style of the other Mechanics entries (issue #53).
+CONTEXT_ENTRY = (
+    "**Matcher**:\n"
+    "The one module answering fact identity. Three notions, one home: *same fact?* "
+    "(forget, tombstones, recall suppression — never matches a value substitution, so "
+    "a correction is never suppressed), *same subject?* (distillation's dedup and "
+    "supersession targeting — must match one, so a changed fact finds its predecessor) "
+    "and the *normalised* exact identity they and remember-dedup share. One tokenizer, "
+    "one stopword policy.\n"
+    "_Avoid_: similarity, dedup logic, fuzzy match."
+)
+
+
+def test_context_carries_the_matcher_glossary_entry() -> None:
+    """CONTEXT.md carries the Matcher glossary entry verbatim (issue #53)."""
+
+    assert CONTEXT_ENTRY in (ROOT / "CONTEXT.md").read_text(encoding="utf-8")
 
 
 def test_identical_text_is_the_same_fact() -> None:

@@ -57,6 +57,28 @@ def test_fts_query_drops_a_word_that_became_glue_for_recall() -> None:
     assert index._fts_query("new releases") == '"releases"'
 
 
+def test_retrieval_stopwords_docstring_no_longer_claims_to_serve_the_whole_system() -> None:
+    """The stopword set is re-scoped honestly to retrieval, with recall as its one
+    consumer (issue #53).
+
+    Fact identity moved to the matcher, which owns its own stopword set, so this set
+    no longer serves distillation's subject-matcher — and its docstring must not claim
+    to be the single stopword set for the whole system, a claim that now contradicts
+    the matcher's docstring.
+    """
+
+    source = Path(mtext.__file__).read_text(encoding="utf-8")
+
+    # The now-false whole-system and subject-matcher claims are gone.
+    assert "single stopword set for the whole system" not in source
+    assert "subject-matcher" not in source
+
+    # It names what it now is — the retrieval stopword set — and its one consumer.
+    lowered = source.lower()
+    assert "retrieval" in lowered
+    assert "recall" in lowered
+
+
 def test_truncate_returns_short_text_unchanged() -> None:
     assert mtext.truncate("a short line", 80) == "a short line"
 

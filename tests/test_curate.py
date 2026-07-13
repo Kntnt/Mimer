@@ -57,6 +57,29 @@ def test_remember_duplicate_updates_not_duplicates(
     assert notes[0].date == "2026-07-11"
 
 
+def test_remember_dedup_key_delegates_to_the_matcher_normalised() -> None:
+    """Remember-dedup keys off the matcher's exact ``normalised`` identity, not a
+    private normalise copy (issue #53).
+
+    Remember-dedup is deliberately exact, never fuzzy: it asks whether the user is
+    re-stating the one note they are editing, where fuzzy overlap would silently
+    overwrite a distinct-but-similar note. So it shares the matcher's exact-identity
+    ``normalised``, delegating rather than re-implementing the collapse.
+    """
+
+    import inspect
+
+    from mimer import curate
+    from mimer.matcher import normalised
+
+    # It yields the matcher's normalised form...
+    assert curate._key("The  Deploy   KEY is set") == normalised("The  Deploy   KEY is set")
+    # ...by calling it, so a future change to the shared identity cannot leave a stale
+    # private copy behind. The call — not merely the word in the docstring — is what a
+    # re-implemented collapse would lack.
+    assert "normalised(" in inspect.getsource(curate._key)
+
+
 def test_over_cap_durable_write_promotes_to_permanent(
     store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
