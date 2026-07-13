@@ -29,6 +29,34 @@ def _anthropic_key() -> str:
     return "sk-ant-" + "api03-" + "0123456789abcdefghij" + "KLMNOPQRSTUVWXYZ-_09" + "AA"
 
 
+def _openai_project_key() -> str:
+    # OpenAI's project-scoped key (the dashboard default since 2024): the
+    # `sk-proj-` prefix the bare `sk-` rule cannot reach, since the `-` after
+    # `proj` falls outside that rule's character class — it stops at 4 characters,
+    # far below the 20 minimum. The `sk-svcacct-`/`sk-admin-` forms share the shape.
+    return (
+        "sk-proj-" + "Ab1Cd2EfGh3Ij4Kl5Mn6Op7Qr" + "_" + "T3BlbkFJ" + "Uv8Wx9Yz0123456789abcdefgh"
+    )
+
+
+def _gitlab_pat() -> str:
+    # GitLab personal access token: the `glpat-` prefix has no existing rule (the
+    # deploy-token `gldt-` and runner-token `glrt-` forms share the family).
+    return "glpat-" + "ABCdef1234567890" + "_xyzABCdefGHI"
+
+
+def _pem_private_key_body() -> str:
+    return "MIIEowIBAAKCAQEA" + "wV3Kd8ExampleBase64Body0123456789" + "abcdEFGHijklMNOP+/=="
+
+
+def _pem_private_key() -> str:
+    # A PEM private-key block — the headline secret class ADR 0020 invokes. The
+    # rule matches BEGIN..END across newlines (DOTALL), so the whole block is
+    # stripped through each write primitive; the base64 body is what must vanish.
+    body = _pem_private_key_body()
+    return f"-----BEGIN RSA {'PRIVATE'} KEY-----\n{body}\n-----END RSA {'PRIVATE'} KEY-----"
+
+
 def _jwt() -> str:
     return (
         "eyJ"
@@ -140,6 +168,9 @@ def _url_credential() -> str:
 # One sample per secret class the issue lists as currently missed.
 SAMPLES: list[Sample] = [
     Sample("anthropic-key", _anthropic_key(), _anthropic_key()),
+    Sample("openai-project-key", _openai_project_key(), _openai_project_key()),
+    Sample("gitlab-pat", _gitlab_pat(), _gitlab_pat()),
+    Sample("pem-private-key", _pem_private_key(), _pem_private_key_body()),
     Sample("jwt", _jwt(), _jwt()),
     Sample("github-fine-grained-pat", _github_pat(), _github_pat()),
     Sample("google-api-key", _google_api_key(), _google_api_key()),
