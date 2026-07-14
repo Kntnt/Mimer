@@ -82,6 +82,19 @@ def head_commit(cwd: Path) -> Commit | None:
     walk of history. Returns None for a non-git directory, a repository with no
     HEAD yet, a missing ``git`` binary or any other git failure, so the caller can
     treat "no commit to cite" uniformly — no citation, never a crash.
+
+    The three fields — full sha, subject and committer date — are read in one call,
+    delimited by the ASCII unit separator so a subject bearing any ordinary
+    punctuation still splits cleanly. Output that does not parse into the three
+    fields is treated as no commit, keeping the failure mode uniform.
     """
 
-    return None
+    output = _run_git(cwd, "log", "-1", "--format=%H%x1f%s%x1f%cs")
+    if not output:
+        return None
+
+    parts = output.split("\x1f")
+    if len(parts) != 3 or not parts[0]:
+        return None
+    sha, subject, commit_date = parts
+    return Commit(sha=sha, subject=subject, date=commit_date)
