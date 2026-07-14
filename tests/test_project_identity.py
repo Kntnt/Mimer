@@ -92,6 +92,38 @@ def test_worktrees_share_identity(store_root: Path, tmp_path: Path) -> None:
     assert linked.project_id == main.project_id
 
 
+def test_mimer_marker_file_has_no_effect_on_identity(store_root: Path, tmp_path: Path) -> None:
+    """A ``.mimer`` file is inert: a git project resolves by its remote exactly as if
+    the file were any other file in the tree, never by the marker's contents
+    (ADR 0022, #61)."""
+
+    repo = init_repo(tmp_path / "repo", remotes={"origin": "git@github.com:x/repo.git"})
+    (repo / ".mimer").write_text("hijacked-id\n", encoding="utf-8")
+
+    result = resolve(repo, root=store_root)
+
+    assert result.status is ResolutionStatus.CREATED
+    assert result.project_id != "hijacked-id"
+    assert result.project_id is not None
+    record = Registry.load(store_root).find_by_id(result.project_id)
+    assert record is not None
+    assert "github.com/x/repo" in record.remotes
+
+
+def test_mimer_marker_file_in_a_plain_dir_is_path_keyed(store_root: Path, tmp_path: Path) -> None:
+    """In a non-git directory a ``.mimer`` file changes nothing: identity is path-keyed,
+    not taken from the marker's declared id (ADR 0022, #61)."""
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / ".mimer").write_text("declared-id\n", encoding="utf-8")
+
+    result = resolve(plain, root=store_root)
+
+    assert result.status is ResolutionStatus.CREATED
+    assert result.project_id != "declared-id"
+
+
 def test_monorepo_subproject_marker_gets_separate_identity(
     store_root: Path, tmp_path: Path
 ) -> None:
