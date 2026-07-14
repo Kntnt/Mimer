@@ -243,14 +243,17 @@ def _anchor(transcript_path: Any) -> Exchange | None:
 
     A missing or malformed transcript must not abort the pass: the deterministic
     promotion of durable short-term entries still has to run, so a read failure is
-    absorbed here into a None anchor (the day then falls back to today).
+    absorbed here into a None anchor (the day then falls back to today). A crash can
+    truncate the transcript mid-write, leaving an incomplete UTF-8 multibyte
+    sequence, so the decode failure (``UnicodeDecodeError`` — a ``ValueError``, not
+    an ``OSError``) is absorbed alongside the OS-level read failure.
     """
 
     if not transcript_path:
         return None
     try:
         return last_exchange(Path(transcript_path))
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
