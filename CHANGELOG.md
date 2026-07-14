@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] – 2026-07-14
+
+### Added
+
+- The **Visible seam** for permanent memory: one presentation read (`visible_concepts`) that every surface showing Concepts — the injected profile, the Concept-headline manifest, `mimer-manage profile` enumeration and the recent-Concepts listing — now filters through, so tombstoned, out-of-scope and superseded Concepts are hidden by construction instead of by each surface remembering to filter.
+- A single **store walk** module that enumerates the projects tree in one place, so `mimer-manage health` counts the union of registered and orphaned projects and no projects-tree walk lives outside it.
+- A public, thread-reentrant advisory lock reachable by owner name (`named_lock`), replacing the store-wide sentinel-id locks.
+- A version-consistency check (`scripts/check_version.py`), wired into pre-commit and CI, that fails the build if the version drifts across its four canonical locations (`pyproject.toml`, `src/mimer/__init__.py`, `.claude-plugin/plugin.json`, and the latest `CHANGELOG.md` heading).
+
+### Changed
+
+- **Redaction is now structural, enforced at the write seam.** Every low-level store write primitive strips secrets before bytes reach disk, and the former bypass writers — the project registry and the failure log — are routed through that seam, so no store write can leak a secret by forgetting to redact; a codified source scan guards against a new bypass writer slipping in. Defence-in-depth sink redaction is kept, never pruned as "redundant with the seam". More secret shapes are recognised: OpenAI project/service/admin keys (`sk-proj-`, `sk-svcacct-`, `sk-admin-`), GitLab tokens (`glpat-`, `gldt-`, `glrt-`), and PEM private-key blocks.
+- **Non-English facts now deduplicate during distillation.** Fact identity is consolidated into one Unicode-tokenized matcher (`is_same_subject`, `normalised`), so a reworded non-English fact finds its predecessor instead of creating a duplicate, and short (two-character-or-shorter) tokens now carry subject identity; the retrieval stopwords are re-scoped to their single consumer.
+- The store's advisory locks are now **thread-reentrant** — a Mimer call that re-enters its own lock no longer risks self-deadlock — and the store-wide locks are reached through owner-named accessors instead of sentinel ids, with cross-process exclusion and crash recovery unchanged.
+- Short-term memory now has one locked writer, and the newly-distilled-Concept announcement queue is a single `announcements()` context manager that is at-least-once by construction: a queued title is re-announced next session rather than lost if a session errors mid-emit.
+
+### Fixed
+
+- Forgetting is now consistent across every surface that shows Concepts: `mimer-manage profile` enumeration and the recent-Concepts listing filter tombstoned Concepts, closing a divergence where "what do you know about me?" could still show a forgotten pinned fact that the injected profile already hid.
+
 ## [0.1.0] – 2026-07-13
 
 ### Added
@@ -60,5 +80,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - The Stage 0–8 features were hardened across a pre-release review before first ship: automatic distillation now actually fires in normal use and is cap-triggered (#27, #28) without destroying unrelated or broader-scoped knowledge (#29); a changed fact supersedes its predecessor in one atomic step so recall returns exactly one current answer with the old one dropped from the search index (#30); project-scoped Concepts no longer leak through a widened recall (#20); the data-losing project merge is fixed (#33); permanent-memory writes are crash-safe and tolerate one bad Concept file (#17); the memory-is-data boundary is enforced by neutralising and nonce-fencing every injected surface (#36); identifiers are validated before building store paths (#25); the dedup ledgers are bounded (#41); the session digest is serialised under the project lock (#39); one clock drives capture, the digest and age labels (#37); repeated identical turns get distinct identities (#38); and the capture/hook path fails loudly and never drops work silently (#40).
 - Developer, test and CI hardening: CI now runs on Linux and macOS with coverage and a packaging smoke test, plus local pre-commit hooks (#44, #46); a documentation-truthfulness sweep aligned the README, docs and ADRs with the shipped code (#45); duplicated helpers were consolidated behind shared utilities and one "same fact?" matcher (#18, #19); git history beyond the last 100 commits is now backfilled (#42); and first-run install fails gracefully on model or index errors (#43).
 
-[Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.1.0
