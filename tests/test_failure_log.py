@@ -38,6 +38,36 @@ def test_log_failure_redacts_secret_before_writing(store_root: Path) -> None:
     assert "REDACTED" in contents
 
 
+def test_log_failure_redacts_on_its_own_account_before_the_write_seam(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """log_failure redacts the record itself before handing it to the write seam.
+
+    ADR 0020 keeps every sink's redaction call as defence-in-depth and forbids
+    pruning it as "redundant with the seam"; #56 deleted this one and leaned solely
+    on ``storeio.append_text``'s seam redaction. Capturing the exact string handed
+    to append_text — with the seam stubbed out so its own pass cannot mask a missing
+    sink pass — proves log_failure redacted the secret before the seam, not only at
+    it: the argument is already free of the secret and already carries the marker.
+    """
+
+    from mimer import failure_log
+
+    ensure_store(store_root)
+    secret = _aws_key()
+
+    # Stub the write seam to record the exact string log_failure hands it, so the
+    # seam's own redaction cannot stand in for the sink-level pass under test.
+    captured: list[str] = []
+    monkeypatch.setattr(failure_log, "append_text", lambda path, text: captured.append(text))
+
+    log_failure(f"capture: boom while handling {secret}", root=store_root)
+
+    assert captured
+    assert secret not in captured[0]
+    assert "REDACTED" in captured[0]
+
+
 def test_fresh_failures_redacts_legacy_unredacted_line(store_root: Path) -> None:
     """A secret-bearing line written before write-time redaction existed is still
     not surfaced verbatim: fresh_failures redacts on read (issue #24)."""
