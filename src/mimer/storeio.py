@@ -8,7 +8,7 @@ single home of that map, and the primitive that implements each row:
 Artefact                                Discipline                     Primitive
 ======================================  =============================  ===========================
 short-term memory (short-term.md)       locked RMW (per-project lock)  project_lock + write_atomic
-capture/digest/git ledgers (#41)        locked RMW (per-project lock)  project_lock + write_atomic
+the capture ledger (#41)                locked RMW (per-project lock)  project_lock + write_atomic
 the permanent bundle (+ index.md)       locked RMW (store-wide named)  named_lock + write_atomic
 the registry (registry.json)            locked RMW (store-wide named)  named_lock + write_atomic
 daily-log entries                       lockless O_APPEND              append_text
@@ -32,7 +32,7 @@ that also takes a **locked clear**: :func:`mimer.distill._clear_announcements`
 re-reads it and rewrites the survivors with :func:`write_atomic` (or ``unlink``
 when none remain) under :func:`project_lock`. Its enqueues stay lockless
 ``O_APPEND`` only because every enqueue runs under the caller's project lock —
-the session digest's :func:`mimer.shortterm.rewrite_sections` — so a title
+the boundary pass's :func:`mimer.shortterm.rewrite_sections` — so a title
 appended concurrently cannot be lost in the window between the clear's read and
 its write (the #40 lost update). A future writer
 that added a truly lockless enqueue would reopen that lost update, so the

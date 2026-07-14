@@ -90,7 +90,7 @@ def remember(
     A curated write is ``durable`` by default: the user explicitly asked Mimer to
     remember it and it passed the skill's salience judgment, so it is knowledge
     worth promoting to permanent memory. Only ``durable=False`` entries — the
-    digest's auto-refreshed working state — age out into the daily log
+    boundary pass's auto-refreshed working state — age out into the daily log
     (ADR 0017).
 
     When a write pushes short-term over the cap, the cap drives distillation

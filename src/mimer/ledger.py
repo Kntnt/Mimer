@@ -1,10 +1,10 @@
 """A bounded, rotated dedup ledger (issue #41).
 
-The capture, digest and git ledgers exist for one job: idempotency. They answer
-"have I already recorded this turn / session / commit?" so a double-fired hook or
-a re-run reader records nothing twice. A double-fire only recurs for a *recent*
-id — an id from months ago is never re-submitted — so a ledger needs a bounded
-window of recent ids, not infinite history.
+The capture ledger exists for one job: idempotency. It answers "have I already
+recorded this turn?" so a double-fired Stop hook records nothing twice. A
+double-fire only recurs for a *recent* id — an id from months ago is never
+re-submitted — so a ledger needs a bounded window of recent ids, not infinite
+history.
 
 This module holds exactly that window in a plain file, one id per line: it stays
 a plain file so dedup survives an index-free store (ADR 0011), and it keeps at
@@ -13,8 +13,7 @@ the file's size and the cost of a membership check or a record therefore stay
 bounded however long a project lives, instead of growing one id per turn forever.
 
 A record is a read-modify-write, so — like any store artefact rewritten in place
-(ADR 0011) — the caller must hold the per-project lock. Capture, the digest and
-the git reader all do.
+(ADR 0011) — the caller must hold the per-project lock. Capture does.
 """
 
 from __future__ import annotations
@@ -25,13 +24,11 @@ from pathlib import Path
 
 from mimer.storeio import write_atomic
 
-# The rotated window's default size: how many recent ids to keep for dedup. It
-# comfortably exceeds the git reader's commit window (gitreader._COMMIT_LIMIT), so
-# under linear history a commit still reachable by `git log` stays inside the
-# window and is not re-folded; only branch switching that folds more than a
-# window's worth of other commits can evict a reachable sha and re-fold it once.
-# It is a "simplest that works" bound, tunable in one place on a real limit — a
-# 16-hex-char turn id costs ~17 bytes, so 1000 ids is a ~17 KB file.
+# The rotated window's default size: how many recent ids to keep for dedup. It is
+# a "simplest that works" bound, tunable in one place on a real limit — a
+# 16-hex-char turn id costs ~17 bytes, so 1000 ids is a ~17 KB file — and it sits
+# far above the number of turns any single session double-fires, so a re-fired
+# Stop hook always finds its turn still inside the window.
 DEFAULT_CAPACITY = 1000
 
 
@@ -39,9 +36,9 @@ DEFAULT_CAPACITY = 1000
 class Ledger:
     """A dedup window of the most recent ``capacity`` keys, kept in a plain file.
 
-    Keys are whitespace-free tokens (turn ids, session ids, commit shas). Reads
-    are safe without coordination; :meth:`record` and :meth:`extend` rewrite the
-    file and so require the caller to hold the relevant project lock.
+    Keys are whitespace-free tokens (turn ids). Reads are safe without
+    coordination; :meth:`record` and :meth:`extend` rewrite the file and so
+    require the caller to hold the relevant project lock.
     """
 
     path: Path

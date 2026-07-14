@@ -30,8 +30,8 @@ class Exchange:
         """The day the turn belongs to on Mimer's UTC clock, ``YYYY-MM-DD``.
 
         Normalised to UTC (#37) so the day capture files a turn under agrees with
-        the day the digest and the age labels derive from the same clock,
-        whatever zone the transcript timestamp carries.
+        the day the session-boundary pass and the age labels derive from the same
+        clock, whatever zone the transcript timestamp carries.
         """
 
         return _parse_date(self.timestamp).isoformat()
@@ -78,18 +78,6 @@ def last_exchange(transcript_path: Path) -> Exchange | None:
     return Exchange(
         user_text, assistant_text, timestamp, _turn_id(timestamp, user_text, assistant_text)
     )
-
-
-def conversation_text(transcript_path: Path) -> str:
-    """Return the whole session as readable ``User:``/``Assistant:`` prose.
-
-    Used by the session digest, which needs the full conversation rather than
-    just the last exchange. Raises if the transcript cannot be read.
-    """
-
-    messages = _parse_messages(transcript_path.read_text(encoding="utf-8"))
-    labels = {"user": "User", "assistant": "Assistant"}
-    return "\n\n".join(f"{labels[role]}: {text}" for role, text, _ in messages if text)
 
 
 def _turn_id(timestamp: str, user_text: str, assistant_text: str) -> str:

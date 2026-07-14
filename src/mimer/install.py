@@ -106,7 +106,7 @@ def run_install(root: Path | None = None) -> InstallReport:
             ],
         )
 
-    # Build the index up front so capture, digest and git writes are indexed
+    # Build the index up front so capture and the boundary pass writes are indexed
     # from the first session; a build failure becomes a report too.
     try:
         reindex(root)

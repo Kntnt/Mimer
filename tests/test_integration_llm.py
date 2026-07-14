@@ -3,8 +3,8 @@
 Every unit test injects a fake Haiku reply, so the *success* path of
 ``llm.run_haiku`` — the ``claude -p --model haiku`` argv, ``check=True`` and the
 stdout parsing — never runs in CI. A vendor-side flag change or a wrapped output
-would then degrade the digest to "deferred / no concepts" silently. This module
-drives the real binary end to end.
+would then degrade the boundary pass to "deferred / no concepts" silently. This
+module drives the real binary end to end.
 
 It is skipped by default: the tests run only when ``MIMER_INTEGRATION=1`` is
 set and a ``claude`` binary is reachable, so default CI needs no live binary.
@@ -20,13 +20,12 @@ from pathlib import Path
 import pytest
 
 from mimer import llm
-from mimer.digest import digest_session
-from mimer.longterm import daily_log_path
-from mimer.project import resolve
+from mimer.boundary import run_boundary_pass
+from mimer.capture import capture_from_payload
 from mimer.store import ensure_store
 
 # The redacted real transcript shared with the parser coverage — a realistic
-# conversation for the digester to summarise.
+# conversation whose captured turns the boundary pass distils.
 REAL_TRANSCRIPT = Path(__file__).resolve().parent / "fixtures" / "real_transcript.jsonl"
 
 # The binary the real call would invoke, honouring the same override llm.py uses.
@@ -52,11 +51,12 @@ def test_run_haiku_success_path_returns_trimmed_stdout() -> None:
     assert "pong" in reply.lower()
 
 
-def test_real_digest_against_real_transcript_is_parseable(
+def test_real_boundary_pass_against_a_real_raw_record_completes(
     store_root: Path, project_dir: Path
 ) -> None:
-    """A real Haiku digest of a real transcript lands a parseable session digest in
-    the daily log — the end-to-end gate this ticket adds on top of the fakes."""
+    """A real Haiku boundary pass over a real captured raw record completes rather
+    than deferring — the end-to-end gate on top of the fakes, exercising the exact
+    ``claude -p`` argv and stdout parsing the unit fakes bypass."""
 
     ensure_store(store_root)
     payload = {
@@ -67,20 +67,12 @@ def test_real_digest_against_real_transcript_is_parseable(
         "transcript_path": str(REAL_TRANSCRIPT),
     }
 
-    # No haiku= override, so digest_session calls the real llm.run_haiku.
-    result = digest_session(payload, root=store_root, today=date(2026, 6, 18))
+    # Seed the raw long-term record the boundary pass distils from.
+    capture_from_payload(payload, root=store_root)
 
-    assert result.status == "digested", result.status
-    resolution = resolve(project_dir, root=store_root)
-    assert resolution.project_id is not None
-    log = daily_log_path(resolution.project_id, "2026-06-18", store_root)
+    # No haiku= override, so run_boundary_pass calls the real llm.run_haiku. A
+    # "completed" status is what proves the real CLI answered a non-empty, parseable
+    # reply — a deferral would mean the argv or stdout parsing broke.
+    result = run_boundary_pass(payload, root=store_root, today=date(2026, 6, 18))
 
-    # A parseable reply is what actually lands a digest block in the daily log —
-    # status=='digested' alone only means the reply was non-empty. Guard the read
-    # so a model that ignored the requested format fails as a clear assertion
-    # naming the cause, not a FileNotFoundError on the never-written log.
-    assert log.exists(), (
-        f"real digest left no daily-log entry (status={result.status}): the model "
-        "reply carried no parseable '## Digest' section"
-    )
-    assert "## Session digest" in log.read_text(encoding="utf-8")
+    assert result.status == "completed", result.status

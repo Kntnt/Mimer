@@ -1,62 +1,51 @@
 """SessionEnd hook entry point (Stage 3b).
 
-Runs the session's one batched Haiku digest: a digest into the daily log, a
-refresh of short-term memory's auto-maintained sections, and the archived
-transcript. The shared runner enforces the re-entrancy guard first, so a
-Mimer-spawned session never digests itself; when headless Claude is unavailable
-the digest defers gracefully (ADR 0009).
+Fires at session close. It spools the payload and spawns the session-boundary
+pass as a session-detached process, then returns immediately — so the batched
+Haiku pass never delays session close (ADR 0023), the way the Stop hook already
+spawns capture. The re-entrancy guard is enforced by the shared runner before
+this handler is reached, so a Mimer-spawned session never runs a boundary pass
+over itself. All gating (pause, project identity, per-project capture switch) and
+the work itself live in the detached :mod:`mimer.boundary` process.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
-from mimer.digest import digest_session
-from mimer.distill import distill_session
-from mimer.gitreader import fold_git_log
 from mimer.hooks.runner import run_hook
+from mimer.hooks.stop import SPOOL_DIRNAME
 from mimer.paths import store_root
-from mimer.pause import is_paused
-from mimer.project import resolve
-from mimer.registry import Registry
+from mimer.store import ensure_dir
 
 
 def handle(payload: Mapping[str, Any]) -> None:
-    """Run the digest, fold in git, then distil durable memory opportunistically."""
-
-    # The digest owns its own pause and capture gating; it returns without work
-    # for a paused or capture-disabled session.
-    digest_session(payload)
+    """Spool the payload and launch the boundary pass detached, without blocking."""
 
     root = store_root()
 
-    # A paused session records nothing at the boundary either — neither the git
-    # fold nor distillation runs. The pause is store-wide, so a session ending
-    # never lifts it (that would suppress and then silently resume an unrelated
-    # concurrent session); only an explicit "resume" does (#35). A session already
-    # running when the pause was set therefore drops its own boundary work here;
-    # that specific loss is not surfaced to that session (its SessionStart fired
-    # before the pause existed), but the standing pause is announced at the next
-    # SessionStart and in `mimer-manage health`, so the drop is observable going
-    # forward rather than silent.
-    if is_paused(root):
-        return
+    # Spool the payload to a private file the detached boundary process consumes
+    # and then deletes.
+    spool_dir = root / SPOOL_DIRNAME
+    ensure_dir(spool_dir)
+    handle_fd, spool_path = tempfile.mkstemp(dir=spool_dir, suffix=".json")
+    with open(handle_fd, "w", encoding="utf-8") as spool_file:
+        json.dump(dict(payload), spool_file)
 
-    cwd = Path(payload.get("cwd") or ".")
-    resolution = resolve(cwd, root=root)
-    if resolution.project_id is None:
-        return
-
-    # Opportunistic session-boundary work, deterministic so it runs even when the
-    # digest deferred (ADRs 0003, 0004). Git folding is recording, so it honours
-    # the per-project capture switch; distillation bridges already-curated memory
-    # and still runs (ADR 0013).
-    project_id = resolution.project_id
-    if Registry.load(root).capture_enabled(project_id):
-        fold_git_log(project_id, cwd, root)
-    distill_session(project_id, root)
+    # Launch the boundary pass in its own session so it outlives this hook and runs
+    # independently of the interactive session.
+    subprocess.Popen(
+        [sys.executable, "-m", "mimer.boundary", spool_path],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def main() -> int:

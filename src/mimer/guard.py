@@ -21,7 +21,7 @@ def is_guarded() -> bool:
 
 def spawn_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return an environment carrying the guard marker, for spawning a Claude
-    call (used by the session digest, #7).
+    call (used by the session-boundary pass, #7).
 
     Args:
         base: Environment to extend; defaults to the current ``os.environ``.

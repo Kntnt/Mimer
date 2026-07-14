@@ -266,10 +266,10 @@ class Registry:
 
         Concurrency (ADR 0011). The merge holds the target's per-project lock
         throughout. ``short-term.md`` is combined read-modify-write inside that
-        lock, and its live writers (the memory skill and the session digest) take
+        lock, and its live writers (the memory skill and the boundary pass) take
         the same lock, so a concurrent update to it cannot be lost. Every
-        append-only artefact — daily logs, the capture/digest/git ledgers, the
-        distilled queue, transcripts — is folded with ``O_APPEND`` (see
+        append-only artefact — daily logs, the capture ledger, the distilled
+        queue, transcripts — is folded with ``O_APPEND`` (see
         :func:`_concatenate_file`), matching its lockless producers, so a
         concurrent append is neither lost nor able to truncate the target, whether
         or not that producer holds any lock.
@@ -335,10 +335,10 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
 
     ``short-term.md`` is a structured document, so its dated entries are merged
     section by section (duplicates dropped) under the target's id and rewritten
-    atomically. Every other project artefact — daily logs, the capture/digest/git
-    ledgers, the distilled queue, archived transcripts — is append-only, so the
-    source's content is folded onto the end of the target's with ``O_APPEND``
-    rather than overwritten (see :func:`_concatenate_file`).
+    atomically. Every other project artefact — daily logs, the capture ledger, the
+    distilled queue, archived transcripts — is append-only, so the source's content
+    is folded onto the end of the target's with ``O_APPEND`` rather than
+    overwritten (see :func:`_concatenate_file`).
     """
 
     # Imported lazily: shortterm depends on this module for ``project_dir``, so a
@@ -359,10 +359,10 @@ def _combine_files(source_file: Path, target_file: Path, target_id: str) -> None
 def _concatenate_file(source_file: Path, target_file: Path) -> None:
     """Fold the source file's records onto the end of the target's, losing none.
 
-    Every append-only artefact this handles — daily logs, the capture/digest/git
-    ledgers, the distilled queue, archived transcripts — is written by its live
-    producer with lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`), which
-    ignores the project lock. Folding by read-modify-write would silently drop any
+    Every append-only artefact this handles — daily logs, the capture ledger, the
+    distilled queue, archived transcripts — is written by its live producer with
+    lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`), which ignores the
+    project lock. Folding by read-modify-write would silently drop any
     record a producer appended between the read and the rewrite, so the fold uses
     ``O_APPEND`` too (:func:`mimer.storeio.append_fold`): the source's bytes land
     at the target's end-of-file, never truncating it and never racing a concurrent

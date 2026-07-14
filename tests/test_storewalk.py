@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.longterm import record_captured, record_digested
+from mimer.longterm import record_captured
 from mimer.registry import Registry, project_dir
 from mimer.store import ensure_store
 from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
@@ -113,14 +113,13 @@ def test_daily_log_days_returns_sorted_iso_date_stems(tmp_path: Path) -> None:
 
 
 def test_daily_log_days_ignores_non_daily_log_files(tmp_path: Path) -> None:
-    """The dedup ledgers that live alongside the daily logs are not ``.md`` files
-    and so are excluded from a project's covered days."""
+    """The capture ledger that lives alongside the daily logs is not a ``.md`` file
+    and so is excluded from a project's covered days."""
 
     from mimer.longterm import append_entry
 
     append_entry("proj-a", "2026-07-10", "- entry\n", tmp_path)
     record_captured("proj-a", "turn-1", tmp_path)
-    record_digested("proj-a", "sess-1", tmp_path)
 
     assert daily_log_days("proj-a", tmp_path) == ["2026-07-10"]
 

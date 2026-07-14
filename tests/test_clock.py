@@ -1,12 +1,13 @@
-"""One clock (#37): capture, the session digest, and the snapshot's age labels
-all key off a single UTC clock.
+"""One clock (#37): capture, the session-boundary pass, and the snapshot's age
+labels all key off a single UTC clock.
 
-Capture derives a turn's day and time from its transcript timestamp; the digest
-closes the session; the snapshot ages every dated entry. When these read
-different zones, a single non-UTC session's captures and its digest can land in
-different daily logs and read back in a jumbled order. These tests pin all three
-to one clock with a fixture whose local (offset) date differs from its UTC date,
-so the split-file bug cannot come back.
+Capture derives a turn's day and time from its transcript timestamp; the boundary
+pass distils the day's raw record and refreshes short-term; the snapshot ages
+every dated entry. When these read different zones, a single non-UTC session's
+captures could land under a different day than the boundary pass reads, so the
+pass would distil an empty record. These tests pin all three to one clock with a
+fixture whose local (offset) date differs from its UTC date, so the split-day bug
+cannot come back.
 """
 
 from __future__ import annotations
@@ -18,39 +19,40 @@ from pathlib import Path
 
 import pytest
 
+from mimer.boundary import run_boundary_pass
 from mimer.capture import capture_from_payload
-from mimer.digest import digest_session
 from mimer.longterm import daily_log_path
-from mimer.shortterm import ensure_short_term, short_term_path
+from mimer.shortterm import ensure_short_term, read_short_term, short_term_path
 from mimer.store import ensure_store
 from tests.transcript_fixture import write_transcript
 
-# Capture and the digest drive index upkeep, which loads the embedding model, so
-# the session prefetch must run before this suite (conftest.py).
+# Capture and the boundary pass drive index upkeep, which loads the embedding
+# model, so the session prefetch must run before this suite (conftest.py).
 pytestmark = pytest.mark.embedding
 
-DIGEST_REPLY = """## Digest
-We settled on a single UTC clock for capture and the digest.
-
-## Active threads
-- none
+BOUNDARY_REPLY = """## Active threads
+- verifying the one-clock invariant
 
 ## Pending decisions
+- none
+
+## Durable facts
 - none
 """
 
 
-def test_capture_and_digest_share_one_utc_day_across_the_boundary(
+def test_capture_and_boundary_pass_share_one_utc_day_across_the_boundary(
     store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
-    """A turn whose local (offset) date is the day before its UTC date records
-    both its extractive capture and its session digest to the single UTC-dated
-    daily log — never split across the local day and the UTC day (#37).
+    """A turn whose local (offset) date is the day before its UTC date is captured
+    under the single UTC-dated daily log, and the boundary pass — running with no
+    injected day — reads that same UTC-dated record and refreshes short-term under
+    it, never splitting across the local day and the UTC day (#37).
 
     ``2026-07-11T23:30:00-05:00`` is ``2026-07-12T04:30:00Z``: local date the
     11th, UTC date the 12th. This is the boundary a non-UTC user hits every
-    evening, and the digest runs with no injected day so it must derive its own
-    from the same clock capture uses.
+    evening, and the pass must derive its own day from the same clock capture uses,
+    or it would distil the empty local-day record instead of the real one.
     """
 
     ensure_store(store_root)
@@ -68,13 +70,22 @@ def test_capture_and_digest_share_one_utc_day_across_the_boundary(
     }
 
     capture_from_payload(payload, root=store_root)
-    digest = digest_session(payload, root=store_root, haiku=lambda _: DIGEST_REPLY)
+    seen: dict[str, str] = {}
 
-    assert digest.status == "digested"
+    def stub(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return BOUNDARY_REPLY
+
+    result = run_boundary_pass(payload, root=store_root, haiku=stub)
+
+    assert result.status == "completed"
     pid = resolve_project(project_dir)
-    utc_log = daily_log_path(pid, utc_day, store_root).read_text()
-    assert "one coherent session on UTC" in utc_log
-    assert "## Session digest" in utc_log
+    # The pass read the raw record filed under the UTC day, not the empty local day.
+    assert "one coherent session on UTC" in seen["prompt"]
+    # Its short-term refresh is dated on the same UTC day.
+    assert "[2026-07-12] verifying the one-clock invariant" in read_short_term(pid, store_root)
+    # Capture filed the turn under the UTC day, and nothing landed under the local day.
+    assert "one coherent session on UTC" in daily_log_path(pid, utc_day, store_root).read_text()
     assert not daily_log_path(pid, local_day, store_root).exists()
 
 

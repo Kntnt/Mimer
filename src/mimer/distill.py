@@ -352,7 +352,7 @@ def _clear_announcements(project_id: str, emitted: list[str], root: Path | None 
     concurrently between the peek and this call for a later session.
 
     This drops only the emitted titles, never the whole queue — the silent loss
-    #40 exists to prevent, from an announcement a capture or digest writer
+    #40 exists to prevent, from an announcement a capture or boundary-pass writer
     appends between :func:`_peek_announcements` and here. Each emitted title
     removes its first matching queued line and no more, so a title enqueued
     concurrently is absent from ``emitted`` and survives to the next session
@@ -382,9 +382,3 @@ def _clear_announcements(project_id: str, emitted: list[str], root: Path | None 
             write_atomic(path, "\n".join(remaining) + "\n")
         else:
             path.unlink(missing_ok=True)
-
-
-def distill_session(project_id: str, root: Path | None = None, *, scope: str = "project") -> None:
-    """Opportunistic session-boundary distillation: promote durable entries."""
-
-    distill_durable_entries(project_id, root=root, scope=scope)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.transcript import conversation_text, last_exchange
+from mimer.transcript import last_exchange
 
 # The redacted real transcript. Its records cover every construct the live format
 # throws at the adapter: a plain-string user prompt, assistant messages whose
@@ -24,7 +24,6 @@ REAL_TRANSCRIPT = Path(__file__).resolve().parent / "fixtures" / "real_transcrip
 
 # The one real user prompt and the final assistant answer in the fixture.
 USER_PROMPT = "What indexing approach should we use for recall?"
-INTERMEDIATE_ANSWER = "Let me check the repo's current remotes."
 FINAL_ANSWER = "Use sqlite-vec: it is a single-file store that needs no server."
 
 
@@ -39,25 +38,3 @@ def test_last_exchange_from_real_transcript_skips_noise_and_tool_records() -> No
     assert exchange.user_text == USER_PROMPT
     assert exchange.assistant_text == FINAL_ANSWER
     assert exchange.date == "2026-06-18"
-
-
-def test_conversation_text_from_real_transcript_carries_only_prose() -> None:
-    """The digest's conversation view holds every user prompt and assistant text
-    across the several assistant records one turn spans — and nothing else, so
-    thinking, tool output and foreign-record content never reach the model."""
-
-    conversation = conversation_text(REAL_TRANSCRIPT)
-
-    # Both the intermediate and final assistant texts survive, proving a single
-    # logical turn split across assistant records is reassembled.
-    assert USER_PROMPT in conversation
-    assert INTERMEDIATE_ANSWER in conversation
-    assert FINAL_ANSWER in conversation
-
-    # The non-prose channels never leak into the view: tool_result output, the
-    # model's thinking, and the foreign record types each carry a sentinel that
-    # must not appear.
-    assert "git@example.com" not in conversation
-    assert "REDACTED_THINKING" not in conversation
-    assert "QUEUED_PROMPT" not in conversation
-    assert "SYSTEM_HOOK" not in conversation

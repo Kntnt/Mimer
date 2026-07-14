@@ -14,12 +14,12 @@ Two primitives:
   fence. The closing marker carries a random nonce the stored content cannot
   predict, so nothing between the fences can terminate the data block early or
   forge a second frame.
-- ``neutralise`` defangs an untrusted leaf value — a digest bullet, say — before
-  it is stored, stripping the fence brackets, the frame header and
+- ``neutralise`` defangs an untrusted leaf value — a boundary-pass bullet, say —
+  before it is stored, stripping the fence brackets, the frame header and
   heading/system-reminder markers so a later injection cannot forge the frame.
 
-``fence_transcript`` reuses the same nonce fence to mark the transcript inside
-the digest prompt as untrusted data to summarise, never to obey.
+``fence_transcript`` reuses the same nonce fence to mark the raw record inside the
+boundary pass's prompt as untrusted data to distil, never to obey.
 """
 
 from __future__ import annotations
@@ -60,8 +60,8 @@ def neutralise(text: str) -> str:
     Beyond stripping the framing markers common to all injected content, this
     also removes line-leading heading markers that could reopen the surrounding
     context as instructions. Applied to values that enter storage from an
-    untrusted source (digest bullets), so a later injection cannot forge the
-    frame or smuggle a heading past it.
+    untrusted source (the boundary pass's bullets), so a later injection cannot
+    forge the frame or smuggle a heading past it.
     """
 
     return _HEADING_RE.sub(r"\1", _defang_framing_markers(text))
@@ -80,10 +80,10 @@ def frame(content: str) -> str:
 
 
 def fence_transcript(transcript: str) -> str:
-    """Fence a transcript as untrusted data for the digest prompt.
+    """Fence untrusted session data — the raw record — for the model prompt.
 
-    Returns the fenced block the digest prompt embeds, so the model summarises
-    the transcript instead of following any instruction planted inside it.
+    Returns the fenced block the boundary pass's prompt embeds, so the model
+    distils the record instead of following any instruction planted inside it.
     """
 
     return _fenced(transcript, note=_TRANSCRIPT_NOTE)

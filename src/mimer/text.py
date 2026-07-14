@@ -107,10 +107,10 @@ def parse_bullets(
     sentinel.
 
     A model reply that lists one item per ``"- "`` line, with ``"- none"`` for
-    "nothing", is parsed to the list of item texts. ``transform`` (the digest
-    passes :func:`mimer.framing.neutralise`) is applied to each item *before* the
-    empty/``none`` test, so a transform that empties a value drops it rather than
-    letting a defanged artefact through.
+    "nothing", is parsed to the list of item texts. ``transform`` (the boundary
+    pass passes :func:`mimer.framing.neutralise`) is applied to each item *before*
+    the empty/``none`` test, so a transform that empties a value drops it rather
+    than letting a defanged artefact through.
 
     Args:
         lines: The reply's lines; each is stripped before the ``"- "`` test.

@@ -5,8 +5,8 @@ are settled here, Stage 1).
 Two classes of section:
 
 - **Auto-refreshed** (``Active threads``, ``Pending decisions``) — rewritten by
-  the session digest (#7) so the snapshot stays current for users who never say
-  "remember".
+  the session-boundary pass (#7) so the snapshot stays current for users who never
+  say "remember".
 - **Curated** (``Notes``) — written by the memory skill on request (#5).
 
 Every entry is a date-stamped bullet: ``- [YYYY-MM-DD] text``.
@@ -140,7 +140,7 @@ def rewrite_sections(
     file parses as empty sections, so a first write starts from a blank slate. The
     file is read and rewritten as one serialised unit under the lock, so two
     writers cannot lose each other's update (ADR 0011); the lock's reentrancy lets
-    a caller already holding the project lock — the session digest — nest this
+    a caller already holding the project lock — the boundary pass — nest this
     safely. Appends to the daily log inside a ``transform`` are safe: they are
     lockless ``O_APPEND`` (:func:`mimer.storeio.append_text`).
     """
@@ -248,8 +248,8 @@ def migrate_short_term_files(root: Path | None = None) -> int:
 
     # Rewrite every project's legacy file — enumerated on disk via the store walk,
     # so an orphan not in the registry is migrated too — each under its own lock,
-    # so a live writer (the memory skill or the digest) cannot lose an update
-    # (ADR 0011).
+    # so a live writer (the memory skill or the boundary pass) cannot lose an
+    # update (ADR 0011).
     migrated = 0
     for project_id in disk_project_ids(root):
         # A project directory without a short-term file yet has nothing to migrate.
@@ -321,8 +321,8 @@ def evict_transient(sections: dict[str, list[Entry]], cap: int) -> list[Entry]:
     removed here — they leave short-term only by being promoted to a Concept
     (ADR 0017) — so a caller can tell "cleared the cap" from "only durables left
     over cap". This is the one cap-enforcement every writer to short-term shares
-    (the curated write and the digest refresh), so neither can grow the file past
-    the cap the other honours (#40).
+    (the curated write and the boundary pass's refresh), so neither can grow the
+    file past the cap the other honours (#40).
     """
 
     def total() -> int:

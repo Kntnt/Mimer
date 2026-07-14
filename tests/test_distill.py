@@ -18,13 +18,11 @@ import pytest
 import mimer.distill as distill_module
 from mimer.bundle import INDEX_FILENAME, concept_path, list_concepts, read_concept
 from mimer.curate import remember
-from mimer.digest import digest_session
 from mimer.distill import (
     DistillResult,
     _is_instruction_shaped,
     distill_durable_entries,
     distill_fact,
-    distill_session,
 )
 from mimer.index import reindex, search
 from mimer.longterm import long_term_dir
@@ -33,7 +31,6 @@ from mimer.store import ensure_store
 from mimer.storeio import project_lock, write_atomic
 from mimer.tombstones import write_tombstone
 from tests.harness import run_hook
-from tests.transcript_fixture import write_transcript
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
 # so the session fixture prefetches it once before the suite runs (conftest.py).
@@ -622,7 +619,7 @@ def test_permanently_rejected_durable_entry_is_evicted_not_stranded(
     instruction = "You must rebase your branch before pushing."
     remember(instruction, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
-    distill_session(pid, root=store_root)
+    distill_durable_entries(pid, root=store_root)
 
     # It never became a Concept and no longer strands short-term, yet survives
     # verbatim in the long-term record so nothing is dropped silently.
@@ -645,7 +642,7 @@ def test_ordinary_remember_is_promoted_at_session_end(
     fact = "The project's primary datastore is PostgreSQL 16."
     remember(fact, project_id=pid, root=store_root, today=date(2026, 7, 12))
 
-    distill_session(pid, root=store_root)
+    distill_durable_entries(pid, root=store_root)
 
     assert any(fact in concept.body for concept in list_concepts(store_root))
     # Promote-then-evict: once its Concept is verified on disk, the entry leaves
@@ -656,11 +653,12 @@ def test_ordinary_remember_is_promoted_at_session_end(
 def test_session_end_hook_promotes_a_remembered_fact(
     store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
-    """The fully wired session-end flow: after a plain remember, running the real
+    """The fully wired session-end flow: after a plain remember, firing the real
     SessionEnd hook leaves a permanent Concept — with no flag typed by the user.
 
-    The digest defers (no transcript, no reachable Claude), so only the
-    deterministic distillation runs, exercising the hook's promotion path.
+    The boundary pass runs detached (ADR 0023), so the promotion lands in the
+    background; the model defers (missing transcript, no reachable Claude), leaving
+    the deterministic distillation to exercise the hook's promotion path.
     """
 
     pid = resolve_project(project_dir)
@@ -683,45 +681,12 @@ def test_session_end_hook_promotes_a_remembered_fact(
     )
 
     assert result.returncode == 0, result.stderr
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if any(fact in concept.body for concept in list_concepts(store_root)):
+            break
+        time.sleep(0.05)
     assert any(fact in concept.body for concept in list_concepts(store_root))
-
-
-def test_digest_refreshed_working_state_is_not_promoted(
-    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
-) -> None:
-    """Transient working state written by the *real* producer — the session
-    digest refreshing short-term's auto-maintained sections — is never distilled
-    into a Concept (AC2).
-
-    This drives the genuine risk surface after ``remember`` defaults durable:
-    were the digest to emit durable entries, session-end distillation would
-    promote its Active threads and Pending decisions into standing Concepts.
-    """
-
-    ensure_store(store_root)
-    transcript = write_transcript(
-        project_dir / "t.jsonl", [("what did we do?", "refactored", "2026-07-12T15:00:00Z")]
-    )
-    reply = (
-        "## Digest\nWe refactored the tokenizer.\n\n"
-        "## Active threads\n- refactoring the tokenizer\n\n"
-        "## Pending decisions\n- whether to drop Python 3.11 support\n"
-    )
-    payload = {
-        "session_id": "sess-transient",
-        "hook_event_name": "SessionEnd",
-        "reason": "other",
-        "cwd": str(project_dir),
-        "transcript_path": str(transcript),
-    }
-    digest_session(payload, root=store_root, haiku=lambda _: reply, today=date(2026, 7, 12))
-
-    pid = resolve_project(project_dir)
-    distill_session(pid, root=store_root)
-
-    # The digest's threads reached short-term, but none became a Concept.
-    assert "refactoring the tokenizer" in read_short_term(pid, store_root)
-    assert list_concepts(store_root) == []
 
 
 def test_two_short_facts_sharing_one_word_do_not_supersede(store_root: Path) -> None:

@@ -13,15 +13,13 @@ from pathlib import Path
 import pytest
 
 from mimer.distill import ANNOUNCEMENT_QUEUE_FILENAME
-from mimer.gitreader import GIT_LEDGER_FILENAME
 from mimer.longterm import (
+    CAPTURE_LEDGER_FILENAME,
     append_entry,
     daily_log_path,
     is_captured,
-    is_digested,
     long_term_dir,
     record_captured,
-    record_digested,
     transcripts_dir,
 )
 from mimer.registry import Registry, project_dir, registry_path
@@ -46,13 +44,18 @@ def _seed_short_term(project_id: str, root: Path, *, notes: list[str]) -> None:
     path.write_text(render_short_term(project_id, sections), encoding="utf-8")
 
 
-def _seed_git_ledger(project_id: str, root: Path, sha: str) -> None:
-    """Append one commit sha to a project's git-fold ledger."""
+def _seed_capture_ledger(project_id: str, root: Path, turn_id: str) -> None:
+    """Append one turn id directly to a project's capture ledger.
 
-    ledger = long_term_dir(project_id, root) / GIT_LEDGER_FILENAME
+    A representative append-only dedup ledger for the merge tests, written by hand
+    (bypassing :func:`record_captured`) so a test can control the exact bytes — a
+    file that ends without a trailing newline, say.
+    """
+
+    ledger = long_term_dir(project_id, root) / CAPTURE_LEDGER_FILENAME
     ledger.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with ledger.open("a", encoding="utf-8") as handle:
-        handle.write(sha + "\n")
+        handle.write(turn_id + "\n")
 
 
 def test_round_trips_records(tmp_path: Path) -> None:
@@ -205,8 +208,6 @@ def test_merge_of_two_populated_projects_loses_no_entries(tmp_path: Path) -> Non
     _seed_short_term("orphan", tmp_path, notes=["orphan note"])
     append_entry("orphan", "2026-07-10", "- orphan log line\n", tmp_path)
     record_captured("orphan", "turn-orphan", tmp_path)
-    record_digested("orphan", "sess-orphan", tmp_path)
-    _seed_git_ledger("orphan", tmp_path, "shaorphan")
     (transcripts_dir("orphan", tmp_path)).mkdir(parents=True, exist_ok=True)
     (transcripts_dir("orphan", tmp_path) / "sess-orphan.jsonl").write_text("{}\n", encoding="utf-8")
 
@@ -215,8 +216,6 @@ def test_merge_of_two_populated_projects_loses_no_entries(tmp_path: Path) -> Non
     _seed_short_term("canonical", tmp_path, notes=["canonical note"])
     append_entry("canonical", "2026-07-10", "- canonical log line\n", tmp_path)
     record_captured("canonical", "turn-canonical", tmp_path)
-    record_digested("canonical", "sess-canonical", tmp_path)
-    _seed_git_ledger("canonical", tmp_path, "shacanonical")
     (transcripts_dir("canonical", tmp_path)).mkdir(parents=True, exist_ok=True)
     (transcripts_dir("canonical", tmp_path) / "sess-canonical.jsonl").write_text(
         "{}\n", encoding="utf-8"
@@ -243,14 +242,9 @@ def test_merge_of_two_populated_projects_loses_no_entries(tmp_path: Path) -> Non
     assert "orphan log line" in daily
     assert "canonical log line" in daily
 
-    # Every ledger carries both sides' ids.
+    # The capture ledger carries both sides' ids.
     assert is_captured("canonical", "turn-orphan", tmp_path)
     assert is_captured("canonical", "turn-canonical", tmp_path)
-    assert is_digested("canonical", "sess-orphan", tmp_path)
-    assert is_digested("canonical", "sess-canonical", tmp_path)
-    git_ledger = (long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME).read_text().split()
-    assert "shaorphan" in git_ledger
-    assert "shacanonical" in git_ledger
 
     # Both sides' archived transcripts survive.
     transcripts = {p.name for p in transcripts_dir("canonical", tmp_path).iterdir()}
@@ -292,14 +286,14 @@ def test_merge_leaves_combined_files_owner_only(tmp_path: Path) -> None:
     reg.create("canonical", remotes=[], paths=["/new/path"])
     reg.save()
 
-    # Seed both sides so short-term.md and the git ledger collide, then loosen the
-    # target copies to 0644 so the assertion fails unless the merge tightens them.
+    # Seed both sides so short-term.md and the capture ledger collide, then loosen
+    # the target copies to 0644 so the assertion fails unless the merge tightens them.
     _seed_short_term("orphan", tmp_path, notes=["orphan note"])
     _seed_short_term("canonical", tmp_path, notes=["canonical note"])
-    _seed_git_ledger("orphan", tmp_path, "shaorphan")
-    _seed_git_ledger("canonical", tmp_path, "shacanonical")
+    _seed_capture_ledger("orphan", tmp_path, "turn-orphan")
+    _seed_capture_ledger("canonical", tmp_path, "turn-canonical")
     canonical_short_term = short_term_path("canonical", tmp_path)
-    canonical_ledger = long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME
+    canonical_ledger = long_term_dir("canonical", tmp_path) / CAPTURE_LEDGER_FILENAME
     canonical_short_term.chmod(0o644)
     canonical_ledger.chmod(0o644)
 
@@ -325,8 +319,8 @@ def test_merge_creates_target_subdirs_owner_only(tmp_path: Path) -> None:
     # must re-tighten it rather than leave it group/world-traversable.
     transcripts_dir("orphan", tmp_path).mkdir(parents=True, exist_ok=True)
     (transcripts_dir("orphan", tmp_path) / "sess-orphan.jsonl").write_text("{}\n", encoding="utf-8")
-    _seed_git_ledger("orphan", tmp_path, "shaorphan")
-    _seed_git_ledger("canonical", tmp_path, "shacanonical")
+    _seed_capture_ledger("orphan", tmp_path, "turn-orphan")
+    _seed_capture_ledger("canonical", tmp_path, "turn-canonical")
     long_term_dir("canonical", tmp_path).chmod(0o755)
 
     reg.merge("orphan", "canonical")
@@ -348,17 +342,17 @@ def test_merge_inserts_seam_newline_when_target_lacks_one(tmp_path: Path) -> Non
 
     # Write the target ledger without a trailing newline so the concatenation must
     # supply the seam itself; the source ends normally.
-    orphan_ledger = long_term_dir("orphan", tmp_path) / GIT_LEDGER_FILENAME
+    orphan_ledger = long_term_dir("orphan", tmp_path) / CAPTURE_LEDGER_FILENAME
     orphan_ledger.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    orphan_ledger.write_text("shaorphan\n", encoding="utf-8")
-    canonical_ledger = long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME
+    orphan_ledger.write_text("turn-orphan\n", encoding="utf-8")
+    canonical_ledger = long_term_dir("canonical", tmp_path) / CAPTURE_LEDGER_FILENAME
     canonical_ledger.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    canonical_ledger.write_text("shacanonical", encoding="utf-8")
+    canonical_ledger.write_text("turn-canonical", encoding="utf-8")
 
     reg.merge("orphan", "canonical")
 
-    shas = canonical_ledger.read_text().split()
-    assert shas == ["shacanonical", "shaorphan"]
+    ids = canonical_ledger.read_text().split()
+    assert ids == ["turn-canonical", "turn-orphan"]
 
 
 def test_merge_fold_preserves_a_concurrent_append(
@@ -375,14 +369,14 @@ def test_merge_fold_preserves_a_concurrent_append(
     reg.create("canonical", remotes=[], paths=["/new/path"])
     reg.save()
 
-    # Seed the git ledger on both sides so it is the one artefact the merge folds.
-    _seed_git_ledger("orphan", tmp_path, "shaorphan")
-    _seed_git_ledger("canonical", tmp_path, "shacanonical")
-    target_ledger = long_term_dir("canonical", tmp_path) / GIT_LEDGER_FILENAME
+    # Seed the capture ledger on both sides so it is the one artefact the merge folds.
+    _seed_capture_ledger("orphan", tmp_path, "turn-orphan")
+    _seed_capture_ledger("canonical", tmp_path, "turn-canonical")
+    target_ledger = long_term_dir("canonical", tmp_path) / CAPTURE_LEDGER_FILENAME
 
-    # Simulate a concurrent git-fold: the instant the merge reads the target
-    # ledger, an out-of-band O_APPEND writer lands a new sha on it. A read-modify-
-    # write merge would overwrite it; an O_APPEND fold keeps it.
+    # Simulate a concurrent capture: the instant the merge reads the target ledger,
+    # an out-of-band O_APPEND writer lands a new id on it. A read-modify-write merge
+    # would overwrite it; an O_APPEND fold keeps it.
     original_read_text = Path.read_text
     state = {"fired": False}
 
@@ -391,17 +385,17 @@ def test_merge_fold_preserves_a_concurrent_append(
         if self == target_ledger and not state["fired"]:
             state["fired"] = True
             with self.open("a", encoding="utf-8") as handle:
-                handle.write("shaconcurrent\n")
+                handle.write("turn-concurrent\n")
         return content
 
     monkeypatch.setattr(Path, "read_text", read_text_then_concurrent_append)
 
     reg.merge("orphan", "canonical")
 
-    shas = target_ledger.read_text().split()
-    assert "shacanonical" in shas
-    assert "shaorphan" in shas
-    assert "shaconcurrent" in shas
+    ids = target_ledger.read_text().split()
+    assert "turn-canonical" in ids
+    assert "turn-orphan" in ids
+    assert "turn-concurrent" in ids
 
 
 def test_merge_folds_a_same_named_transcript(tmp_path: Path) -> None:

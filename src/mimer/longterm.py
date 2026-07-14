@@ -1,12 +1,14 @@
 """Long-term memory: the project-scoped, append-only chronological record of
-what happened, kept as one Markdown file per day. Capture appends extractive
-entries here; the session digest (#7) and git reader (#14) add to it too.
+what happened, kept as one Markdown file per day. Capture appends the extractive
+turns here; the session-boundary pass distils from this raw record but never
+writes an abstractive block back to it — the raw log stays raw (ADR 0023).
 
-Two small per-project dedup ledgers back idempotency: the capture ledger records
-which turns have been captured (so a double-fired Stop hook cannot record a turn
-twice) and the digest ledger which sessions have been digested. Each is a bounded
-window of recent ids in a plain file, surviving even an index-free store — see
-:mod:`mimer.ledger` (ADR 0011, #41).
+One small per-project dedup ledger backs idempotency: the capture ledger records
+which turns have been captured, so a double-fired Stop hook cannot record a turn
+twice. It is a bounded window of recent ids in a plain file, surviving even an
+index-free store — see :mod:`mimer.ledger` (ADR 0011, #41). The boundary pass
+needs no such ledger: distillation is idempotent per fact (ADR 0015), so
+re-reading the raw record mints no duplicates.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ from mimer.storeio import append_text
 LONG_TERM_DIRNAME = "long-term"
 TRANSCRIPTS_DIRNAME = "transcripts"
 CAPTURE_LEDGER_FILENAME = ".capture-ledger"
-DIGEST_LEDGER_FILENAME = ".digest-ledger"
 
 
 def long_term_dir(project_id: str, root: Path | None = None) -> Path:
@@ -62,19 +63,3 @@ def transcripts_dir(project_id: str, root: Path | None = None) -> Path:
     """The directory holding a project's archived (redacted) transcripts."""
 
     return project_dir(project_id, root or store_root()) / TRANSCRIPTS_DIRNAME
-
-
-def _digest_ledger(project_id: str, root: Path | None = None) -> Ledger:
-    return Ledger(long_term_dir(project_id, root) / DIGEST_LEDGER_FILENAME)
-
-
-def is_digested(project_id: str, session_id: str, root: Path | None = None) -> bool:
-    """Whether a session is still inside the project's recent-digest window."""
-
-    return _digest_ledger(project_id, root).contains(session_id)
-
-
-def record_digested(project_id: str, session_id: str, root: Path | None = None) -> None:
-    """Record that a session has been digested (under the caller's project lock)."""
-
-    _digest_ledger(project_id, root).record(session_id)

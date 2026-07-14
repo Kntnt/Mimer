@@ -1,11 +1,11 @@
 """The capture pause: the throwaway-session control (ADR 0013).
 
 Say "pause capture" before a sensitive session and nothing is recorded — no
-extractive capture, no digest, no git fold, no distillation — until the user
-resumes. It is realised as a single marker file at the store root, so it is
-*store-wide*, not session-scoped: the ``mimer-manage`` command that sets it runs
-as a plain subprocess with no session id to key on, and the capture and digest
-paths (each in their own detached process) check only the marker's presence.
+extractive capture, no boundary pass, no distillation — until the user resumes.
+It is realised as a single marker file at the store root, so it is *store-wide*,
+not session-scoped: the ``mimer-manage`` command that sets it runs as a plain
+subprocess with no session id to key on, and the capture and boundary-pass paths
+(each in their own detached process) check only the marker's presence.
 
 The pause is therefore deliberately sticky. It is not lifted by a session
 ending — an unrelated concurrent session must never lift a pause it did not ask

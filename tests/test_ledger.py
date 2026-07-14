@@ -1,19 +1,18 @@
 """Unit tests for the bounded, rotated dedup ledger (issue #41).
 
-Idempotency keys — captured turn ids, digested session ids, folded commit shas —
-need only a *recent* window: an id from long ago is never re-submitted, so the
-ledger does not need infinite history to guarantee idempotency. It keeps at most
-``capacity`` of the most recently recorded keys in a plain file (ADR 0011: it
-works without the derived index), so its size and the cost of a membership check
-or a record stay bounded however long a project lives, while dedup of recent keys
-still holds.
+Idempotency keys — captured turn ids — need only a *recent* window: an id from
+long ago is never re-submitted, so the ledger does not need infinite history to
+guarantee idempotency. It keeps at most ``capacity`` of the most recently
+recorded keys in a plain file (ADR 0011: it works without the derived index), so
+its size and the cost of a membership check or a record stay bounded however long
+a project lives, while dedup of recent keys still holds.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.ledger import DEFAULT_CAPACITY, Ledger
+from mimer.ledger import Ledger
 
 
 def test_records_and_recognises_a_key(tmp_path: Path) -> None:
@@ -80,17 +79,3 @@ def test_extend_with_no_keys_is_a_noop(tmp_path: Path) -> None:
     path = tmp_path / "ledger"
     Ledger(path, capacity=10).extend([])
     assert not path.exists()
-
-
-def test_default_capacity_covers_the_git_page_window() -> None:
-    """The default dedup window stays wider than the git reader's page window: a
-    regression guard against lowering capacity to or below it, so a steady-state
-    fold's freshly recorded tip shas comfortably outnumber a single read page and
-    stay in the window — keeping a reachable commit excluded under linear history
-    (#42's reachability fold). The re-fold-free behaviour itself is exercised in
-    test_gitreader (#41).
-    """
-
-    from mimer.gitreader import _PAGE_SIZE
-
-    assert DEFAULT_CAPACITY > _PAGE_SIZE

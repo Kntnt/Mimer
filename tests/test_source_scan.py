@@ -11,10 +11,11 @@ than silently leaking.
 
 Three exemptions are documented and stated here:
 
-- The capture spool (``hooks/stop.py``): the transient 0600 hand-off ADR 0020
-  exempts — spooled straight to a temp file, consumed and deleted in a ``finally``
-  by the detached capture process, and redacted only when its content is persisted
-  behind the seam; the raw transcript exists outside the store regardless.
+- The hook spools (``hooks/stop.py`` for detached capture, ``hooks/session_end.py``
+  for the detached boundary pass): the transient 0600 hand-off ADR 0020 exempts —
+  spooled straight to a temp file, consumed and deleted in a ``finally`` by the
+  detached process, and redacted only when its content is persisted behind the
+  seam; the raw transcript exists outside the store regardless.
 - The empty touch markers (``store.py``, ``db.py``, ``pause.py``): ``Path.touch``
   creates an empty file and writes no content, so it can carry no secret and has
   nothing to redact — categorically outside the seam's concern.
@@ -53,11 +54,13 @@ _WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_APPEND", "O_CREAT", "O_TRUNC")
 # ("r", "rb") carries none of them.
 _WRITE_MODE_CHARS = ("w", "a", "x", "+")
 
-# The capture spool: ``mkstemp``, the file-bound ``json.dump`` and the builtin
-# ``open`` that writes it, all in the Stop hook — the one hand-off ADR 0020 exempts
-# from the seam.
-_CAPTURE_SPOOL = "hooks/stop.py"
-_CAPTURE_SPOOL_PRIMITIVES = ("mkstemp", "json.dump", "open")
+# The hook spools: ``mkstemp``, the file-bound ``json.dump`` and the builtin
+# ``open`` that writes it. The Stop hook spools for detached capture and the
+# SessionEnd hook spools for the detached boundary pass — the same transient 0600
+# hand-off ADR 0020 exempts from the seam, redacted only when its content is
+# persisted behind storeio by the detached process that consumes it.
+_SPOOL_HOOKS = ("hooks/stop.py", "hooks/session_end.py")
+_SPOOL_PRIMITIVES = ("mkstemp", "json.dump", "open")
 
 # The native-memory switch: the ``mkstemp`` that stages ``autoMemoryEnabled`` for an
 # atomic swap into the project's own .claude/settings.json — a config file outside the
@@ -172,13 +175,13 @@ def _is_exempt(rel: str, primitive: str) -> bool:
 
     if primitive == "touch":
         return True
-    if rel == _CAPTURE_SPOOL and primitive in _CAPTURE_SPOOL_PRIMITIVES:
+    if rel in _SPOOL_HOOKS and primitive in _SPOOL_PRIMITIVES:
         return True
     return rel == _NATIVE_MEMORY and primitive in _NATIVE_MEMORY_PRIMITIVES
 
 
 def test_no_file_writing_primitive_bypasses_storeio() -> None:
-    """Outside storeio, the only file-writing primitives are the two documented
+    """Outside storeio, the only file-writing primitives are the documented
     exemptions — so every other path to the store's files runs through the seam
     and its redaction (#56)."""
 
@@ -192,9 +195,9 @@ def test_scan_detects_the_documented_exemptions() -> None:
     nothing (#56)."""
 
     hits = _scan()
-    assert any(
-        rel == _CAPTURE_SPOOL and prim in _CAPTURE_SPOOL_PRIMITIVES for rel, _, prim in hits
-    ), "the capture-spool exemption was not detected — the scanner may be broken"
+    assert any(rel in _SPOOL_HOOKS and prim in _SPOOL_PRIMITIVES for rel, _, prim in hits), (
+        "the hook-spool exemption was not detected — the scanner may be broken"
+    )
     assert any(prim == "touch" for _, _, prim in hits), "no empty touch marker was detected"
     assert any(
         rel == _NATIVE_MEMORY and prim in _NATIVE_MEMORY_PRIMITIVES for rel, _, prim in hits

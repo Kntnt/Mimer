@@ -1,7 +1,7 @@
 """Tests for user-facing capture controls (issue #35): a session-level pause and
 the per-project settings ADR 0013 promises — capture on/off, distill-to-global
 on/off, and participation in widened recall — surfaced through ``mimer-manage``
-and honoured by the capture, digest, distillation and recall paths.
+and honoured by the capture, boundary pass, distillation and recall paths.
 """
 
 from __future__ import annotations
@@ -14,9 +14,7 @@ import pytest
 from mimer import manage
 from mimer.bundle import list_concepts
 from mimer.capture import capture_from_payload
-from mimer.digest import digest_session
 from mimer.distill import distill_fact
-from mimer.hooks import session_end
 from mimer.pause import clear_paused, is_paused, set_paused
 from mimer.registry import Registry
 from mimer.store import ensure_store
@@ -96,33 +94,6 @@ def test_resume_restores_capture(store_root: Path, project_dir: Path) -> None:
     assert resumed.status == "captured"
 
 
-def test_paused_session_skips_digest_without_calling_the_model(
-    store_root: Path, project_dir: Path
-) -> None:
-    """While paused, the digest returns without sending the transcript to the model.
-
-    The transcript is real and non-empty and the project resolves, so absent the
-    pause gate the digest would flow all the way to the model call — which makes
-    ``fail_if_called`` a genuine guarantee that a paused session's (redacted)
-    conversation never reaches Haiku (AC1: #35), not decoration a missing
-    transcript would satisfy anyway.
-    """
-
-    ensure_store(store_root)
-    set_paused(store_root)
-
-    def fail_if_called(_prompt: str) -> str | None:
-        raise AssertionError("the model must not be called while capture is paused")
-
-    result = digest_session(
-        _seeded_stop(project_dir, "the secret plan"),
-        root=store_root,
-        haiku=fail_if_called,
-    )
-
-    assert result.status == "paused"
-
-
 def test_session_end_leaves_the_pause_in_place(store_root: Path, project_dir: Path) -> None:
     """A session ending never lifts the store-wide pause (#35).
 
@@ -144,30 +115,6 @@ def test_session_end_leaves_the_pause_in_place(store_root: Path, project_dir: Pa
 
     assert result.returncode == 0, result.stderr
     assert is_paused(store_root)
-
-
-def test_paused_session_end_records_nothing_at_the_boundary(
-    store_root: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """While paused, SessionEnd folds no git and distils nothing (AC1: #35).
-
-    Capture and the digest are covered above; this guards the two remaining
-    session-boundary recording paths, so a regression that let git-folding or
-    distillation run during a paused session would fail here.
-    """
-
-    ensure_store(store_root)
-    set_paused(store_root)
-    monkeypatch.setenv("MIMER_HOME", str(store_root))
-
-    calls: list[str] = []
-    monkeypatch.setattr(session_end, "digest_session", lambda payload: None)
-    monkeypatch.setattr(session_end, "fold_git_log", lambda *a, **k: calls.append("fold"))
-    monkeypatch.setattr(session_end, "distill_session", lambda *a, **k: calls.append("distill"))
-
-    session_end.handle(session_end_payload(cwd=str(project_dir)))
-
-    assert calls == []
 
 
 def test_session_start_announces_a_standing_pause(
@@ -246,66 +193,6 @@ def test_capture_setting_round_trips_through_the_command(
     manage.set_project_setting("capture", True, cwd=project_dir, root=store_root)
     enabled = capture_from_payload(_seeded_stop(project_dir, "visible"), root=store_root)
     assert enabled.status == "captured"
-
-
-def test_capture_disabled_project_skips_digest_without_calling_the_model(
-    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
-) -> None:
-    """With capture off, the digest returns without sending the transcript to the
-    model (AC2: #35).
-
-    The transcript is real and non-empty, so absent the capture gate the digest
-    would flow all the way to the model call — which makes ``fail_if_called`` a
-    genuine guarantee that a capture-disabled project's conversation never reaches
-    Haiku, not decoration a missing transcript would satisfy anyway.
-    """
-
-    ensure_store(store_root)
-    pid = resolve_project(project_dir)
-    registry = Registry.load(store_root)
-    registry.set_capture(pid, enabled=False)
-    registry.save()
-
-    def fail_if_called(_prompt: str) -> str | None:
-        raise AssertionError("the model must not be called when capture is disabled")
-
-    result = digest_session(
-        _seeded_stop(project_dir, "would-be digested"),
-        root=store_root,
-        haiku=fail_if_called,
-    )
-
-    assert result.status == "capture-disabled"
-
-
-def test_capture_disabled_session_end_skips_git_fold_but_still_distils(
-    store_root: Path,
-    resolve_project: Callable[[Path], str],
-    project_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With capture off, SessionEnd folds no git yet still distils (AC2: #35).
-
-    Git folding is recording, so it honours the per-project capture switch;
-    distillation only bridges already-curated memory and runs regardless
-    (ADR 0013). This makes the git-fold guard load-bearing.
-    """
-
-    ensure_store(store_root)
-    pid = resolve_project(project_dir)
-    registry = Registry.load(store_root)
-    registry.set_capture(pid, enabled=False)
-    registry.save()
-    monkeypatch.setenv("MIMER_HOME", str(store_root))
-
-    calls: list[str] = []
-    monkeypatch.setattr(session_end, "digest_session", lambda payload: None)
-    monkeypatch.setattr(session_end, "fold_git_log", lambda *a, **k: calls.append("fold"))
-    monkeypatch.setattr(session_end, "distill_session", lambda *a, **k: calls.append("distill"))
-
-    session_end.handle(session_end_payload(cwd=str(project_dir)))
-
-    assert calls == ["distill"]
 
 
 def test_health_reports_capture_disabled_projects(
