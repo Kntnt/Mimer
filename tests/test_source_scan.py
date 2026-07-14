@@ -9,7 +9,7 @@ module and fails on any hit, because candidate 5's promise is specifically about
 the sinks that do not exist yet: a forgetful future sink now fails a test rather
 than silently leaking.
 
-Two exemptions are documented and stated here:
+Three exemptions are documented and stated here:
 
 - The capture spool (``hooks/stop.py``): the transient 0600 hand-off ADR 0020
   exempts — spooled straight to a temp file, consumed and deleted in a ``finally``
@@ -18,6 +18,12 @@ Two exemptions are documented and stated here:
 - The empty touch markers (``store.py``, ``db.py``, ``pause.py``): ``Path.touch``
   creates an empty file and writes no content, so it can carry no secret and has
   nothing to redact — categorically outside the seam's concern.
+- The native-memory switch (``native_memory.py``): its single ``write_text``
+  targets the *project's* ``.claude/settings.json`` — Claude Code's own config,
+  not a store file — so the store's redaction seam does not apply. Routing it
+  through storeio would instead run redaction over the user's *other* settings
+  and could corrupt a secret-shaped value there, so it deliberately writes
+  outside the seam (ADR 0025, #64).
 """
 
 from __future__ import annotations
@@ -44,6 +50,12 @@ _WRITE_MODE_CHARS = ("w", "a", "x", "+")
 # from the seam.
 _CAPTURE_SPOOL = "hooks/stop.py"
 _CAPTURE_SPOOL_PRIMITIVES = ("mkstemp", "json.dump", "open")
+
+# The native-memory switch: the one ``write_text`` that sets ``autoMemoryEnabled``
+# in the project's own .claude/settings.json — a config file outside the store, so
+# outside the redaction seam (ADR 0025, #64).
+_NATIVE_MEMORY = "native_memory.py"
+_NATIVE_MEMORY_PRIMITIVES = ("write_text",)
 
 
 def _dotted_name(node: ast.expr) -> str | None:
@@ -148,11 +160,13 @@ def _scan() -> list[tuple[str, int, str]]:
 
 
 def _is_exempt(rel: str, primitive: str) -> bool:
-    """Whether a hit is one of the two documented exemptions."""
+    """Whether a hit is one of the three documented exemptions."""
 
     if primitive == "touch":
         return True
-    return rel == _CAPTURE_SPOOL and primitive in _CAPTURE_SPOOL_PRIMITIVES
+    if rel == _CAPTURE_SPOOL and primitive in _CAPTURE_SPOOL_PRIMITIVES:
+        return True
+    return rel == _NATIVE_MEMORY and primitive in _NATIVE_MEMORY_PRIMITIVES
 
 
 def test_no_file_writing_primitive_bypasses_storeio() -> None:
@@ -174,6 +188,9 @@ def test_scan_detects_the_documented_exemptions() -> None:
         rel == _CAPTURE_SPOOL and prim in _CAPTURE_SPOOL_PRIMITIVES for rel, _, prim in hits
     ), "the capture-spool exemption was not detected — the scanner may be broken"
     assert any(prim == "touch" for _, _, prim in hits), "no empty touch marker was detected"
+    assert any(
+        rel == _NATIVE_MEMORY and prim in _NATIVE_MEMORY_PRIMITIVES for rel, _, prim in hits
+    ), "the native-memory write was not detected — its exemption would pass vacuously"
 
 
 def test_scan_catches_builtin_and_path_open_in_write_mode() -> None:

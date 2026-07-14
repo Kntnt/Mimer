@@ -18,7 +18,9 @@ on the user's explicit request.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 # The key Claude Code reads from a project's .claude/settings.json to decide
 # whether its native auto memory is active. Absent is on, since it defaults on.
@@ -28,7 +30,7 @@ SETTINGS_KEY = "autoMemoryEnabled"
 def settings_path(project_dir: Path) -> Path:
     """Path to a project's Claude Code settings file, ``.claude/settings.json``."""
 
-    raise NotImplementedError
+    return project_dir / ".claude" / "settings.json"
 
 
 def is_native_memory_enabled(project_dir: Path) -> bool:
@@ -36,10 +38,18 @@ def is_native_memory_enabled(project_dir: Path) -> bool:
 
     Reads ``.claude/settings.json`` without mutating it. Absent file, absent key,
     or unreadable content all report enabled — the default-on state — so the
-    caller warns rather than misses a native memory that may be live.
+    caller warns rather than misses a native memory that may be live. Only an
+    explicit ``false`` reports off.
     """
 
-    raise NotImplementedError
+    # A file we cannot parse tells us nothing about the switch, so we cannot
+    # confirm it is off — report on and let the caller warn.
+    try:
+        settings = _load_settings(settings_path(project_dir))
+    except (json.JSONDecodeError, ValueError):
+        return True
+
+    return settings.get(SETTINGS_KEY, True) is not False
 
 
 def disable_native_memory(project_dir: Path) -> None:
@@ -48,6 +58,47 @@ def disable_native_memory(project_dir: Path) -> None:
     Every other key already in ``.claude/settings.json`` is kept, in place; the
     file and its ``.claude/`` directory are created when absent. Only ever called
     on the user's explicit request (ADR 0025).
+
+    Raises:
+        json.JSONDecodeError: when the existing file holds non-empty, unparseable
+            content, or ValueError when its top level is not a JSON object —
+            either way the file is left untouched rather than blindly overwritten,
+            so real user config is never destroyed.
     """
 
-    raise NotImplementedError
+    # Read the existing settings first, so a non-empty but unparseable file
+    # raises before any write and the user's config is never clobbered.
+    path = settings_path(project_dir)
+    settings = _load_settings(path)
+    settings[SETTINGS_KEY] = False
+
+    # Serialise the whole object — updating the key in place preserves the order
+    # and every other setting — and create .claude/ on the way if it is absent.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_settings(path: Path) -> dict[str, Any]:
+    """Parse ``path`` into a settings object; absent or empty is an empty object.
+
+    An empty or whitespace-only file has nothing to preserve, so it reads as
+    ``{}`` rather than an error — a bare ``touch``-created settings file is a
+    normal starting state. Genuinely malformed non-empty content raises, so a
+    write path can refuse to clobber it.
+
+    Raises:
+        json.JSONDecodeError: when non-empty content is not valid JSON.
+        ValueError: when the top-level JSON value is not an object.
+    """
+
+    if not path.exists():
+        return {}
+
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        return {}
+
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{path} does not contain a JSON object")
+    return parsed
