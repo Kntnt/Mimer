@@ -129,7 +129,10 @@ def distill_fact(
     The leakage guard (ADR 0027) sits on promotion to global: a fact the judgment
     rules classify as sensitive is held at project scope and a consent request is
     queued for the next session start, rather than promoted — so the safe state is
-    the waiting state and a held fact never travels to another project.
+    the waiting state and the held Concept, project-scoped like any other, never
+    travels to another project. The gate is on this promotion channel only; the raw
+    long-term log the fact was captured into is a separate widenable channel
+    (ADR 0013, ADR 0027).
     """
 
     root = root or store_root()
