@@ -19,17 +19,24 @@ Three exemptions are documented and stated here:
   creates an empty file and writes no content, so it can carry no secret and has
   nothing to redact — categorically outside the seam's concern.
 - The native-memory switch (``native_memory.py``): its atomic write stages the
-  updated ``.claude/settings.json`` in a sibling temp file (``mkstemp``) and swaps it
-  in with ``os.replace``, targeting the *project's* own config — Claude Code's, not a
-  store file — so the store's redaction seam does not apply. It mirrors
-  storeio.write_atomic rather than routing through it, because that seam would run
-  redaction over the user's *other* settings and could corrupt a secret-shaped value
-  there; only the atomicity is wanted here, not the redaction (ADR 0025, #64).
+  updated ``.claude/settings.json`` in a sibling temp file (``mkstemp``), writes the
+  payload through ``os.fdopen`` and swaps it in with ``os.replace``, targeting the
+  *project's* own config — Claude Code's, not a store file — so the store's redaction
+  seam does not apply. It mirrors storeio.write_atomic rather than routing through it,
+  because that seam would run redaction over the user's *other* settings and could
+  corrupt a secret-shaped value there; only the atomicity is wanted here, not the
+  redaction (ADR 0025, #64). The exemption names only the ``mkstemp`` staging call
+  because that is all this scanner observes: the byte-emitting ``os.fdopen`` write is
+  invisible to ``_primitive`` (not a recognised sink), and ``os.replace`` is a pure
+  relocation deliberately out of scope. So the guard sees the staging call, not the
+  full atomic write — a blind spot to weigh before ever repointing this writer at a
+  store file.
 """
 
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 # The source tree scanned, and the one module that legitimately owns every
@@ -218,3 +225,33 @@ def test_scan_catches_builtin_and_path_open_in_write_mode() -> None:
     assert primitive_of("open(p)") is None
     assert primitive_of('open(p, "r")') is None
     assert primitive_of('p.open("rb")') is None
+
+
+def test_native_memory_exemption_rationale_matches_the_scanners_actual_coverage() -> None:
+    """The native-memory exemption is scoped to the ``mkstemp`` staging call alone
+    (``_NATIVE_MEMORY_PRIMITIVES``), and the module docstring must describe only what
+    the scanner actually observes. The byte-emitting write of the atomic swap —
+    ``os.fdopen(handle, "w")`` and the ``tmp_file.write`` after it — is invisible to
+    this scanner (``_primitive`` returns None for both; ``os.fdopen`` is not a
+    recognised sink and ``.write`` is not matched), so the guard sees the staging call,
+    not the full atomic write. The rationale must own that blind spot rather than imply
+    the whole write is guarded, so a future reader weighing a repoint at a store file is
+    not misled into thinking the byte-emitting write is covered (integration-review
+    finding)."""
+
+    def primitive_of(expression: str) -> str | None:
+        node = ast.parse(expression, mode="eval").body
+        assert isinstance(node, ast.Call)
+        return _primitive(node)
+
+    # The blind spot the rationale must describe: the scanner sees the mkstemp stage
+    # but neither the fdopen that opens the temp for writing nor the subsequent .write.
+    assert primitive_of("tempfile.mkstemp(dir=d, prefix=p, suffix=s)") == "mkstemp"
+    assert primitive_of('os.fdopen(handle, "w", encoding="utf-8")') is None
+    assert primitive_of("tmp_file.write(payload)") is None
+
+    # The module's exemption rationale must name that blind spot: it observes only the
+    # ``mkstemp`` staging call, and the ``os.fdopen`` write is invisible to it.
+    rationale = (sys.modules[__name__].__doc__ or "").lower()
+    assert "os.fdopen" in rationale
+    assert "staging call" in rationale

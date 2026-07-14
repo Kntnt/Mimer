@@ -33,6 +33,7 @@ INIT = ROOT / "src" / "mimer" / "__init__.py"
 CONTEXT = ROOT / "CONTEXT.md"
 STOREIO = ROOT / "src" / "mimer" / "storeio.py"
 INDEX = ROOT / "src" / "mimer" / "index.py"
+DIGEST = ROOT / "src" / "mimer" / "digest.py"
 ADR_0020 = ROOT / "docs" / "adr" / "0020-redaction-at-the-write-seam.md"
 
 # The one-sentence write-seam contract, worded identically in storeio's docstring,
@@ -412,3 +413,33 @@ def test_index_docstring_explains_why_inserts_trust_their_sources() -> None:
     assert "redacted at creation" in source
     assert "derived state" in source
     assert "diverge" in source
+
+
+def test_skill_does_not_describe_the_mimer_marker_as_an_active_binding() -> None:
+    """The `.mimer` marker was made inert (#61): after that change it attaches
+    nothing — only the git remote or the path binds a directory to an existing
+    project's memory, and dropping the marker removed the one identity signal an
+    attacker could forge as repository content. The shipped skill's
+    identity-confirmation section must not still tell users a `.mimer` marker would
+    attach this directory to an existing project's memory — that claim is now false
+    and security-relevant (integration-review finding)."""
+
+    assert "`.mimer` marker" not in SKILL.read_text(encoding="utf-8")
+
+
+def test_index_cite_docstring_does_not_outrun_the_shipped_digest_state() -> None:
+    """While digest.py still writes ``## Session digest`` blocks into the daily log
+    (their code removal is issue #63, not part of this line-up), index.py's ``_cite``
+    docstring must not claim the session digest is already gone — a present-tense
+    'digest gone' is a false doc claim, stronger than ADR 0023's own hedge that the
+    source weight 'becomes moot'. The heading-based source weight IS removed (#62),
+    so the docstring correctly says a chunk's heading no longer influences its rank;
+    that truthful, shipped fact stays (integration-review finding)."""
+
+    digest_still_shipped = "## Session digest" in DIGEST.read_text(encoding="utf-8")
+    index_source = INDEX.read_text(encoding="utf-8").lower()
+    if digest_still_shipped:
+        assert "session digest gone" not in index_source, (
+            "index.py claims the session digest is gone while digest.py still writes it"
+        )
+    assert "heading no longer influences its rank" in index_source

@@ -388,9 +388,10 @@ def _fetch(connection: sqlite3.Connection, rowids: list[int]) -> list[sqlite3.Ro
 def _cite(row: sqlite3.Row, base_score: float, *, query_date: date) -> Citation:
     """Apply the recency rerank and build a citation with an excerpt.
 
-    Ranking is the fused match times recency alone: with the session digest gone
-    (ADR 0023), the former heading-based source weight collapses to recency, so a
-    chunk's heading no longer influences its rank (issue #62).
+    Ranking is the fused match times recency alone: the former heading-based source
+    weight is removed (issue #62), so a chunk's heading no longer influences its rank.
+    That weight boosted the "session digest" heading, which ADR 0023 makes moot once
+    distillation subsumes the digest, so the rank collapses to recency.
     """
 
     score = base_score * _recency_factor(row["date"], query_date)

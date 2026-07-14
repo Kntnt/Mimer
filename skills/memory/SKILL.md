@@ -181,7 +181,7 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage retract <slug>
 
 ## Confirming this directory's project identity
 
-Sometimes Mimer refuses to load or record and says **"this directory's project identity needs confirmation"** — you will see it in the SessionStart line, on a `remember`/`forget`, or on a recall. This is deliberate: a `.mimer` marker or a git remote would attach this directory to an *existing* project's memory, or the path and remote point at different projects, and Mimer will never bind a directory to memory it is not sure about. The refusal names the exact command and candidate id to run, for example `mimer-manage confirm secret-client`.
+Sometimes Mimer refuses to load or record and says **"this directory's project identity needs confirmation"** — you will see it in the SessionStart line, on a `remember`/`forget`, or on a recall. This is deliberate: a git remote would attach this directory to an *existing* project's memory, or the path and remote point at different projects, and Mimer will never bind a directory to memory it is not sure about. The refusal names the exact command and candidate id to run, for example `mimer-manage confirm secret-client`.
 
 When the user confirms the link is right, run that command from the project's working directory. It binds this directory to the named project; injection and capture then proceed normally from the next session.
 
