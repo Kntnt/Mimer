@@ -141,7 +141,7 @@ The read-only enumeration of what the store holds: project ids (on disk, or know
 _Avoid_: directory scan, file listing, crawl.
 
 **Lock discipline**:
-Which lock and write discipline each store artefact takes: short-term memory and the bundle are locked read-modify-write; daily logs, ledgers and the announcement queue are lockless appends; the registry takes its own named lock. Locks are per-project or named, and reentrant within a thread — stated once in storeio, re-derived nowhere.
+Which lock and write discipline each store artefact takes: short-term memory and the bundle are locked read-modify-write; daily logs and ledgers are lockless appends; the announcement queue is a lockless append with a *locked clear* (`write_atomic`/`unlink` under `project_lock`), its enqueues staying lockless only because every one runs under the caller's project lock — a truly lockless enqueue would reopen the lost update (#40) the clear exists to avoid; the registry takes its own named lock. Locks are per-project or named, and reentrant within a thread — stated once in storeio, re-derived nowhere.
 _Avoid_: mutex, synchronisation, critical section.
 
 **Matcher**:

@@ -27,6 +27,17 @@ records without a lock and without corruption; a project merge (ADR 0008) folds
 a whole append-only block the same way (:func:`append_fold`), so the fold can
 neither clobber nor be clobbered by a concurrent appender.
 
+The announcement queue (``.distilled-queue``) is the one append-only artefact
+that also takes a **locked clear**: :func:`mimer.distill._clear_announcements`
+re-reads it and rewrites the survivors with :func:`write_atomic` (or ``unlink``
+when none remain) under :func:`project_lock`. Its enqueues stay lockless
+``O_APPEND`` only because every enqueue runs under the caller's project lock —
+the session digest's :func:`mimer.shortterm.rewrite_sections`, or bootstrap's
+explicit lock — so a title appended concurrently cannot be lost in the window
+between the clear's read and its write (the #40 lost update). A future writer
+that added a truly lockless enqueue would reopen that lost update, so the
+under-lock invariant is load-bearing, not incidental.
+
 Every write primitive — :func:`write_atomic`, :func:`append_text`,
 :func:`append_fold` — runs the redaction pass (:func:`mimer.redaction.redact`) on
 its content before bytes reach disk (ADR 0020), so the module's contract is one
