@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -137,7 +137,7 @@ def test_distilled_fact_in_a_git_project_is_recalled_cited_with_its_git_sha(
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
-    sha = commit(repo, "Add the sqlite-vec vector index")
+    sha = commit(repo, "Add the sqlite-vec vector index", date=TODAY.isoformat())
     pid = resolve_project(repo)
 
     _run_boundary(repo, store_root, pid)
@@ -165,19 +165,23 @@ def test_git_citation_excerpt_survives_a_history_rewrite(
 
     ensure_store(store_root)
     repo = init_repo(tmp_path / "repo", commit=True)
-    original_sha = commit(repo, "Add the recall reranker")
+    original_sha = commit(repo, "Add the recall reranker", date=TODAY.isoformat())
     pid = resolve_project(repo)
     _run_boundary(repo, store_root, pid)
 
     ((source, excerpt),) = _git_citations(_distilled_concept(store_root))
     assert source == f"git:{original_sha}"
 
+    # Mimer stored the commit's own subject verbatim as the excerpt — not a
+    # paraphrase or the sha — which is precisely what lets it outlive a rewrite.
+    assert excerpt == "Add the recall reranker"
+
     # Rewrite history: the sha changes, the subject is preserved.
     rewritten_sha = rewrite_history(repo)
     assert rewritten_sha != original_sha
 
     # The cited sha is now stale — absent from the rewritten history — yet the
-    # quoted excerpt still finds its commit, so the citation stays checkable.
+    # subject Mimer quoted still finds its commit, so the citation stays checkable.
     assert original_sha not in commit_shas(repo)
     assert excerpt in commit_subjects(repo)
 
@@ -228,3 +232,53 @@ def test_git_project_without_a_commit_yields_no_citation_and_no_crash(
 
     result_concept = _distilled_concept(store_root)
     assert _git_citations(result_concept) == []
+
+
+# --- The citation is the session's work, not a stale inherited HEAD ---------
+
+
+def test_session_that_commits_nothing_gets_no_citation_to_the_stale_head(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """A session in an existing repo that commits nothing must not anchor its facts
+    to the pre-existing HEAD it merely inherited: a commit dated before the session
+    day is older, unrelated work, so no git citation is attached — the fact is never
+    given a git:<sha> with no causal relation to it (issue #66, ADR 0021)."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+
+    # HEAD is a week-old commit the session never touched — the raw record is
+    # distilled, but nothing was committed during the session.
+    stale_day = (TODAY - timedelta(days=7)).isoformat()
+    commit(repo, "Unrelated work from last week", date=stale_day)
+    pid = resolve_project(repo)
+
+    _run_boundary(repo, store_root, pid)
+
+    concept = _distilled_concept(store_root)
+    assert _git_citations(concept) == []
+
+
+# --- The git excerpt stays behind the redaction pass -----------------------
+
+
+def test_secret_in_a_commit_subject_is_redacted_out_of_the_stored_excerpt(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """A secret in a commit subject never survives into the stored citation: the git
+    source and excerpt are redacted at the Concept-creation sink, so the git anchor
+    stays behind the redaction pass like every other stored source (issue #66, #23)."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    secret = "ghp_" + "a" * 36
+    sha = commit(repo, f"Rotate the leaked deploy token {secret}", date=TODAY.isoformat())
+    pid = resolve_project(repo)
+
+    _run_boundary(repo, store_root, pid)
+
+    ((source, excerpt),) = _git_citations(_distilled_concept(store_root))
+    assert source == f"git:{sha}"
+    assert secret not in excerpt
+    assert "[REDACTED]" in excerpt

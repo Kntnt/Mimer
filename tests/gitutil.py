@@ -9,14 +9,19 @@ import subprocess
 from pathlib import Path
 
 
-def _git(cwd: Path, *args: str) -> str:
-    """Run a git command in ``cwd`` and return its stdout."""
+def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    """Run a git command in ``cwd`` and return its stdout.
+
+    ``env`` replaces the process environment for this one call — used to pin a
+    commit's author and committer date.
+    """
 
     result = subprocess.run(
         ["git", "-C", str(cwd), *args],
         check=True,
         capture_output=True,
         text=True,
+        env=env,
     )
     return result.stdout.strip()
 
@@ -69,17 +74,30 @@ def add_remote(repo: Path, name: str, url: str) -> None:
     _git(repo, "remote", "add", name, url)
 
 
-def commit(repo: Path, message: str, *, allow_empty: bool = True) -> str:
+def commit(repo: Path, message: str, *, allow_empty: bool = True, date: str | None = None) -> str:
     """Make a commit with ``message`` in ``repo`` and return its full sha.
 
     ``allow_empty`` lets a test plant a commit with a distinctive subject without
     staging any change — the subject is the checkable excerpt a git citation quotes.
+    ``date`` pins the author and committer date to a chosen day (an ISO
+    ``YYYY-MM-DD`` or a full timestamp), so a test can place a commit before or on
+    the session day — the citation guard cites a commit only when it was made on or
+    after that day (issue #66).
     """
 
     args = ["commit", "-q", "-m", message]
     if allow_empty:
         args.insert(1, "--allow-empty")
-    _git(repo, *args)
+
+    # git's environment date parser rejects a bare day, so anchor a day to noon —
+    # far enough from either midnight that no timezone offset rolls it to an
+    # adjacent day when the committer date is read back.
+    env = None
+    if date is not None:
+        stamp = date if "T" in date else f"{date}T12:00:00"
+        env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+
+    _git(repo, *args, env=env)
     return _git(repo, "rev-parse", "HEAD")
 
 

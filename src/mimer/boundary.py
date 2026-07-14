@@ -171,11 +171,12 @@ def run_boundary_pass(
         # never mistaken for a durable fact (dedup handles a crash-orphaned replay).
         _refresh_short_term(project_id, active, pending, day, root)
 
-        # Cite the work's commit: a durable fact distilled in a git project carries
-        # the HEAD commit as an additive git:<sha> anchor (ADR 0021), resolved once
-        # and reactively. A non-git project or any git error yields no citation, so
-        # the facts are distilled git-free with full cited recall intact.
-        citations = _git_citations(cwd) if facts else None
+        # Cite the work's commit: a durable fact distilled from work that resulted in
+        # a commit carries that commit as an additive git:<sha> anchor (ADR 0021),
+        # resolved once and reactively. A non-git project, any git error, or a HEAD
+        # the session never touched yields no citation, so the facts are distilled
+        # git-free with full cited recall intact.
+        citations = _git_citations(cwd, day) if facts else None
         for fact in facts:
             distill_fact(text=fact, project_id=project_id, root=root, citations=citations)
 
@@ -192,20 +193,30 @@ def run_boundary_pass(
         return BoundaryResult("failed")
 
 
-def _git_citations(cwd: Path) -> list[Source] | None:
-    """The current HEAD commit as a one-item git citation list, or None (ADR 0021).
+def _git_citations(cwd: Path, day: date) -> list[Source] | None:
+    """The session's commit as a one-item git citation list, or None (ADR 0021).
 
-    Reactive and additive: a memory entry distilled from work in a git project
-    carries the commit's ``git:<sha>`` as an extra provenance anchor, quoting the
-    commit subject so the citation stays checkable even after a history rewrite
-    changes the sha. Any git error — including a non-git project — yields None, so
-    distillation proceeds git-free and never crashes. The source and excerpt are
-    redacted at the Concept-creation sink (:mod:`mimer.bundle`), so a secret in a
-    commit subject never survives — this stays behind the redaction pass.
+    Reactive and additive: a durable fact distilled from work that resulted in a
+    commit carries that commit's ``git:<sha>`` as an extra provenance anchor,
+    quoting the commit subject so the citation stays checkable even after a history
+    rewrite changes the sha. Any git error — including a non-git project — yields
+    None, so distillation proceeds git-free and never crashes.
+
+    The commit must plausibly be *this* session's work, not a stale HEAD the session
+    only inherited: a commit dated before the session ``day`` is an older, unrelated
+    commit, so it is left uncited. Without this a session that recorded a durable
+    fact but committed nothing would anchor it to whatever last-worked commit HEAD
+    happened to point at — a git:<sha> with no causal relation to the fact
+    (issue #66). The check stays reactive — the committer date is already in hand,
+    no history walk — and errs safe: the git anchor is additive and verifiability
+    never depends on it, so an uncited borderline commit costs nothing (ADR 0021).
+    The source and excerpt are redacted at the Concept-creation sink
+    (:mod:`mimer.bundle`), so a secret in a commit subject never survives — this
+    stays behind the redaction pass.
     """
 
     commit = head_commit(cwd)
-    if commit is None:
+    if commit is None or commit.date < day.isoformat():
         return None
     return [Source(source=f"git:{commit.sha}", excerpt=commit.subject, date=commit.date)]
 
