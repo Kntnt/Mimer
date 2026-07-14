@@ -11,7 +11,9 @@ This module is the clean read/write seam over that one switch, shared by the
 SessionStart warning and the ``disable-native-memory`` command that build on it
 (vision Stages 5c and 8). Reads never mutate; a write sets ``autoMemoryEnabled``
 to ``false`` and touches nothing else in the file, creating it (and ``.claude/``)
-when absent. Mimer never flips the switch unbidden — writing a user's config
+when absent. The write is atomic — staged to a sibling temp file and swapped in
+with ``os.replace`` — so a failed or interrupted write never leaves a truncated
+or empty config. Mimer never flips the switch unbidden — writing a user's config
 without consent is invasive (ADR 0025) — so ``disable_native_memory`` runs only
 on the user's explicit request.
 """
@@ -19,6 +21,8 @@ on the user's explicit request.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +60,11 @@ def disable_native_memory(project_dir: Path) -> None:
     """Set ``autoMemoryEnabled: false`` for ``project_dir``, preserving all else.
 
     Every other key already in ``.claude/settings.json`` is kept, in place; the
-    file and its ``.claude/`` directory are created when absent. Only ever called
-    on the user's explicit request (ADR 0025).
+    file and its ``.claude/`` directory are created when absent. The updated object
+    is staged to a sibling temp file and swapped in with ``os.replace``, so a failed
+    or interrupted write (disk full, crash, power loss) leaves the real settings
+    file byte-for-byte intact rather than truncated or empty. Only ever called on
+    the user's explicit request (ADR 0025).
 
     Raises:
         json.JSONDecodeError: when the existing file holds non-empty, unparseable
@@ -72,10 +79,25 @@ def disable_native_memory(project_dir: Path) -> None:
     settings = _load_settings(path)
     settings[SETTINGS_KEY] = False
 
-    # Serialise the whole object — updating the key in place preserves the order
-    # and every other setting — and create .claude/ on the way if it is absent.
+    # Serialise the whole object — updating the key in place preserves the order and
+    # every other setting — then stage it in a sibling temp file and swap it in
+    # atomically, so a failed or interrupted write dies on the temp and the real
+    # settings.json is left byte-for-byte intact. We mirror storeio.write_atomic
+    # rather than reuse it because that seam redacts (ADR 0020), which would corrupt
+    # a secret-shaped value in the user's own env block; only the atomicity is wanted.
+    # mkstemp also births the temp at 0600, so a freshly created file is owner-only.
+    payload = json.dumps(settings, indent=2) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    handle, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Reap the staged temp on any failure before the swap lands so a failed
+        # disable never litters .claude/ with an orphan temp file.
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def _load_settings(path: Path) -> dict[str, Any]:

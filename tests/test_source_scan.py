@@ -18,12 +18,13 @@ Three exemptions are documented and stated here:
 - The empty touch markers (``store.py``, ``db.py``, ``pause.py``): ``Path.touch``
   creates an empty file and writes no content, so it can carry no secret and has
   nothing to redact — categorically outside the seam's concern.
-- The native-memory switch (``native_memory.py``): its single ``write_text``
-  targets the *project's* ``.claude/settings.json`` — Claude Code's own config,
-  not a store file — so the store's redaction seam does not apply. Routing it
-  through storeio would instead run redaction over the user's *other* settings
-  and could corrupt a secret-shaped value there, so it deliberately writes
-  outside the seam (ADR 0025, #64).
+- The native-memory switch (``native_memory.py``): its atomic write stages the
+  updated ``.claude/settings.json`` in a sibling temp file (``mkstemp``) and swaps it
+  in with ``os.replace``, targeting the *project's* own config — Claude Code's, not a
+  store file — so the store's redaction seam does not apply. It mirrors
+  storeio.write_atomic rather than routing through it, because that seam would run
+  redaction over the user's *other* settings and could corrupt a secret-shaped value
+  there; only the atomicity is wanted here, not the redaction (ADR 0025, #64).
 """
 
 from __future__ import annotations
@@ -51,11 +52,11 @@ _WRITE_MODE_CHARS = ("w", "a", "x", "+")
 _CAPTURE_SPOOL = "hooks/stop.py"
 _CAPTURE_SPOOL_PRIMITIVES = ("mkstemp", "json.dump", "open")
 
-# The native-memory switch: the one ``write_text`` that sets ``autoMemoryEnabled``
-# in the project's own .claude/settings.json — a config file outside the store, so
-# outside the redaction seam (ADR 0025, #64).
+# The native-memory switch: the ``mkstemp`` that stages ``autoMemoryEnabled`` for an
+# atomic swap into the project's own .claude/settings.json — a config file outside the
+# store, so outside the redaction seam (ADR 0025, #64).
 _NATIVE_MEMORY = "native_memory.py"
-_NATIVE_MEMORY_PRIMITIVES = ("write_text",)
+_NATIVE_MEMORY_PRIMITIVES = ("mkstemp",)
 
 
 def _dotted_name(node: ast.expr) -> str | None:

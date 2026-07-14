@@ -74,6 +74,17 @@ def test_malformed_settings_reports_enabled(project_dir: Path) -> None:
     assert path.read_bytes() == before
 
 
+def test_non_object_settings_reports_enabled(project_dir: Path) -> None:
+    """Valid JSON whose top level is not an object (here ``[]``) reports enabled —
+    the switch cannot be confirmed off — and the read leaves the file untouched."""
+
+    path = _write_settings(project_dir, "[]")
+    before = path.read_bytes()
+
+    assert is_native_memory_enabled(project_dir) is True
+    assert path.read_bytes() == before
+
+
 # --- Reading never mutates ---------------------------------------------------
 
 
@@ -179,6 +190,44 @@ def test_disable_refuses_to_clobber_malformed_settings(project_dir: Path) -> Non
         disable_native_memory(project_dir)
 
     assert path.read_bytes() == before
+
+
+def test_disable_refuses_to_clobber_non_object_settings(project_dir: Path) -> None:
+    """Valid JSON that is not an object (here ``[]``) is never overwritten: the write
+    raises ValueError so an array or scalar settings.json is left byte-for-byte
+    intact rather than blindly replaced with an object."""
+
+    path = _write_settings(project_dir, "[]")
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="does not contain a JSON object"):
+        disable_native_memory(project_dir)
+
+    assert path.read_bytes() == before
+
+
+def test_disable_leaves_config_intact_when_the_swap_fails(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed atomic swap — here a simulated ``os.replace`` error standing in for
+    disk-full, a crash or power loss mid-write — leaves the real settings.json
+    byte-for-byte intact and reaps the staged temp, so an interrupted disable never
+    destroys or litters the user's config."""
+
+    original = {"env": {"SECRET": "keep-me"}, SETTINGS_KEY: True}
+    path = _write_settings(project_dir, json.dumps(original))
+    before = path.read_bytes()
+
+    def _fail(*args: object, **kwargs: object) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("mimer.native_memory.os.replace", _fail)
+
+    with pytest.raises(OSError, match="No space left on device"):
+        disable_native_memory(project_dir)
+
+    assert path.read_bytes() == before
+    assert list(path.parent.glob(f"{path.name}.*.tmp")) == []
 
 
 def test_disable_then_read_round_trips(project_dir: Path) -> None:
