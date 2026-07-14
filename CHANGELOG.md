@@ -10,15 +10,18 @@ All notable changes to this project are documented here. The format follows [Kee
 - Eight architecture decision records (0021–0028) recording that design: git as a citation source only (0021), project identity as remote-or-path with one memory per repository (0022), a detached session-boundary pass that distils from the raw record (0023), Concept identity by rename and supersession without merge, split or cap (0024), replacing Claude Code's native auto memory with a project-scoped disable (0025), the removal of history bootstrap (0026), a consent guard on promotion to global scope (0027), and a read-only CLI memory browser (0028).
 - The **presentation seam** design (ADR 0029 and the `Present` glossary term, issue #59): one audience-aware `present` operation that every surface showing stored memory routes through — framing and neutralising each untrusted leaf for the agent, verbatim for the human browser — with `frame`/`neutralise` confined to the seam and a living source-scan guard against bypass. Design only; the build is sequenced after the five-requirements rework lands.
 - A prominent README warning about the risk of leaving Claude Code's native auto memory switched on alongside Mimer.
+- A read/write seam over Claude Code's native auto-memory switch (ADR 0025, #64): `is_native_memory_enabled` reports whether a project has native auto-memory on — treating an absent file, an absent key, or unparseable content as the default-on state so a caller warns rather than misses a live native memory — and `disable_native_memory` writes `autoMemoryEnabled: false` into the project's own `.claude/settings.json`, in place and atomically (staged in a sibling temp file, `0600` from birth, swapped with `os.replace`), preserving every other key and deliberately bypassing the store's redaction seam so the user's unrelated settings are never rewritten.
 
 ### Changed
 
 - ADRs 0003, 0008, 0015 and 0019 marked superseded by the five-requirements design (by 0021, 0022, 0024 and 0025 respectively).
 - `CONTEXT.md`, `docs/okf-profile.md` and `README.md` aligned to the reworked design.
+- Recall's reranker now orders candidates by fused match strength and recency alone; the former source-heading weighting is removed, so an entry's heading no longer influences its rank (#62). The citation shape (source, date, heading, quoted excerpt) and the admit-ignorance behaviour are unchanged.
 
 ### Removed
 
 - **Bootstrap — the import of pre-existing Claude Code session history — is gone (ADR 0026, #60).** Mimer starts from zero and fills forward through capture and distillation. The `mimer-bootstrap` command, the `mimer.bootstrap` module, the per-project import state the registry carried (and its merge-carry reconciliation), and the whole-transcript enumeration only bootstrap used are all removed; the packaged command surface and the README now agree. Forward transcript *archiving* — which copies the transcript as opaque provenance without parsing it — is unaffected.
+- **The `.mimer` project-identity marker and monorepo sub-project splitting are gone (ADR 0022, #61).** Project identity now resolves through the two-step chain only — the normalised git remote when the repository has one, else the absolute path — so one repository is one memory and a `.mimer` file is inert, treated like any other file and never read for an id. The confirm-before-binding safeguard is untouched: a path/remote that maps to existing memory ambiguously still returns `NEEDS_CONFIRMATION` and names the exact `mimer-manage confirm <id>` command.
 
 ## [0.2.1] – 2026-07-14
 
