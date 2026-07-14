@@ -217,6 +217,37 @@ def test_durable_entry_is_promoted_even_when_the_transcript_is_missing(
     assert any("GitHub Actions" in c.body for c in list_concepts(store_root))
 
 
+def test_durable_entry_is_promoted_when_the_transcript_is_invalid_utf8(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """A transcript truncated mid-write by a crash — ending in an incomplete UTF-8
+    multibyte sequence — must not abort the pass before the deterministic promotion.
+    Anchoring reads the transcript, and a non-UTF-8 read raises UnicodeDecodeError
+    (a ValueError, not an OSError); it must degrade to a None anchor so the durable
+    "remember this" entry is still promoted into a Concept. Losing the later archive
+    of an unreadable transcript is acceptable; losing the promotion is not
+    (AC: #63, ADR 0023)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember("The staging database runs postgres 16", project_id=pid, root=store_root, today=TODAY)
+
+    # A crash-truncated transcript: a valid line then a lone UTF-8 lead byte, which
+    # read_text(encoding="utf-8") rejects with UnicodeDecodeError as it anchors.
+    transcript = project_dir / "t.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    transcript.write_bytes(b'{"type":"user","message":{"role":"user","content":"hi"}}\n\xc3')
+
+    run_boundary_pass(
+        _payload(project_dir, transcript, session_id="sess-badutf8"),
+        root=store_root,
+        haiku=lambda _: None,
+        today=TODAY,
+    )
+
+    assert any("postgres 16" in c.body for c in list_concepts(store_root))
+
+
 def test_crash_orphaned_prior_day_session_is_distilled_at_next_boundary_without_duplicates(
     store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
 ) -> None:
