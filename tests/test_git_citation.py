@@ -153,6 +153,39 @@ def test_distilled_fact_in_a_git_project_is_recalled_cited_with_its_git_sha(
     assert any(c.source == f"permanent/{concept.slug}.md" for c in result.citations)
 
 
+# --- AC1 across the UTC-day boundary: a west-of-UTC evening commit --------
+
+
+def test_west_of_utc_evening_commit_is_cited_on_the_utc_session_day(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """A commit made west of UTC in the afternoon/evening is dated the previous
+    calendar day in its own zone, yet its UTC date is the session day. The guard
+    must compare on one clock — the UTC day (#37) — or a majority of real sessions
+    (any negative-UTC-offset developer working after ~4pm) silently lose the git
+    citation for their own commit, defeating AC1.
+
+    6pm on 2026-07-11 in US-Pacific (UTC-08:00) is 2026-07-12T02:00Z: the commit's
+    own-zone short date is 2026-07-11, its UTC date is 2026-07-12. With the session
+    day at 2026-07-12 (UTC), the session's own commit must still be cited."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    sha = commit(repo, "Add the sqlite-vec vector index", date="2026-07-11T18:00:00-08:00")
+    pid = resolve_project(repo)
+
+    # Anchor the pass on the UTC session day the commit actually falls on.
+    utc_day = date(2026, 7, 12)
+    _seed_raw_record(pid, store_root, utc_day, "we chose sqlite-vec for the vector store")
+    transcript = write_transcript(repo / "t.jsonl", [("q", "a", "2026-07-12T00:30:00Z")])
+    run_boundary_pass(
+        _payload(repo, transcript), root=store_root, haiku=lambda _: REPLY, today=utc_day
+    )
+
+    concept = _distilled_concept(store_root)
+    assert (f"git:{sha}", "Add the sqlite-vec vector index") in _git_citations(concept)
+
+
 # --- AC2: after a history rewrite, the quoted excerpt still checks out ---
 
 
@@ -258,6 +291,48 @@ def test_session_that_commits_nothing_gets_no_citation_to_the_stale_head(
 
     concept = _distilled_concept(store_root)
     assert _git_citations(concept) == []
+
+
+def test_recovered_earlier_day_fact_is_not_cited_with_the_current_session_commit(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """A durable fact recovered from a crash-orphaned earlier day must not be stamped
+    with the current session's commit. The recovery window (#63) folds up to a week
+    of covered days into one model call, so a single HEAD citation applied to every
+    fact would give an older, crash-recovered fact a ``git:<sha>`` with no causal
+    relation — the exact wrong-provenance the #66 guard closes, reopened from the
+    other side (an older fact anchored to a newer commit).
+
+    When the pass reaches back past the anchor day it cannot attribute each fact to
+    its day, so the additive git anchor is withheld — err-safe exactly as the guard
+    is, since verifiability never depends on it (ADR 0021). (#63 window vs #66.)"""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+
+    # This session commits today; the orphaned fact was captured yesterday and its
+    # boundary never ran, so today's pass recovers it across the day boundary.
+    commit(repo, "Wire up the recall reranker", date=TODAY.isoformat())
+    pid = resolve_project(repo)
+
+    yesterday = TODAY - timedelta(days=1)
+    _seed_raw_record(pid, store_root, yesterday, "ORPHAN the staging db runs postgres 16")
+    _seed_raw_record(pid, store_root, TODAY, "today we wired the recall reranker")
+    transcript = write_transcript(repo / "t.jsonl", [("q", "a", "2026-07-11T15:00:00Z")])
+
+    def stub(prompt: str) -> str:
+        # Surface the orphaned day's durable fact only once its record reaches the
+        # prompt, so the recovered fact is the one under test.
+        durable = "- the staging db runs postgres 16" if "ORPHAN" in prompt else "- none"
+        return (
+            f"## Active threads\n- none\n\n## Pending decisions\n- none\n\n"
+            f"## Durable facts\n{durable}\n"
+        )
+
+    run_boundary_pass(_payload(repo, transcript), root=store_root, haiku=stub, today=TODAY)
+
+    recovered = next(c for c in list_concepts(store_root) if "postgres 16" in c.body)
+    assert _git_citations(recovered) == []
 
 
 # --- The git excerpt stays behind the redaction pass -----------------------

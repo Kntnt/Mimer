@@ -100,6 +100,36 @@ def test_concept_round_trips_valid(store_root: Path) -> None:
     assert concept.title in index_md_path(store_root).read_text(encoding="utf-8")
 
 
+def test_citation_excerpt_with_quotes_and_parens_round_trips(store_root: Path) -> None:
+    """A citation excerpt that itself contains a quoted word immediately followed by
+    a parenthetical must survive the serialise/parse round-trip intact.
+
+    Git commit subjects — now the only automated citation source (issue #66) — are
+    author-controlled and punctuation-rich: a subject like ``Fix crash when mode is
+    "auto" (see #12)`` serialises correctly but, under a non-greedy ``"..." (...)``
+    parse, re-reads with the excerpt truncated at the inner quote and the date field
+    overwritten by subject garbage. The stored excerpt and date must come back
+    exactly as written, or a history-rewrite check (AC2) is run against corrupt
+    provenance."""
+
+    ensure_store(store_root)
+    subject = 'Fix crash when mode is "auto" (see #12)'
+    concept = create_concept(
+        title="Auto-mode crash fix",
+        body="The auto-mode crash is fixed.",
+        concept_type="Fact",
+        origin="proj-a",
+        citations=[Source("git:abc1234", subject, "2026-07-11")],
+        root=store_root,
+    )
+
+    loaded = read_concept(concept.slug, root=store_root)
+    assert loaded.citations
+    assert loaded.citations[0].source == "git:abc1234"
+    assert loaded.citations[0].excerpt == subject
+    assert loaded.citations[0].date == "2026-07-11"
+
+
 def test_curated_write_records_origin_and_scope(store_root: Path) -> None:
     """A curated write routed to permanent memory records origin and scope."""
 
