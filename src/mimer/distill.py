@@ -23,6 +23,7 @@ from pathlib import Path
 from mimer import clock
 from mimer.bundle import Concept, Source, create_concept, list_concepts
 from mimer.failure_log import log_failure
+from mimer.leakage import is_sensitive, queue_consent_request
 from mimer.longterm import append_entry
 from mimer.matcher import is_same_subject, normalised
 from mimer.paths import store_root
@@ -78,10 +79,17 @@ _INSTRUCTION_MARKERS = (
 
 @dataclass(frozen=True)
 class DistillResult:
-    """The outcome of distilling one fact."""
+    """The outcome of distilling one fact.
+
+    ``held`` is set when the leakage guard held a sensitive fact at project scope,
+    queuing a consent request instead of promoting it to global (ADR 0027). The
+    Concept is created either way — ``status`` is ``created``/``superseded`` as
+    usual — so held is an orthogonal flag on the write, not a status of its own.
+    """
 
     status: str
     slug: str | None = None
+    held: bool = False
 
 
 # The fact now lives on disk as a Concept, so its durable short-term entry has
@@ -108,15 +116,20 @@ def distill_fact(
     root: Path | None = None,
     scope: str = "project",
     citations: list[Source] | None = None,
-    concept_type: str = "Fact",
 ) -> DistillResult:
     """Distil one fact into permanent memory: create, extend, supersede or reject.
 
     Every fact is guarded identically — rejected when instruction-shaped
     (ADR 0014) or tombstoned (ADR 0012), deduplicated or superseded against an
-    existing Concept about the same subject (ADR 0015). ``concept_type`` forwards
-    to :func:`create_concept`; a distilled fact is never pinned, so the profile is
-    seeded only through the deliberate direct-creation path.
+    existing Concept about the same subject (ADR 0015). A distilled fact is always
+    a project- or global-scoped ``Fact``: it is never pinned and never a
+    ``Preference``, so the profile is seeded only through the deliberate
+    direct-creation path.
+
+    The leakage guard (ADR 0027) sits on promotion to global: a fact the judgment
+    rules classify as sensitive is held at project scope and a consent request is
+    queued for the next session start, rather than promoted — so the safe state is
+    the waiting state and a held fact never travels to another project.
     """
 
     root = root or store_root()
@@ -137,6 +150,15 @@ def distill_fact(
     if is_tombstoned(text, project_id=project_id, root=root):
         return DistillResult("rejected-tombstoned")
 
+    # Leakage guard (ADR 0027): a sensitive fact bound for global scope is held at
+    # project scope, never promoted, until the user consents. Forcing the scope to
+    # project here also makes the supersession policy below refuse to narrow any
+    # broader global Concept on the same subject — the held fact is created
+    # alongside it, never in place of it (issue #29).
+    held = scope == "global" and is_sensitive(text)
+    if held:
+        scope = "project"
+
     # Recall over the bundle first: is there an active Concept about this subject
     # that this fact may safely dedup against or supersede (same or narrower scope)?
     predecessor = _same_subject_concept(text, project_id, scope, root)
@@ -150,7 +172,7 @@ def distill_fact(
     concept = create_concept(
         title=_title(text),
         body=text,
-        concept_type=concept_type,
+        concept_type="Fact",
         origin=project_id,
         scope=scope,
         citations=citations,
@@ -158,9 +180,14 @@ def distill_fact(
         root=root,
     )
 
+    # A held fact is now stored project-scoped; queue its consent request so the
+    # user is asked, at the next session start, before it may ever go global.
+    if held:
+        queue_consent_request(project_id, concept.title, root)
+
     status = "superseded" if predecessor is not None else "created"
     _queue_announcement(project_id, concept.title, root)
-    return DistillResult(status, concept.slug)
+    return DistillResult(status, concept.slug, held=held)
 
 
 def distill_durable_entries(

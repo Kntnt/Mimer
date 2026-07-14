@@ -63,6 +63,7 @@ def build_snapshot(
     manifest: str = "",
     profile: str = "",
     distilled: list[str] | None = None,
+    consent: list[str] | None = None,
     health: str = "",
     paused: str = "",
     capture_off: str = "",
@@ -77,6 +78,10 @@ def build_snapshot(
             announcement so a re-injection is visible.
         manifest: A compact statement of what memory holds beyond the snapshot.
         profile: The pinned profile Concepts, injected on every session.
+        distilled: The titles promoted since the last session, announced so a new
+            global Concept is visible and its promotion reversible (ADR 0014).
+        consent: The sensitive facts held at project scope awaiting the user's
+            consent to go global; re-posed every session until answered (ADR 0027).
         health: A one-line health warning when the failure log is fresh.
         paused: A one-line notice when a store-wide capture pause is in effect, so
             a standing pause is announced every session rather than silent (#35).
@@ -113,6 +118,15 @@ def build_snapshot(
         lines.append(manifest)
     if distilled:
         lines.append(f"Distilled since last session: {'; '.join(distilled)}.")
+
+    # The consent line is the leakage guard's ask: these sensitive facts are held
+    # at project scope and go global only if you consent — re-posed until answered,
+    # so it is separate from the one-time distilled announcement (ADR 0027).
+    if consent:
+        lines.append(
+            "Mimer: awaiting your consent to promote these sensitive fact(s) to "
+            f"global scope (held at project scope until then): {'; '.join(consent)}."
+        )
     preamble = "\n".join(lines)
 
     # Fence the whole payload — the announcement, the pinned profile and the

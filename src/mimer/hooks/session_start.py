@@ -20,6 +20,7 @@ from mimer.bundle import concept_headlines, render_profile
 from mimer.distill import announcements
 from mimer.failure_log import fresh_failures
 from mimer.hooks.runner import run_hook
+from mimer.leakage import pending_consent_requests
 from mimer.manifest import long_term_manifest
 from mimer.paths import store_root
 from mimer.pause import is_paused
@@ -64,6 +65,7 @@ def handle(payload: Mapping[str, Any]) -> None:
             manifest=_manifest(resolution.project_id, root),
             profile=render_profile(root),
             distilled=distilled,
+            consent=pending_consent_requests(resolution.project_id, root),
             health=_health_notice(root),
             paused=_pause_notice(root),
             capture_off=_capture_notice(resolution.project_id, root),
