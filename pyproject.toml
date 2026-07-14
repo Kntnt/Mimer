@@ -1,6 +1,6 @@
 [project]
 name = "mimer"
-version = "0.2.0"
+version = "0.2.1"
 description = "An AI-native memory and knowledge system for Claude Code agents."
 readme = "README.md"
 requires-python = ">=3.12"

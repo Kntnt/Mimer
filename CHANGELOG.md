@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.1] – 2026-07-14
+
 ### Fixed
 
 - The README now documents the full `mimer-manage` surface — the `pause`, `resume` and per-project `settings` subcommands were absent from the command reference — and its maturity note reads version-agnostically instead of naming an already-superseded release.
@@ -85,6 +87,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The Stage 0–8 features were hardened across a pre-release review before first ship: automatic distillation now actually fires in normal use and is cap-triggered (#27, #28) without destroying unrelated or broader-scoped knowledge (#29); a changed fact supersedes its predecessor in one atomic step so recall returns exactly one current answer with the old one dropped from the search index (#30); project-scoped Concepts no longer leak through a widened recall (#20); the data-losing project merge is fixed (#33); permanent-memory writes are crash-safe and tolerate one bad Concept file (#17); the memory-is-data boundary is enforced by neutralising and nonce-fencing every injected surface (#36); identifiers are validated before building store paths (#25); the dedup ledgers are bounded (#41); the session digest is serialised under the project lock (#39); one clock drives capture, the digest and age labels (#37); repeated identical turns get distinct identities (#38); and the capture/hook path fails loudly and never drops work silently (#40).
 - Developer, test and CI hardening: CI now runs on Linux and macOS with coverage and a packaging smoke test, plus local pre-commit hooks (#44, #46); a documentation-truthfulness sweep aligned the README, docs and ADRs with the shipped code (#45); duplicated helpers were consolidated behind shared utilities and one "same fact?" matcher (#18, #19); git history beyond the last 100 commits is now backfilled (#42); and first-run install fails gracefully on model or index errors (#43).
 
-[Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Kntnt/Mimer/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Kntnt/Mimer/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Kntnt/Mimer/releases/tag/v0.1.0
