@@ -146,18 +146,36 @@ def test_manifest_versions_agree() -> None:
     assert len(set(versions.values())) == 1, f"Version disagreement: {versions}"
 
 
-def test_changelog_places_features_under_the_manifest_version() -> None:
-    """The changelog's story for the manifest version must be the actual feature
-    set (Stages 0–8), not a bare 'Initial release' stub with the features
-    stranded under Unreleased."""
+def test_changelog_records_the_v0_1_0_feature_set() -> None:
+    """The 0.1.0 section must carry the actual initial feature set (Stages 0–8),
+    not a bare 'Initial release' stub with the features stranded under Unreleased
+    — the concern guarded at first release. Pinned to 0.1.0, not the moving
+    manifest version, so a later release keeps the historical record intact
+    instead of re-breaking this guard on every version bump."""
+
+    sections = _changelog_sections()
+    assert "0.1.0" in sections, "CHANGELOG has no 0.1.0 section"
+    released = sections["0.1.0"]
+    assert "Foundations (Stage 0)" in released
+    assert "Packaging and first run (Stage 8)" in released
+    assert "- Initial release." not in CHANGELOG.read_text(encoding="utf-8")
+
+
+def test_changelog_documents_the_manifest_version_with_real_notes() -> None:
+    """Whatever version the manifest currently declares must have a substantive
+    changelog section — at least one categorised subsection with an entry — so a
+    release never ships with its notes stubbed or stranded under Unreleased."""
 
     version = next(iter(_manifest_versions().values()))
     sections = _changelog_sections()
     assert version in sections, f"CHANGELOG has no section for {version}"
     released = sections[version]
-    assert "Foundations (Stage 0)" in released
-    assert "Packaging and first run (Stage 8)" in released
-    assert "- Initial release." not in CHANGELOG.read_text(encoding="utf-8")
+    assert re.search(
+        r"^### (Added|Changed|Deprecated|Removed|Fixed|Security)$",
+        released,
+        re.MULTILINE,
+    ), f"CHANGELOG [{version}] has no categorised release notes"
+    assert re.search(r"^- \S", released, re.MULTILINE), f"CHANGELOG [{version}] has no entries"
 
 
 def test_changelog_does_not_strand_features_under_unreleased() -> None:
