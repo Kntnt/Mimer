@@ -217,18 +217,24 @@ def test_skill_documents_the_claude_plugin_root_dependency() -> None:
     assert "resolves in skill-run Bash" in text
 
 
+def _glossary_entry(glossary_term: str) -> str:
+    """The full text of CONTEXT.md's ``**glossary_term**:`` entry, from its bold
+    lemma up to the next entry (or end of file)."""
+
+    entry = re.search(
+        rf"^\*\*{re.escape(glossary_term)}\*\*:.*?(?=^\*\*|\Z)",
+        CONTEXT.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert entry is not None, f"CONTEXT.md has no glossary entry for {glossary_term!r}"
+    return entry.group(0)
+
+
 def _avoid_terms_for(glossary_term: str) -> list[str]:
     """The lowercased names CONTEXT.md's glossary entry for *glossary_term* lists
     under its _Avoid_ line — the names that concept must never be called."""
 
-    text = CONTEXT.read_text(encoding="utf-8")
-    entry = re.search(
-        rf"^\*\*{re.escape(glossary_term)}\*\*:.*?(?=^\*\*|\Z)",
-        text,
-        re.MULTILINE | re.DOTALL,
-    )
-    assert entry is not None, f"CONTEXT.md has no glossary entry for {glossary_term!r}"
-    avoid = re.search(r"^_Avoid_:\s*(.+?)\s*$", entry.group(0), re.MULTILINE)
+    avoid = re.search(r"^_Avoid_:\s*(.+?)\s*$", _glossary_entry(glossary_term), re.MULTILINE)
     assert avoid is not None, f"CONTEXT.md's {glossary_term!r} entry has no _Avoid_ line"
     return [term.strip().rstrip(".").strip().lower() for term in avoid.group(1).split(",")]
 
@@ -265,6 +271,24 @@ def test_adr_0020_states_both_halves_and_the_spool_exemption() -> None:
     assert "seam" in lowered
     assert "sink" in lowered
     assert "spool" in lowered
+
+
+def test_adr_0020_excludes_secret_shaped_identifiers_from_byte_identical() -> None:
+    """ADR 0020's byte-identical-provenance claim must be bounded: an identifier
+    literally shaped like a recognised secret prefix (``sk-ant-`` and the other
+    OpenAI/GitLab prefixes) is redacted by the seam by design, and this collision
+    is deliberately NOT exempted — a credential-shaped string is safe to redact,
+    and exempting it would reopen the write-seam bypass the ADR forbids
+    (integration-review finding)."""
+
+    text = ADR_0020.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "byte-identical" in text
+    assert "the one exclusion" in lowered
+    assert "secret prefix" in lowered
+    assert "sk-ant-" in text
+    assert "redacts by design" in lowered
+    assert "bypass" in lowered
 
 
 # The presentation surfaces that show Concepts — every one must reach the bundle
@@ -333,6 +357,29 @@ def test_storeio_write_discipline_map_names_the_announcement_queue_canonically()
     forbidden = [term for term in _avoid_terms_for("Announcement queue") if term in source]
     assert forbidden == [], f"storeio's write-discipline map uses forbidden term(s): {forbidden}"
     assert "announcement queue" in source, "storeio's map omits the canonical 'announcement queue'"
+
+
+def test_storeio_map_and_context_document_the_announcement_queues_locked_clear() -> None:
+    """The announcement queue is not purely lockless. Its CLEAR
+    (``_clear_announcements``) is a locked read-modify-write —
+    ``write_atomic``/``unlink`` under ``project_lock`` — and its enqueues are
+    lockless ``O_APPEND`` *only* because every enqueue already runs under the
+    caller's project lock (``rewrite_sections``' lock, or bootstrap's explicit
+    lock). That invariant is load-bearing: a truly lockless enqueue would lose an
+    update in the window between the clear's read and its write (#40). Both
+    storeio's write-discipline map and CONTEXT.md's 'Lock discipline' entry must
+    state it, so a future writer cannot reintroduce a lockless enqueue believing
+    the queue is append-only (integration-review finding)."""
+
+    storeio = STOREIO.read_text(encoding="utf-8").lower()
+    assert "locked clear" in storeio
+    assert "write_atomic" in storeio and "unlink" in storeio
+    assert "under the caller's project lock" in storeio
+
+    lock_discipline = _glossary_entry("Lock discipline").lower()
+    assert "locked clear" in lock_discipline
+    assert "project_lock" in lock_discipline
+    assert "under the caller's project lock" in lock_discipline
 
 
 def test_index_docstring_explains_why_inserts_trust_their_sources() -> None:
