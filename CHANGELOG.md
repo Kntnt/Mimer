@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- The README now documents the full `mimer-manage` surface — the `pause`, `resume` and per-project `settings` subcommands were absent from the command reference — and its maturity note reads version-agnostically instead of naming an already-superseded release.
+- `docs/okf-profile.md` and ADR 0015 now describe supersession as the code implements it: a superseded Concept is excluded from the search index, so recall drops it, rather than being "down-ranked".
+
 ## [0.2.0] – 2026-07-14
 
 ### Added

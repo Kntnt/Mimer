@@ -23,7 +23,7 @@ OKF permits producer-defined keys. Mimer adds, and other OKF consumers may ignor
 - `pinned` — `true` marks a profile Concept, always injected with the snapshot; pinning is never expressed by directory placement (ADR 0015).
 - `origin` — the project id the Concept was distilled or written from (ADR 0013).
 - `scope` — `project` (recallable only within its origin) or `global` (the cross-project second brain); project-scoped is the default for distilled facts (ADR 0013).
-- `status` / `supersedes` / `superseded_by` — the supersession chain for facts that change; recall down-ranks superseded Concepts (ADR 0015).
+- `status` / `supersedes` / `superseded_by` — the supersession chain for facts that change; a superseded Concept is excluded from the index, so recall drops it (ADR 0015).
 
 ## Discipline on top of the format
 
