@@ -152,7 +152,8 @@ def run_boundary_pass(
         # Distil from the recent raw long-term record, not the transcript (ADR 0023).
         # An empty record leaves nothing for the model; the durable entries and the
         # archive are already handled above.
-        raw_record = _read_raw_record(project_id, day, root)
+        window = _recovery_window(project_id, day, root)
+        raw_record = _read_raw_record(project_id, window, root)
         if not raw_record.strip():
             return BoundaryResult("nothing", archive_path)
 
@@ -176,7 +177,18 @@ def run_boundary_pass(
         # resolved once and reactively. A non-git project, any git error, or a HEAD
         # the session never touched yields no citation, so the facts are distilled
         # git-free with full cited recall intact.
-        citations = _git_citations(cwd, day) if facts else None
+        #
+        # Only cite when the pass distilled the anchor day alone. When the recovery
+        # window reached back to an earlier covered day — a crash-orphaned day the
+        # pass is recovering (ADR 0023) — the one merged model call cannot attribute
+        # each fact to its day, so applying this session's HEAD to every fact
+        # would anchor an older, recovered fact to a newer commit with no relation:
+        # the #66 wrong-provenance hole reopened from the reverse side. The git
+        # anchor is additive and verifiability never depends on it (ADR 0021), so it
+        # is withheld on such an ambiguous multi-day pass — err-safe exactly as the
+        # date guard in _git_citations is.
+        anchor_only = window == [day.isoformat()]
+        citations = _git_citations(cwd, day) if facts and anchor_only else None
         for fact in facts:
             distill_fact(text=fact, project_id=project_id, root=root, citations=citations)
 
@@ -305,9 +317,9 @@ def _session_day(anchor: Exchange | None) -> date:
     return date.fromisoformat(anchor.date) if anchor else clock.today()
 
 
-def _read_raw_record(project_id: str, day: date, root: Path) -> str:
-    """The recent raw long-term record the pass distils from: the captured turns of
-    the anchor day and the covered days just before it, concatenated oldest-first.
+def _recovery_window(project_id: str, day: date, root: Path) -> list[str]:
+    """The covered-day stems the pass distils from: the anchor ``day`` and the covered
+    days just before it, tail-bounded to the recovery window, oldest-first.
 
     Reaching back over a bounded window of recent covered days — not the anchor day
     alone — is what makes the crash-recovery guarantee hold across a day boundary
@@ -317,19 +329,28 @@ def _read_raw_record(project_id: str, day: date, root: Path) -> str:
     safe: distillation is idempotent per fact (ADR 0015), so a fact seen again mints
     no duplicate Concept.
 
-    Empty when no covered day on or before the anchor holds captured turns — a
-    session with nothing captured yet, or a project whose capture has produced
-    nothing in the window.
+    A window equal to ``[day.isoformat()]`` means the pass distilled the anchor day
+    alone — the one shape under which a resolved git commit can be causally
+    attributed to every distilled fact (see :func:`run_boundary_pass`).
     """
 
     # The covered days on or before the anchor, tail-bounded to the recovery window;
     # ISO stems sort chronologically, so the last N stems are the most recent.
     anchor = day.isoformat()
     recent = [stem for stem in daily_log_days(project_id, root) if stem <= anchor]
-    window = recent[-_RECOVERY_WINDOW_DAYS:]
+    return recent[-_RECOVERY_WINDOW_DAYS:]
 
-    # Concatenate the window oldest-first so the model reads the record in written
-    # order; each stem came from the on-disk enumeration, so its daily log exists.
+
+def _read_raw_record(project_id: str, window: list[str], root: Path) -> str:
+    """The recent raw long-term record the pass distils from: the daily logs of the
+    covered days in ``window`` (from :func:`_recovery_window`), concatenated
+    oldest-first so the model reads the record in written order.
+
+    Empty when the window holds no captured turns — a session with nothing captured
+    yet, or a project whose capture has produced nothing in the window.
+    """
+
+    # Each stem came from the on-disk enumeration, so its daily log exists.
     return "".join(
         daily_log_path(project_id, stem, root).read_text(encoding="utf-8") for stem in window
     )

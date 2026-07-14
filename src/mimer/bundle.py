@@ -43,7 +43,19 @@ PINNED_CAP = 10
 _LOGGED_SKIPS: set[Path] = set()
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-_CITATION_RE = re.compile(r'^\[\d+\]\s+\[.*?\]\((.*?)\)\s+—\s+"(.*?)"\s+\((.*?)\)', re.MULTILINE)
+
+# One serialised citation line: [N] [src](src) — "excerpt" (date). The excerpt is
+# matched greedily and the date anchored to end-of-line as the last parenthesised
+# group, so an excerpt that itself contains a quoted word and a parenthetical —
+# common in author-controlled git commit subjects, the only automated citation
+# source (issue #66), e.g. Fix crash when mode is "auto" (see #12) — round-trips
+# whole. A non-greedy "..." followed by non-greedy (...) would stop at the first
+# inner quote, truncating the excerpt and overwriting the date with subject text.
+# ``.*`` never crosses a newline (no DOTALL), so a greedy excerpt stays within its
+# own citation line even though findall scans the whole block.
+_CITATION_RE = re.compile(
+    r'^\[\d+\]\s+\[.*?\]\((.*?)\)\s+—\s+"(.*)"\s+\(([^)]*)\)\s*$', re.MULTILINE
+)
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 
 

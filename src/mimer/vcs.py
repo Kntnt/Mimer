@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -17,7 +18,9 @@ class Commit:
 
     ``subject`` is the commit's first line — the checkable excerpt that survives a
     history rewrite even after ``sha`` becomes stale. ``date`` is the committer
-    date in ISO ``YYYY-MM-DD`` form.
+    date as the ISO ``YYYY-MM-DD`` of its **UTC** calendar day, so it shares one
+    clock with Mimer's UTC session day (#37) — the boundary guard compares the two
+    directly.
     """
 
     sha: str
@@ -87,14 +90,23 @@ def head_commit(cwd: Path) -> Commit | None:
     delimited by the ASCII unit separator so a subject bearing any ordinary
     punctuation still splits cleanly. Output that does not parse into the three
     fields is treated as no commit, keeping the failure mode uniform.
+
+    The committer date is read as the epoch ``%ct`` and rendered as its UTC calendar
+    day, not the short ``%cs`` — git renders ``%cs`` in the commit's own timezone,
+    which for any negative-UTC-offset developer working in the afternoon/evening
+    reports the previous calendar day, so comparing it against Mimer's UTC session
+    day would silently drop the session's own commit from citation (#66 vs the
+    #37/#63 UTC-day invariant). The epoch is timezone-free, so its UTC date is the
+    one clock both operands share.
     """
 
-    output = _run_git(cwd, "log", "-1", "--format=%H%x1f%s%x1f%cs")
+    output = _run_git(cwd, "log", "-1", "--format=%H%x1f%s%x1f%ct")
     if not output:
         return None
 
     parts = output.split("\x1f")
     if len(parts) != 3 or not parts[0]:
         return None
-    sha, subject, commit_date = parts
+    sha, subject, committed_at = parts
+    commit_date = datetime.fromtimestamp(int(committed_at), tz=UTC).date().isoformat()
     return Commit(sha=sha, subject=subject, date=commit_date)
