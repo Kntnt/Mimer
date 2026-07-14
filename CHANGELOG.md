@@ -17,11 +17,14 @@ All notable changes to this project are documented here. The format follows [Kee
 - ADRs 0003, 0008, 0015 and 0019 marked superseded by the five-requirements design (by 0021, 0022, 0024 and 0025 respectively).
 - `CONTEXT.md`, `docs/okf-profile.md` and `README.md` aligned to the reworked design.
 - Recall's reranker now orders candidates by fused match strength and recency alone; the former source-heading weighting is removed, so an entry's heading no longer influences its rank (#62). The citation shape (source, date, heading, quoted excerpt) and the admit-ignorance behaviour are unchanged.
+- The session-boundary pass now runs **detached** at session end — spawned like capture, so it never delays session close — and distils durable facts into permanent Concepts directly from the **raw long-term record** instead of from an intermediate abstractive block (ADR 0023, #63). The same pass refreshes short-term memory's auto-maintained sections, the deterministic promotion of an explicit "remember this" is preserved, and a session orphaned by a crash has its captured turns distilled — deduplicated per fact — at the next boundary, so nothing is lost or duplicated.
 
 ### Removed
 
 - **Bootstrap — the import of pre-existing Claude Code session history — is gone (ADR 0026, #60).** Mimer starts from zero and fills forward through capture and distillation. The `mimer-bootstrap` command, the `mimer.bootstrap` module, the per-project import state the registry carried (and its merge-carry reconciliation), and the whole-transcript enumeration only bootstrap used are all removed; the packaged command surface and the README now agree. Forward transcript *archiving* — which copies the transcript as opaque provenance without parsing it — is unaffected.
 - **The `.mimer` project-identity marker and monorepo sub-project splitting are gone (ADR 0022, #61).** Project identity now resolves through the two-step chain only — the normalised git remote when the repository has one, else the absolute path — so one repository is one memory and a `.mimer` file is inert, treated like any other file and never read for an id. The confirm-before-binding safeguard is untouched: a path/remote that maps to existing memory ambiguously still returns `NEEDS_CONFIRMATION` and names the exact `mimer-manage confirm <id>` command.
+- **The intermediate "session digest" block is gone (ADR 0023, #63).** The daily log stays raw; distillation reads the accumulating raw record and dedups per fact, so a skipped or crash-orphaned boundary pass loses and duplicates nothing. The `digest` module and its digest ledger are removed.
+- **Git bulk-capture is gone (ADR 0021, #63).** The commit-message fold and its ledger/backfill machinery, and the `gitreader` module, are removed — git is no longer a capture source. A non-git project is unaffected; the reactive `git:<sha>` citation that replaces bulk folding is additive and lands separately (#66).
 
 ## [0.2.1] – 2026-07-14
 
