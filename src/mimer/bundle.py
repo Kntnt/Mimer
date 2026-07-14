@@ -26,7 +26,7 @@ from mimer.paths import safe_identifier, store_root
 from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
 from mimer.store import ensure_store
-from mimer.storeio import project_lock, write_atomic
+from mimer.storeio import named_lock, write_atomic
 from mimer.tombstones import is_suppressed, load_tombstones, write_tombstone
 
 BUNDLE_DIRNAME = "permanent"
@@ -36,9 +36,6 @@ OKF_VERSION = "0.1"
 # Everything pinned is injected into every session, so the profile is capped and
 # the oldest pinned Concept is demoted when the cap is exceeded (ADR 0015).
 PINNED_CAP = 10
-
-# One store-level lock serialises all bundle mutations.
-_BUNDLE_LOCK = "__bundle__"
 
 # Concept files already reported as unparseable in this process, so a single bad
 # file logs one actionable line rather than one per list_concepts call — and
@@ -167,7 +164,7 @@ def create_concept(
         else citations
     )
 
-    with project_lock(_BUNDLE_LOCK, root=root):
+    with named_lock("bundle", root=root):
         concept = Concept(
             id=new_ulid(),
             slug=_unique_slug(title, root),
@@ -353,7 +350,7 @@ def rename_concept(old_slug: str, new_slug: str, root: Path | None = None) -> Co
 
     root = root or store_root()
 
-    with project_lock(_BUNDLE_LOCK, root=root):
+    with named_lock("bundle", root=root):
         concept = read_concept(old_slug, root)
         concept.slug = new_slug
         _write(concept, root)
@@ -378,7 +375,7 @@ def retract_concept(slug: str, root: Path | None = None) -> Concept:
     """Retract a Concept on request: remove it and tombstone it so it stops
     surfacing in recall and injection and is never re-distilled (ADR 0012)."""
 
-    with project_lock(_BUNDLE_LOCK, root=root):
+    with named_lock("bundle", root=root):
         concept = read_concept(slug, root)
         concept_path(slug, root).unlink()
         regenerate_index(root)
@@ -397,7 +394,7 @@ def mark_superseded(slug: str, superseded_by: str, root: Path | None = None) -> 
     active (issue #30).
     """
 
-    with project_lock(_BUNDLE_LOCK, root=root):
+    with named_lock("bundle", root=root):
         _supersede_in_place(slug, superseded_by, root)
         regenerate_index(root)
 

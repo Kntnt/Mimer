@@ -76,6 +76,10 @@ _Avoid_: delete, erase.
 The hard, explicit tier of forgetting: additionally rewrite the long-term logs and transcripts in place and purge the index — the one sanctioned mutation of the append-only layers.
 _Avoid_: purge, scrub.
 
+**Redaction pass**:
+The storage-time strip of recognised secret shapes. Runs in every storeio write primitive — no text reaches the store's files unredacted — and again at each sink before content reaches what the seam cannot see: model prompts, echoes, the index's in-memory path. Shape-based by design, so provenance identifiers survive. Distinct from Redact, the hard tier of forgetting.
+_Avoid_: scrubbing, sanitisation, masking.
+
 **Reindex**:
 Rebuilding `index.db` from the store's files. The index is derived state; corruption means reindex, never repair.
 _Avoid_: migration, vacuum.

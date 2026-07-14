@@ -1,0 +1,18 @@
+# Redaction at the write seam: every storeio primitive strips secrets before disk
+
+Redaction was a discipline each sink had to remember: nine call sites ran the redaction pass before handing content to the store, and any one that forgot was a leak. This makes the redaction structural instead. Every storeio write primitive — `write_atomic`, `append_text` and `append_fold` — runs the redaction pass unconditionally on its content before bytes reach disk, so the module's contract is one sentence without footnotes: **no text reaches the store's files unredacted** through this module. The guarantee is enforced where bytes hit disk, not remembered at each call site. The design has two halves, and both are load-bearing. First, the seam in storeio is the disk guarantee. Second, the sink-level redaction calls **stay**: they guard the surfaces the seam cannot see — the model prompt the digest builds, the one-line echoes a curated write returns, and the index's in-memory path where a Concept's fields are redacted at creation before they are ever written — so they are defence-in-depth, never pruned as "double redaction". The design leans on `redact` being idempotent (`redact(redact(s)) == redact(s)`), which is pinned by test, so redacting most content twice is harmless. Classifying calls as "real" versus "duplicate" would reintroduce exactly the remember-to-do-it discipline this decision abolishes, so no sink call is removed and none added. Redaction is shape-based by design, so provenance the rest of Mimer cites — git SHAs, ULIDs, normalised remotes, ISO dates, ledger hashes — passes through byte-identical; the whole existing suite passing unchanged is the regression proof that redacting the primitives mangles no real artefact. This is the successor to ADR 0013/0014's defence-in-depth stance: the trust boundary against secret leakage moves from something callers do to something the store enforces.
+
+The one deliberate exemption is the capture spool: a transient 0600 hand-off inside the 0700 store, written by the Stop hook straight to a temp file rather than through these primitives, consumed by the detached capture process and deleted in a `finally`. It leaks only on SIGKILL between spawn and consume, its content is redacted when capture persists it behind the seam, and the raw transcript exists outside the store regardless. Redacting the spool would put regex cost in the latency-sensitive Stop hook and defend nothing the platform does not already expose, so it stays exempt — documented, not fixed.
+
+## Considered Options
+
+- **Redaction remembered at each sink** (the prior state) — rejected: a leak is one forgotten call away, and "did this path redact?" has to be re-answered at every new write site.
+- **Redact only the primitives whose sinks handle untrusted content, and prune the rest as duplicates** — rejected: classifying calls as real versus duplicate is the remember-to-do-it discipline again, wearing a different hat.
+- **Unconditional redaction in all three write primitives, with the sink calls kept as defence-in-depth** (chosen).
+
+## Consequences
+
+- The redaction pass runs on every store write, including folds of already-redacted artefacts; idempotency (pinned by test) makes the repeated pass a no-op on content already clean.
+- `append_fold` redacts too even though it moves already-redacted blocks: if a secret ever leaked past an earlier version, the fold is a free sanitation, and the contract keeps zero footnotes.
+- `index.db` needs nothing here: every insert reads from artefacts behind the seam or from Concepts redacted at creation.
+- The capture spool is the sole documented exemption; any future write path that bypasses the primitives inherits the obligation to redact or to record why it is exempt.

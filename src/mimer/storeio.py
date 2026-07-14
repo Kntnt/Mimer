@@ -27,6 +27,20 @@ records without a lock and without corruption; a project merge (ADR 0008) folds
 a whole append-only block the same way (:func:`append_fold`), so the fold can
 neither clobber nor be clobbered by a concurrent appender.
 
+Every write primitive — :func:`write_atomic`, :func:`append_text`,
+:func:`append_fold` — runs the redaction pass (:func:`mimer.redaction.redact`) on
+its content before bytes reach disk (ADR 0020), so the module's contract is one
+sentence: *no text reaches the store's files unredacted* through here. A sink that
+forgets to redact can no longer leak; the guarantee holds where bytes hit disk,
+not at each call site. Redaction is shape-based, so the provenance the rest of
+Mimer cites — git SHAs, ULIDs, normalised remotes, ISO dates, ledger hashes —
+passes through byte-identical. The one deliberate exemption is the capture spool:
+a transient 0600 hand-off inside the 0700 store, consumed and deleted in a
+``finally`` and never routed through these primitives — its content is redacted
+when persisted, and the raw transcript exists outside the store regardless, so
+redacting the spool would only add regex cost to the latency-sensitive Stop hook
+and defend nothing the platform does not already expose.
+
 Advisory locks (:func:`project_lock`, :func:`named_lock`) share one reentrant
 ``flock`` mechanism whose contract is:
 
@@ -53,6 +67,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mimer.paths import store_root
+from mimer.redaction import redact
 from mimer.store import FILE_MODE, ensure_dir, ensure_store
 
 # Advisory lock files live here, one per project id or store-wide name.
@@ -199,12 +214,15 @@ def append_text(path: Path, text: str) -> None:
 
     A single ``O_APPEND`` write lands atomically at end-of-file, so concurrent
     appenders never interleave within a record. Records are kept short (a bullet
-    or a small group) to stay within the platform's atomic-write bound.
+    or a small group) to stay within the platform's atomic-write bound. The text
+    is redacted at the write seam first (ADR 0020).
     """
 
     ensure_dir(path.parent)
 
-    data = (text.rstrip("\n") + "\n").encode("utf-8")
+    # Strip secrets at the write seam (ADR 0020), then frame the record as one
+    # newline-terminated line.
+    data = (redact(text).rstrip("\n") + "\n").encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
     try:
         os.write(fd, data)
@@ -222,13 +240,16 @@ def append_fold(path: Path, content: str) -> None:
     target's existing records nor be overwritten by a concurrent
     :func:`append_text` producer, whatever lock either side holds. A project merge
     (ADR 0008) uses it to combine one append-only artefact onto another; the target
-    keeps the store's owner-only mode.
+    keeps the store's owner-only mode. The content is redacted at the write seam
+    first (ADR 0020) — the fold moves already-redacted artefacts, but if a secret
+    ever leaked past an earlier version the fold is a free sanitation.
     """
 
-    # Append every byte at end-of-file: O_APPEND makes each write seek-and-land
-    # atomically, and the loop covers a short os.write, so a large fold is never
-    # truncated and a concurrent appender only ever interleaves whole records.
-    data = content.encode("utf-8")
+    # Strip secrets at the write seam (ADR 0020), then append every byte at
+    # end-of-file: O_APPEND makes each write seek-and-land atomically, and the
+    # loop covers a short os.write, so a large fold is never truncated and a
+    # concurrent appender only ever interleaves whole records.
+    data = redact(content).encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_MODE)
     try:
         offset = 0
@@ -250,18 +271,19 @@ def write_atomic(path: Path, content: str) -> None:
     directory that ``mkstemp`` creates at 0600 from birth — closing the window a
     ``write_text``-then-``chmod`` would open (issue #26) — before an atomic
     ``os.replace`` swaps it in. Callers that need mutual exclusion must already
-    hold the relevant :func:`project_lock`.
+    hold the relevant :func:`project_lock`. The content is redacted at the write
+    seam first (ADR 0020).
     """
 
     ensure_dir(path.parent)
 
-    # Stage the content in a temp file that is owner-only from creation, then
-    # replace the target atomically; the unique name also stops two concurrent
-    # writers colliding on a shared temp path.
+    # Strip secrets at the write seam (ADR 0020), then stage the content in a temp
+    # file that is owner-only from creation and replace the target atomically; the
+    # unique name also stops two concurrent writers colliding on a shared temp path.
     handle, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as tmp_file:
-            tmp_file.write(content)
+            tmp_file.write(redact(content))
         os.chmod(tmp_name, FILE_MODE)
         os.replace(tmp_name, path)
     except BaseException:

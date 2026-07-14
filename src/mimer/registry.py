@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from mimer.paths import store_root
 from mimer.store import DIR_MODE, ensure_store
-from mimer.storeio import append_fold, project_lock, write_atomic
+from mimer.storeio import append_fold, named_lock, project_lock, write_atomic
 
 # The registry file and the per-project memory directory both live under the
 # store root.
@@ -35,6 +36,20 @@ def project_dir(project_id: str, root: Path) -> Path:
     """Path to a project's memory directory within ``root``."""
 
     return root / PROJECTS_DIRNAME / project_id
+
+
+def registry_lock(*, root: Path | None = None) -> AbstractContextManager[None]:
+    """Hold the store-wide lock guarding the registry read-modify-write.
+
+    The registry (``registry.json``) belongs to no single project, so its lock is a
+    store-wide named lock rather than a per-project one. This names that lock by the
+    artefact its module owns and delegates to :func:`mimer.storeio.named_lock` under
+    the name ``"registry"``; the resulting lock file is the same one earlier
+    processes used, so old and new processes still contend on the same lock
+    (ADR 0011).
+    """
+
+    return named_lock("registry", root=root)
 
 
 @dataclass

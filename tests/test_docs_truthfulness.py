@@ -28,6 +28,11 @@ INIT = ROOT / "src" / "mimer" / "__init__.py"
 CONTEXT = ROOT / "CONTEXT.md"
 STOREIO = ROOT / "src" / "mimer" / "storeio.py"
 INDEX = ROOT / "src" / "mimer" / "index.py"
+ADR_0020 = ROOT / "docs" / "adr" / "0020-redaction-at-the-write-seam.md"
+
+# The one-sentence write-seam contract, worded identically in storeio's docstring,
+# CONTEXT.md's glossary entry and ADR 0020 (#55).
+WRITE_SEAM_CONTRACT = "no text reaches the store's files unredacted"
 
 
 def _user_facing_commands() -> set[str]:
@@ -221,6 +226,40 @@ def _avoid_terms_for(glossary_term: str) -> list[str]:
     avoid = re.search(r"^_Avoid_:\s*(.+?)\s*$", entry.group(0), re.MULTILINE)
     assert avoid is not None, f"CONTEXT.md's {glossary_term!r} entry has no _Avoid_ line"
     return [term.strip().rstrip(".").strip().lower() for term in avoid.group(1).split(",")]
+
+
+def test_storeio_docstring_carries_the_write_seam_contract() -> None:
+    """storeio's module docstring must state the write-seam contract — no text
+    reaches the store's files unredacted — and record its one deliberate
+    exemption, the capture spool, with the reason (ADR 0020, #55)."""
+
+    source = STOREIO.read_text(encoding="utf-8")
+    assert WRITE_SEAM_CONTRACT in source
+    assert "0020" in source
+    assert "spool" in source.lower()
+
+
+def test_context_defines_the_redaction_pass() -> None:
+    """CONTEXT.md must carry the 'Redaction pass' glossary entry: the write-seam
+    contract, and exactly the three _Avoid_ terms the ticket quotes (#55)."""
+
+    text = CONTEXT.read_text(encoding="utf-8")
+    assert WRITE_SEAM_CONTRACT in text
+    assert set(_avoid_terms_for("Redaction pass")) == {"scrubbing", "sanitisation", "masking"}
+
+
+def test_adr_0020_states_both_halves_and_the_spool_exemption() -> None:
+    """ADR 0020 must exist and state both halves of the design — the structural
+    disk guarantee at the seam and the never-pruned sink calls — plus the spool
+    exemption (#55)."""
+
+    assert ADR_0020.is_file()
+    text = ADR_0020.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert WRITE_SEAM_CONTRACT in text
+    assert "seam" in lowered
+    assert "sink" in lowered
+    assert "spool" in lowered
 
 
 def test_storeio_write_discipline_map_names_the_announcement_queue_canonically() -> None:

@@ -26,9 +26,8 @@ from mimer.index import index_if_present
 from mimer.llm import run_haiku
 from mimer.longterm import append_entry, long_term_dir
 from mimer.paths import store_root
-from mimer.project import REGISTRY_LOCK
 from mimer.redaction import redact
-from mimer.registry import Registry
+from mimer.registry import Registry, registry_lock
 from mimer.store import ensure_store
 from mimer.storeio import project_lock
 from mimer.text import parse_bullets, truncate
@@ -229,7 +228,7 @@ def _ensure_registered(project_id: str, root: Path) -> None:
     # Take the store-level registry lock around the load-modify-save, so a
     # concurrent settings change or resolve() cannot lose this record on the
     # shared registry file (#35, ADR 0011).
-    with project_lock(REGISTRY_LOCK, root=root):
+    with registry_lock(root=root):
         registry = Registry.load(root)
         if registry.find_by_id(project_id) is None:
             registry.create(project_id)
@@ -243,7 +242,7 @@ def _state(project_id: str, root: Path) -> dict[str, object]:
 def _save_state(project_id: str, state: dict[str, object], root: Path) -> None:
     # Same registry lock: import-state progress and any concurrent settings
     # change must not clobber each other on the shared file (#35, ADR 0011).
-    with project_lock(REGISTRY_LOCK, root=root):
+    with registry_lock(root=root):
         registry = Registry.load(root)
         registry.set_import_state(project_id, state)
         registry.save()
