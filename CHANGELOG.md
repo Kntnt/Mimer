@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- The **five-requirements design**: `docs/vision.md` rewritten around its audience (a solo practitioner with many clients), the two flows (capture → distil) and the five hard requirements — client confidentiality, verifiability, distillation, forgetting and portability — with a slimmed, independently verifiable build plan.
+- Eight architecture decision records (0021–0028) recording that design: git as a citation source only (0021), project identity as remote-or-path with one memory per repository (0022), a detached session-boundary pass that distils from the raw record (0023), Concept identity by rename and supersession without merge, split or cap (0024), replacing Claude Code's native auto memory with a project-scoped disable (0025), the removal of history bootstrap (0026), a consent guard on promotion to global scope (0027), and a read-only CLI memory browser (0028).
+- The **presentation seam** design (ADR 0029 and the `Present` glossary term, issue #59): one audience-aware `present` operation that every surface showing stored memory routes through — framing and neutralising each untrusted leaf for the agent, verbatim for the human browser — with `frame`/`neutralise` confined to the seam and a living source-scan guard against bypass. Design only; the build is sequenced after the five-requirements rework lands.
+- A prominent README warning about the risk of leaving Claude Code's native auto memory switched on alongside Mimer.
+
+### Changed
+
+- ADRs 0003, 0008, 0015 and 0019 marked superseded by the five-requirements design (by 0021, 0022, 0024 and 0025 respectively).
+- `CONTEXT.md`, `docs/okf-profile.md` and `README.md` aligned to the reworked design.
+
 ## [0.2.1] – 2026-07-14
 
 ### Fixed

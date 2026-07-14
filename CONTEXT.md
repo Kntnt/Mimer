@@ -68,6 +68,10 @@ _Avoid_: search, lookup, query.
 Reading the store through the read-only CLI browser: search with recall's hybrid index, page the hit list, read a hit with its source and date — no agent, no writes, no scope filtering, so it is also the audit surface for what has become global (ADR 0028).
 _Avoid_: recall (reserved for the agent-invoked, scoped search).
 
+**Present**:
+Rendering stored memory safe to show, through the one presentation seam every showing surface routes through. For an agent audience each untrusted leaf is neutralised and the whole is wrapped in the data frame (ADR 0014); for a human audience — the browser (ADR 0028) — memory is shown verbatim, since a human is not injection-vulnerable and framing would only be noise. Trusted chrome (Mimer's labels, headings, citation brackets, age tags) is never neutralised; any stored-derived value is a leaf. Complements Visible: Visible decides which Concepts may be shown, Present how shown memory is framed (ADR 0029).
+_Avoid_: render, display, format.
+
 **Citation**:
 The source, date and location attached to a recalled item, quoting an excerpt so its origin can be checked even if the source moves.
 _Avoid_: reference, footnote, attribution.
@@ -149,5 +153,5 @@ The one module answering fact identity. Three notions, one home: *same fact?* (f
 _Avoid_: similarity, dedup logic, fuzzy match.
 
 **Visible** (of a Concept):
-Whether a Concept may be shown from a given project right now: active (not superseded), within scope, and not tombstoned. The presentation predicate — the one test every surface that shows Concepts uses; scope is one of its three inputs, not a synonym.
+Whether a Concept may be shown from a given project right now: active (not superseded), within scope, and not tombstoned. The presentation predicate — the one test every surface that shows Concepts uses; scope is one of its three inputs, not a synonym. Complements Present: Visible decides which Concepts may be shown, Present (ADR 0029) how shown memory is framed.
 _Avoid_: live, in force, unsuppressed.
