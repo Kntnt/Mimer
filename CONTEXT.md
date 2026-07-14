@@ -23,7 +23,7 @@ A single, self-contained, atomic unit of curated knowledge in permanent memory, 
 _Avoid_: note, article, page, entry.
 
 **Profile**:
-Durable, global facts about the user, realised as Concepts that are pinned so they are always injected. Capped, with a demotion rule.
+Durable, global facts about the user, realised as Concepts that are pinned so they are always injected.
 _Avoid_: preferences, settings, account.
 
 **Snapshot**:
@@ -45,24 +45,28 @@ Placing the snapshot into the agent's context automatically at session start, on
 _Avoid_: load, prompt.
 
 **Capture**:
-The automatic, unattended recording of each exchange into long-term memory as extractive bullets, plus the session digest at session end.
+The automatic, unattended recording of each exchange into long-term memory as extractive bullets. The session-boundary pass turns that raw record into curated knowledge.
 _Avoid_: logging, autosave.
 
-**Session digest**:
-The one batched model call per session, at session end: it summarises the session into the daily log, refreshes short-term memory's auto-maintained sections, and archives the transcript.
-_Avoid_: summary pass, wrap-up.
+**Session-boundary pass**:
+The one batched model call per session, spawned detached at session end (and on demand via "distill now"): it distils the raw record into Concepts, refreshes short-term memory's auto-maintained sections, and archives the transcript. There is no separate abstractive digest.
+_Avoid_: digest, summary pass, wrap-up.
 
 **Curated write**:
 A deliberate write, on request, into short-term or permanent memory, made only after checking against what is already stored, and echoed back in one line.
 _Avoid_: save, note, remember.
 
 **Distillation**:
-The automatic, agent-driven promotion of what matters from short-term and long-term memory into atomic, cited Concepts in permanent memory — read-modify-write against the existing bundle, with dedup and supersession. The bridge from recorded memory to curated knowledge.
+The automatic, agent-driven promotion of what matters from the raw record into atomic, cited Concepts in permanent memory — read-modify-write against the existing bundle, idempotent per fact, with dedup and supersession, and the leakage guard on promotion to global scope. Runs detached at the session boundary and on demand ("distill now"). The bridge from recorded memory to curated knowledge.
 _Avoid_: summarisation, consolidation.
 
 **Recall**:
 Retrieving stored knowledge by meaning, returned together with its source. Project-scoped by default; widening across projects is an explicit act.
 _Avoid_: search, lookup, query.
+
+**Browse**:
+Reading the store through the read-only CLI browser: search with recall's hybrid index, page the hit list, read a hit with its source and date — no agent, no writes, no scope filtering, so it is also the audit surface for what has become global (ADR 0028).
+_Avoid_: recall (reserved for the agent-invoked, scoped search).
 
 **Citation**:
 The source, date and location attached to a recalled item, quoting an excerpt so its origin can be checked even if the source moves.
@@ -91,7 +95,7 @@ An organizing category that scopes short-term and long-term memory to the work a
 _Avoid_: workspace, repo, vault.
 
 **Project id**:
-The identifier a project's memory is keyed by, resolved marker → normalised remote → path, reconciled through the registry, and never bound to existing memory without confirmation.
+The identifier a project's memory is keyed by, resolved normalised remote → path, reconciled through the registry, and never bound to existing memory without confirmation.
 _Avoid_: project key, slug.
 
 **Origin**:
@@ -102,13 +106,13 @@ _Avoid_: source project, provenance (reserved for citations).
 Where a Concept may be recalled: `project` (only within its origin) or `global` (everywhere). Project-scoped is the default for distilled facts; global is earned by being client-neutral.
 _Avoid_: visibility, sharing.
 
-**Registry**:
-The store-level record mapping project ids to known remotes and paths, per-project settings and import state; the mechanism that reconciles moved, renamed or cloned projects.
-_Avoid_: catalog, database.
+**Sensitive** (of content):
+What the judgment rules flag as unsafe to make global without asking — client identities, business facts, terms, NDA material. A sensitive fact is never promoted to global scope without explicit user consent, asked at the next session start and waiting project-bound until answered (ADR 0027).
+_Avoid_: private; secret (reserved for redaction).
 
-**Marker**:
-The opt-in `.mimer` file at a project root carrying its project id — first in the resolution chain, but honoured against existing memory only after confirmation.
-_Avoid_: anchor, tag file.
+**Registry**:
+The store-level record mapping project ids to known remotes and paths and per-project settings; the mechanism that reconciles moved, renamed or cloned projects.
+_Avoid_: catalog, database.
 
 ### Mechanics
 
@@ -121,7 +125,7 @@ The size bound on short-term memory (and on the pinned set) that triggers promot
 _Avoid_: limit, quota.
 
 **Judgment rules**:
-The editable prose instructions inside the memory skill that decide salience, durability, confidentiality classification and trigger-phrase disambiguation.
+The editable prose instructions inside the memory skill that decide salience, durability, confidentiality and sensitivity classification (the latter drives the leakage guard on global promotion) and trigger-phrase disambiguation.
 _Avoid_: heuristics, policy.
 
 **Tombstone**:
@@ -129,12 +133,8 @@ The durable record of a forgotten fact's identity, consulted by distillation (ne
 _Avoid_: blocklist entry, deletion marker.
 
 **Announcement queue**:
-The per-project queue of newly distilled Concept titles awaiting the next snapshot's announcement line. Appends are lockless; clearing is at-least-once — only the titles a snapshot actually carried, only after it was emitted.
+The per-project queue of newly distilled Concept titles — new global promotions included, so the leakage guard's announce-and-undo runs here — awaiting the next snapshot's announcement line. Appends are lockless; clearing is at-least-once — only the titles a snapshot actually carried, only after it was emitted.
 _Avoid_: notification list, pending titles, distilled queue.
-
-**Bootstrap**:
-The per-project, opt-in, resumable import of pre-existing session and git history into memory, finishing with a distillation pass that populates permanent memory.
-_Avoid_: seed, backfill, migration.
 
 **Store walk**:
 The read-only enumeration of what the store holds: project ids (on disk, or known to the registry) and the dates a project's long-term memory covers. The one module that walks the projects tree — no other module lists its directories.

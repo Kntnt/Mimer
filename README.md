@@ -3,7 +3,12 @@
 [![License](https://img.shields.io/github/license/Kntnt/Mimer)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Kntnt/Mimer)](https://github.com/Kntnt/Mimer/releases/latest)
 
-A Claude Code plugin that gives agents a persistent, self-curating knowledge base built on the Open Knowledge Format, with layered memory, semantic search, cited recall and real forgetting.
+A Claude Code plugin that gives your agent a persistent, self-curating knowledge base — built on the Open Knowledge Format, with layered memory, semantic search, cited recall and real forgetting. It is built for the solo practitioner juggling many projects and clients: each client's work stays confidential by default, while your own knowledge follows you everywhere.
+
+> [!WARNING]
+> **Turn off Claude Code's built-in auto memory in every project where you use Mimer.** Running both at once means two memories that quietly drift apart — and, worse, a fact you tell Mimer to *forget* can still be kept and re-injected by the built-in one, defeating Mimer's forgetting. The setting is per project and affects nothing else — not your other projects, and not Claude's chat or Cowork memory, which are separate systems.
+>
+> To turn it off, set `"autoMemoryEnabled": false` in the project's `.claude/settings.json`, or run `mimer-manage disable-native-memory` from the project and Mimer sets it for you.
 
 ## Description
 
@@ -35,7 +40,7 @@ A few deliberate choices set Mimer apart, and each has a reason you can weigh.
 
 - **Knowledge is stored in an open, plain-text format** — following the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) (OKF), a published, vendor-neutral spec — rather than locked inside one app's database. Your knowledge stays readable, portable and yours: ordinary Markdown files you can open in any editor, structured to a documented spec rather than to Mimer's private whims. (Honestly said: OKF is young, and no other memory tool reads it yet — the guarantee is the plain text and the documented structure, not an ecosystem.)
 - **It stores and searches everything on your own machine.** No server, no extra subscription, no separate account, no API key. Files and search index live in your home directory; summarisation runs through the Claude access you already have, and nothing else ever sees your data. Because the store concentrates everything in one place, Mimer creates it with owner-only permissions and the documentation tells you to keep it out of generic cloud sync.
-- **The agent does the work, but you stay in control.** Capturing, tidying and filing happen on their own — and everything is inspectable and reversible. Ask "what do you know about me?" and get the answer; see what was learned recently; pause capture for a session; keep a project's knowledge from ever leaving it; and forget — really forget — on request. Secrets such as keys and credentials are stripped before anything is stored.
+- **The agent does the work, but you stay in control.** Capturing, tidying and filing happen on their own — and everything is inspectable and reversible. Ask "what do you know about me?" and get the answer; see what was learned recently; pause capture for a session; keep a project's knowledge from ever leaving it; read your whole memory from the command line without opening a session; and forget — really forget — on request. Anything that could identify a client is never promoted to your cross-project knowledge without your explicit yes, and secrets such as keys and credentials are stripped before anything is stored.
 - **Memory is treated as data, never as instructions.** Whatever ends up in memory — including text that arrived from a cloned repo or a web page — is quoted and cited when it comes back, never obeyed. Changes to the always-loaded profile require your confirmation.
 - **The three layers keep the right things in reach.** What the agent sees at the start of a session stays small and current, while nothing valuable is thrown away — it simply moves to the layer where it belongs.
 
@@ -65,33 +70,34 @@ Mimer complements the first three rather than replacing them: you can still buil
 | Auto-distillation into curated knowledge | ✓ | ~ | ✓ | ✓ | ✓ | ✗ | ✓ |
 | Distinct memory layers | ✓ | ~ | ~ | ✓ | ✓ | ✗ | ✓ |
 | Knowledge global, memory scoped per project | ✓ | ✗ | ~ | ~ | ✗ | ✗ | ~ |
-| Git history as a capture source | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Git commits cited as provenance | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | No background service required | ✓ | ✓ | ✗ | ✓ | ✓ | ~ | ✓ |
 | Installable today | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 *✓ yes · ~ partial · ✗ not offered. Notes on the ~ cells: built-in auto memory saves notes when Claude judges them useful rather than capturing sessions, and reorganises its own notes rather than distilling a knowledge base; claude-mem stores observations in SQLite behind a local worker service rather than plain files, and layers retrieval (index → timeline → details) rather than memory; basic-memory's capture is an opt-in output style, its recall links to source notes without per-fact citations, and it runs as an MCP server; swarmvault ingests sessions via manual CLI commands; claude-obsidian's and swarmvault's project scoping is vault-level rather than a global/project split. basic-memory can optionally sync to its own cloud; the rest are local-only.*
 
-**What Mimer offers.** No single row is a moat — any of these projects could add git capture in a week, and the platform's built-in memory grows with every release. Mimer's bet is the combination, plus discipline the category skips: knowledge as plain text following a published spec instead of a private database; a scope model that keeps client work confidential while your own knowledge follows you across projects; every recalled fact cited back to a checkable source, with the full transcript archived behind it; forgetting that actually spans the notes, the index and the raw record; secrets stripped before storage; and all of it with no background service, no daemon and no API key — hooks, one skill and a few scripts.
+**What Mimer offers.** No single row is a moat — any of these projects could match a single row in a week, and the platform's built-in memory grows with every release. Mimer's bet is the combination, plus discipline the category skips: knowledge as plain text following a published spec instead of a private database; a scope model that keeps client work confidential while your own knowledge follows you across projects; every recalled fact cited back to a checkable source, with the full transcript archived behind it; forgetting that actually spans the notes, the index and the raw record; secrets stripped before storage; and all of it with no background service, no daemon and no API key — hooks, one skill and a few scripts.
 
 **Where the others are ahead.** A head start buys real advantages Mimer has not caught up to. claude-mem is the category incumbent with enormous adoption, a web viewer for browsing memory in real time, and support for several agents beyond Claude Code. The built-in auto memory costs nothing to install and is on by default. basic-memory and swarmvault reach far more tools — MCP clients, Obsidian, Cursor, VS Code. swarmvault and claude-obsidian build typed knowledge graphs, and TencentDB auto-generates a user persona, richer structures than Mimer's linked concepts. swarmvault stages changes in a review queue before they land; Mimer curates automatically instead, trusting scope rules, confirmations and citations over a gate — faster, but less controlled. By riding on Obsidian, claude-obsidian and basic-memory give you a real editor and graph view for free, which Mimer has no answer to. And running locally, Mimer's search is "good enough" rather than the best a hosted model could give. Plainly: Mimer is new — an early release — so use it with the care any young tool deserves.
 
 ### How you use it
 
-In everyday use, Mimer is meant to disappear. You install it once as a plugin, then work with your agent as you normally would. It reads you in at the start of each session — announcing in one line what it loaded — records as you go, and builds up knowledge in the background. Now and then you might say "remember this" to pin something down (the agent confirms what it stored), ask "what did we decide about X?" and get a cited answer, or ask "what do you know about me?" and see the profile it keeps. Say "forget that" and it is gone; say "pause capture" before a sensitive session and nothing is recorded. That is the whole of it — the point is that you stop being the courier.
+In everyday use, Mimer is meant to disappear. You install it once as a plugin, then work with your agent as you normally would. It reads you in at the start of each session — announcing in one line what it loaded — records as you go, and builds up knowledge in the background. Now and then you might say "remember this" to pin something down (the agent confirms what it stored), ask "what did we decide about X?" and get a cited answer, or ask "what do you know about me?" and see the profile it keeps. Say "forget that" and it is gone; say "pause capture" before a sensitive session and nothing is recorded; ask it to distil what you have learned and today's knowledge is promoted at once, ready for your other projects. When you want to read the store yourself, a read-only command-line browser searches and pages the whole of it without opening a session. That is the whole of it — the point is that you stop being the courier.
 
 ### Key features
 
-- three memory layers – short-term (the current session's working set, auto-refreshed at session end), long-term (the dated record, with raw transcripts archived as provenance) and permanent (durable, curated knowledge) – uniting Hermes Agent's memory model with the Second Brain / PKM tradition
+- three memory layers – short-term (the current session's working set, auto-refreshed at session end), long-term (the dated record, with raw transcripts archived as provenance) and permanent (durable, curated knowledge)
 - the permanent layer stored following the Open Knowledge Format (OKF) – plain-text Markdown to a published, vendor-neutral spec, pinned and profiled in `docs/okf-profile.md`
 - a single store on your machine: your own durable knowledge recallable across projects, while project- and client-specific knowledge stays scoped to where it came from
 - automatic distillation that promotes what matters from memory into atomic, cited knowledge – checking what it already knows first, so changed facts supersede instead of contradict
 - a snapshot injected at the start of every session – the current project's short-term memory, your profile, and a compact index of what memory holds – announced in one line, never invisible
 - curated writes on request – say "remember this" and the agent records it after checking what is already stored, echoing back what it did
-- full-session capture with secrets stripped before storage, so the history is retained and the summarised record searchable
+- full-session capture with secrets stripped before storage, so the history is retained and the record searchable
 - semantic (vector) search with cited recall, on demand – knowledge found by meaning, every fact quoting its source
 - real forgetting – "forget" removes and blocks re-learning; "redact" scrubs the raw record too
-- git history read as a capture source, never written to
-- a per-project, opt-in bootstrap import that fills memory from existing session and git history
+- git commits cited as provenance (`git:<sha>`) when a remembered fact matches one – never written to, never folded in bulk
+- client-confidential by default – knowledge that could identify a client is never made global without your explicit consent, asked at the next session start; new global knowledge is announced and reversible with one command
+- a read-only command-line browser to search, page and read your whole memory without starting a session
 - no server, no daemon, no separate subscription, no API key – hooks, one skill and a few scripts
 
 ## Requirements
@@ -116,11 +122,11 @@ Mimer is a Claude Code plugin. It needs [uv](https://docs.astral.sh/uv/) (which 
    This creates the `~/.mimer/` store (owner-only), verifies the interpreter can load SQLite extensions — failing loudly with an actionable message if it cannot — and pre-fetches the local embedding model so no session ever stalls on a download.
 3. **Start working.** Open a session in any project; Mimer injects the snapshot at the start and records as you go. If the failure log has recent entries, the snapshot carries a one-line health notice so problems are visible, never silent.
 
-To import history that predates Mimer, run `mimer-bootstrap` in a project once (opt-in and resumable). Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`, `confirm`, `pause`/`resume`, `settings`).
+Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`, `confirm`, `pause`/`resume`, `settings`, `disable-native-memory`), and read the whole store without a session with the read-only browser `mimer-browse`.
 
-### Coexistence with Claude Code's native auto memory
+### Turn off Claude Code's native auto memory
 
-Claude Code ships its own auto memory (on by default). Mimer works alongside it, but to avoid two systems remembering the same things divergently, the recommendation — never a requirement — is to disable native auto memory in Mimer-managed projects by setting `autoMemoryEnabled: false` in that project's Claude Code settings. Mimer builds what native memory does not attempt: retrieval by meaning with citations, a curated cross-project knowledge layer, full-history capture, git provenance, real forgetting, and bootstrap from prior history.
+Claude Code ships its own auto memory (on by default), and Mimer is meant to **replace** it, not run beside it. Two memories remembering the same things divergently is the mild problem; the real one is that a fact you tell Mimer to *forget* can still live on in the native memory and be re-injected later, quietly defeating Mimer's forgetting. So in every project where you use Mimer, disable the native auto memory by setting `"autoMemoryEnabled": false` in that project's `.claude/settings.json` — or run `mimer-manage disable-native-memory` from the project and Mimer writes the setting for you. The switch is project-scoped: it touches neither your other projects nor Claude's chat and Cowork memory, which are separate systems. Mimer never changes the setting silently; while the native memory is on, it warns you at the start of each session and points you here. In its place Mimer provides everything the native memory does not attempt: retrieval by meaning with citations, a curated cross-project knowledge layer, full-history capture, git provenance and real forgetting.
 
 ### Uninstalling
 
@@ -137,10 +143,10 @@ Most of the time you drive Mimer by talking to the agent, not by typing commands
 | Command | What it does |
 |---|---|
 | `mimer-install` | First-run provisioning: creates the owner-only `~/.mimer/` store, verifies the interpreter can load SQLite extensions, pre-fetches the embedding model, and builds the initial search index. Run once from the plugin directory. |
-| `mimer-bootstrap` | Opt-in, resumable import of a project's pre-existing Claude Code session and git history into memory. Run once per project. |
 | `mimer-memory` | The curated-write engine behind "remember", "note that", "forget about" and "redact"; forget is the soft tier (remove and tombstone), redact the hard tier (also erase the fact from the raw logs and transcripts, then reindex). The memory skill calls it and echoes back the one-line result. |
 | `mimer-recall` | Semantic, cited search over memory — project-scoped by default, `--widen` to reach other projects; the skill calls it for questions about past work. |
-| `mimer-manage` | Inspect, correct and control memory: `profile`, `recent`, `health`, `retract <slug>`, `confirm <candidate-id>` (link this directory to a project when its identity needs confirmation), `pause`/`resume` (stop and restart automatic capture, store-wide and sticky until resumed), and `settings` (show or toggle a project's `capture`, `distill-to-global` and `widening` switches). |
+| `mimer-browse` | Read-only browser over the whole store: search with the same index recall uses, page the hit list, and read a hit with its source and date. It never writes, and it does not filter by scope — so it is also where you audit, with your own eyes, what has become global. |
+| `mimer-manage` | Inspect, correct and control memory: `profile`, `recent`, `health`, `retract <slug>`, `confirm <candidate-id>` (link this directory to a project when its identity needs confirmation), `pause`/`resume` (stop and restart automatic capture, store-wide and sticky until resumed), `settings` (show or toggle a project's `capture`, `distill-to-global` and `widening` switches), and `disable-native-memory` (set `autoMemoryEnabled: false` for this project). |
 | `mimer-reindex` | Rebuild the derived search index from memory; the index is reproducible, so running this is safe whenever it drifts. |
 | `mimer-uninstall` | Leaves your `~/.mimer/` store in place and writes a pointer note explaining how to resume or fully remove it. |
 
@@ -148,7 +154,7 @@ Every command runs through `uv`; from the plugin directory the form is `uv run -
 
 ### Confirming a project identity
 
-Mimer will not silently attach a directory to memory it is unsure about. When a `.mimer` marker or a git remote would bind this directory to an *existing* project, or the directory's path and remote point at different projects, Mimer refuses to load or record and tells you so — in the SessionStart line, on a "remember", or on a recall. The message names the exact command and the candidate project id, for example `mimer-manage confirm secret-client`. Run that command from the project's working directory to link this directory to the named project; injection and capture then proceed from the next session. An unknown candidate id is rejected in one line and nothing changes, so confirming is safe to try. This is the deliberate "yes" to a safety prompt — confirm only when you actually want this directory to share that project's memory.
+Mimer will not silently attach a directory to memory it is unsure about. When a git remote or a path would bind this directory to an *existing* project, or the directory's path and remote point at different projects, Mimer refuses to load or record and tells you so — in the SessionStart line, on a "remember", or on a recall. The message names the exact command and the candidate project id, for example `mimer-manage confirm secret-client`. Run that command from the project's working directory to link this directory to the named project; injection and capture then proceed from the next session. An unknown candidate id is rejected in one line and nothing changes, so confirming is safe to try. This is the deliberate "yes" to a safety prompt — confirm only when you actually want this directory to share that project's memory.
 
 ## Questions, bugs, and feature requests
 

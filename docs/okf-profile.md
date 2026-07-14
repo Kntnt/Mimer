@@ -19,7 +19,7 @@ Mimer targets **OKF v0.1**, at the time of writing a *draft* published in the `G
 
 OKF permits producer-defined keys. Mimer adds, and other OKF consumers may ignore:
 
-- `id` — a stable ULID; the identity that survives rename, merge and split (ADR 0015).
+- `id` — a stable ULID; the identity that survives rename (ADRs 0015, 0024).
 - `pinned` — `true` marks a profile Concept, always injected with the snapshot; pinning is never expressed by directory placement (ADR 0015).
 - `origin` — the project id the Concept was distilled or written from (ADR 0013).
 - `scope` — `project` (recallable only within its origin) or `global` (the cross-project second brain); project-scoped is the default for distilled facts (ADR 0013).
@@ -27,7 +27,7 @@ OKF permits producer-defined keys. Mimer adds, and other OKF consumers may ignor
 
 ## Discipline on top of the format
 
-- **Stable identity**: renames, merges and splits run as one atomic operation that rewrites inbound links, regenerates `index.md` and reindexes `index.db` (ADR 0015).
+- **Stable identity**: a rename runs as one atomic operation that rewrites inbound links, regenerates `index.md` and reindexes `index.db` (ADRs 0015, 0024); merge and split are not part of Mimer's discipline.
 - **Citations that survive**: every citation quotes a short excerpt of its source, so it stays checkable if the cited log moves or a cited commit is rewritten; registry reconciliation triggers a citation-fixup pass.
 - **Granularity**: one claim, decision or preference per Concept — if two sentences can be true independently, they are two Concepts.
 
