@@ -10,8 +10,11 @@ committed to the repository (GitHub push protection scans file contents);
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from mimer.failure_log import NON_FATAL_PREFIX, fresh_failures, log_failure
 from mimer.paths import LOG_FILENAME
@@ -91,3 +94,42 @@ def test_non_fatal_note_is_logged_but_excluded_from_the_health_notice(store_root
     contents = (store_root / LOG_FILENAME).read_text(encoding="utf-8")
     assert NON_FATAL_PREFIX in contents
     assert "index update failed" in contents
+
+
+def test_non_fatal_note_stays_skipped_when_redaction_rewrites_the_tag(
+    store_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-fatal note stays out of the health notice even when the write-seam
+    redaction rewrites its tag.
+
+    #56 routes the write through ``storeio.append_text``, which redacts the whole
+    line — tag included — a second time (#55), downstream of where log_failure
+    controls it. The tag survives today only because ``[non-fatal]`` happens to
+    match no redaction rule; the tag-after-redaction ordering that once guaranteed
+    it no longer does. fresh_failures must therefore key on the tag's *stored*
+    (redacted) form, not on the literal surviving redaction — otherwise a new
+    redaction rule that touches bracketed tokens (or a secret-shaped
+    NON_FATAL_PREFIX) desyncs write from read and resurrects the #40
+    spurious-failure, surfacing benign self-healing events as real failures at
+    session start.
+    """
+
+    # Stand in for any future rule that rewrites the tag: append one that redacts
+    # the non-fatal tag, so the tag no longer reaches disk verbatim.
+    from mimer import redaction
+
+    monkeypatch.setattr(
+        redaction,
+        "_RULES",
+        [*redaction._RULES, (re.compile(re.escape(NON_FATAL_PREFIX)), "[REDACTED-TAG]")],
+    )
+
+    ensure_store(store_root)
+    log_failure("capture: index update failed: OperationalError", root=store_root, fatal=False)
+    log_failure("distill: promotion failed", root=store_root)
+
+    surfaced = fresh_failures(store_root)
+
+    # The real failure still drives the notice; the tag-rewritten non-fatal note does not.
+    assert any("promotion failed" in message for message in surfaced)
+    assert all("index update failed" not in message for message in surfaced)
