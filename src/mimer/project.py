@@ -1,11 +1,13 @@
-"""Project-identity resolution (ADR 0008): turn a working directory into a stable
+"""Project-identity resolution (ADR 0022): turn a working directory into a stable
 project id, consulting every identity signal together and never binding to
 existing memory silently.
 
-Signals, in resolution order: an opt-in ``.mimer`` marker, the normalised git
-remote(s), and the absolute path. A marker or path/remote conflict that would
-attach a new directory to existing memory is surfaced as a confirmation request
-rather than resolved silently.
+Identity resolves through a two-step chain — the normalised git remote(s) if the
+project has one, else the absolute path — reconciled through the registry. A
+path/remote conflict, or remotes that map to more than one project, would attach a
+new directory to existing memory ambiguously, so it is surfaced as a confirmation
+request rather than resolved silently — the confidentiality safeguard of
+ADR 0022 §1.
 """
 
 from __future__ import annotations
@@ -20,9 +22,6 @@ from mimer.paths import store_root
 from mimer.registry import Registry, registry_lock
 from mimer.store import ensure_store
 from mimer.vcs import git_remotes, git_toplevel
-
-# The opt-in marker file at a project root carrying its project id.
-MARKER_FILENAME = ".mimer"
 
 # URL schemes stripped during remote normalisation.
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -111,49 +110,31 @@ class Resolution:
 class Signals:
     """The identity signals gathered from a working directory."""
 
-    marker_id: str | None
     path: str
     remotes: list[str]
     preferred_remote: str | None
 
 
 def gather_signals(cwd: Path) -> Signals:
-    """Collect the marker, path and remote signals for ``cwd`` (ADR 0008).
+    """Collect the path and remote signals for ``cwd`` (ADR 0022).
 
-    A marker scopes identity to its own directory (the monorepo case), so when a
-    marker is present the path is the marker's directory and the repo's remotes
-    are ignored; otherwise the path is the git top level (or the directory
-    itself) and every remote is considered.
+    Identity follows the repository: the path is the git top level (or the
+    directory itself when there is no repository), and every remote is normalised
+    and considered.
     """
 
     cwd = Path(cwd)
 
-    # A non-empty marker declares an explicit id and scopes identity to its dir.
-    marker_id = _read_marker(cwd)
-    if marker_id is not None:
-        return Signals(
-            marker_id=marker_id, path=str(cwd.resolve()), remotes=[], preferred_remote=None
-        )
-
-    # Otherwise identity follows the repository: its top level and its remotes.
+    # The path is the repository's top level, or the directory itself outside a repo.
     toplevel = git_toplevel(cwd)
     path = toplevel if toplevel is not None else str(cwd.resolve())
 
+    # Every remote is normalised so SSH and HTTPS spellings collapse to one key; the
+    # preferred remote keys a brand-new project.
     remotes_by_name = git_remotes(cwd)
     normalised = sorted({normalise_remote(url) for url in remotes_by_name.values() if url.strip()})
     preferred = _preferred_remote(remotes_by_name)
-    return Signals(marker_id=None, path=path, remotes=normalised, preferred_remote=preferred)
-
-
-def _read_marker(cwd: Path) -> str | None:
-    """Return the slugged id declared by a ``.mimer`` marker, or None."""
-
-    marker = cwd / MARKER_FILENAME
-    if not marker.is_file():
-        return None
-
-    content = marker.read_text(encoding="utf-8").strip()
-    return _slug(content) if content else None
+    return Signals(path=path, remotes=normalised, preferred_remote=preferred)
 
 
 def _preferred_remote(remotes_by_name: dict[str, str]) -> str | None:
@@ -172,9 +153,9 @@ def resolve(cwd: Path, *, root: Path | None = None) -> Resolution:
 
     Safe bindings (a brand-new project, an already-known directory, a remote or
     path that unambiguously extends a known project) are persisted to the
-    registry. A marker claiming existing memory from an unseen directory, or a
-    path/remote pointing at different projects, returns
-    :data:`ResolutionStatus.NEEDS_CONFIRMATION` and writes nothing.
+    registry. A path/remote pointing at different projects, or remotes mapping to
+    more than one project, returns :data:`ResolutionStatus.NEEDS_CONFIRMATION` and
+    writes nothing.
     """
 
     root = root or store_root()
@@ -189,36 +170,9 @@ def resolve(cwd: Path, *, root: Path | None = None) -> Resolution:
     # atomic write (ADR 0011).
     with registry_lock(root=root):
         registry = Registry.load(root)
-        if signals.marker_id is not None:
-            return _resolve_marker(registry, signals)
         if signals.remotes:
             return _resolve_with_remote(registry, signals)
         return _resolve_path_only(registry, signals)
-
-
-def _resolve_marker(registry: Registry, signals: Signals) -> Resolution:
-    """Resolve when an explicit marker is present."""
-
-    assert signals.marker_id is not None
-    existing = registry.find_by_id(signals.marker_id)
-
-    if existing is None:
-        # Unrecognised marker → a fresh project with the declared id.
-        registry.create(signals.marker_id, paths=[signals.path])
-        registry.save()
-        return Resolution(ResolutionStatus.CREATED, signals.marker_id)
-
-    if signals.path in existing.paths:
-        # The marker's directory is already linked here.
-        return Resolution(ResolutionStatus.RECOGNISED, existing.id)
-
-    # A marker claiming existing memory from an unseen directory is untrusted.
-    return Resolution(
-        ResolutionStatus.NEEDS_CONFIRMATION,
-        None,
-        candidate_id=existing.id,
-        reason="marker maps to an existing project from a new directory",
-    )
 
 
 def _resolve_with_remote(registry: Registry, signals: Signals) -> Resolution:
@@ -261,7 +215,7 @@ def _resolve_with_remote(registry: Registry, signals: Signals) -> Resolution:
 
 
 def _resolve_path_only(registry: Registry, signals: Signals) -> Resolution:
-    """Resolve a project with neither marker nor remote — keyed by path."""
+    """Resolve a project with no remote — keyed by its absolute path."""
 
     path_record = registry.find_by_path(signals.path)
     if path_record is not None:
@@ -285,8 +239,8 @@ def _adopt(registry: Registry, project_id: str, signals: Signals) -> Resolution:
 def confirm_link(cwd: Path, candidate_id: str, *, root: Path | None = None) -> Resolution:
     """Bind ``cwd``'s signals to ``candidate_id`` after the user confirms it.
 
-    This is the deliberate act that honours a marker or resolves a conflict that
-    :func:`resolve` refused to bind silently. Confirming makes ``candidate_id`` the
+    This is the deliberate act that resolves a conflict :func:`resolve` refused to
+    bind silently. Confirming makes ``candidate_id`` the
     sole owner of this directory's signals: every *other* project that currently
     owns one of the signal remotes or the signal path is folded into the candidate
     via :meth:`Registry.merge` (ADR 0008 reconciliation, made lossless by #33). A

@@ -18,10 +18,11 @@ import pytest
 from mimer.bundle import concept_headlines, create_concept, list_concepts, render_profile
 from mimer.curate import forget, main, redact, remember
 from mimer.manage import profile
-from mimer.registry import Registry
+from mimer.project import resolve
 from mimer.shortterm import parse_short_term, read_short_term
 from mimer.store import ensure_store
 from mimer.tombstones import is_tombstoned, load_tombstones, write_tombstone
+from tests.gitutil import init_repo
 
 TODAY = date(2026, 7, 11)
 
@@ -527,13 +528,20 @@ def test_curated_write_refusal_names_confirm_command_and_candidate(
     not just a dead end (#34)."""
 
     ensure_store(store_root)
-    registry = Registry.load(store_root)
-    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
-    registry.save()
+
+    # A candidate project owns a remote; the clone is path-keyed, then acquires that
+    # same remote, so path and remote disagree and binding is refused — the marker
+    # that used to trigger this refusal is gone (ADR 0022).
+    candidate_repo = init_repo(
+        tmp_path / "candidate", remotes={"origin": "git@github.com:x/secret.git"}
+    )
+    candidate = resolve(candidate_repo, root=store_root)
+    assert candidate.project_id is not None
 
     clone = tmp_path / "clone"
     clone.mkdir()
-    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+    resolve(clone, root=store_root)
+    init_repo(clone, remotes={"origin": "git@github.com:x/secret.git"})
 
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     monkeypatch.chdir(clone)
@@ -541,6 +549,6 @@ def test_curated_write_refusal_names_confirm_command_and_candidate(
 
     assert exit_code == 1
     out = capsys.readouterr().out
-    assert "mimer-manage confirm secret-client" in out
+    assert f"mimer-manage confirm {candidate.project_id}" in out
     # Nothing was written: the clone acquired no short-term memory.
     assert not (tmp_path / "clone" / "short-term.md").exists()

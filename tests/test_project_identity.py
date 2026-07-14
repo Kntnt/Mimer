@@ -1,6 +1,6 @@
 """Integration tests for project-id resolution against real git repositories,
-covering ADR 0008's fixtures: multiple remotes, SSH/HTTPS equivalence,
-worktrees, a monorepo marker, no-git, a moved project, confirmed binding and
+covering ADR 0022's fixtures: multiple remotes, SSH/HTTPS equivalence, worktrees,
+an inert ``.mimer`` file, no-git, a moved project, confirm-before-binding and
 reconciliation.
 """
 
@@ -124,24 +124,6 @@ def test_mimer_marker_file_in_a_plain_dir_is_path_keyed(store_root: Path, tmp_pa
     assert result.project_id != "declared-id"
 
 
-def test_monorepo_subproject_marker_gets_separate_identity(
-    store_root: Path, tmp_path: Path
-) -> None:
-    """A marker in a monorepo sub-directory yields a separate id from the repo."""
-
-    repo = init_repo(tmp_path / "mono", remotes={"origin": "git@github.com:x/mono.git"})
-    service = repo / "services" / "billing"
-    service.mkdir(parents=True)
-    (service / ".mimer").write_text("billing-service\n", encoding="utf-8")
-
-    repo_result = resolve(repo, root=store_root)
-    service_result = resolve(service, root=store_root)
-
-    assert service_result.status is ResolutionStatus.CREATED
-    assert service_result.project_id == "billing-service"
-    assert service_result.project_id != repo_result.project_id
-
-
 def test_non_git_project_is_path_keyed_and_stable(store_root: Path, tmp_path: Path) -> None:
     """A project with no git resolves by path and is stable across re-runs."""
 
@@ -173,67 +155,37 @@ def test_moved_git_project_keeps_identity(store_root: Path, tmp_path: Path) -> N
     assert str(moved.resolve()) in record.paths
 
 
-def test_cloned_marker_to_existing_memory_needs_confirmation(
+def test_unseen_directory_claiming_existing_memory_needs_confirmation(
     store_root: Path, tmp_path: Path
 ) -> None:
-    """A marker claiming an existing project from a new directory is not bound
-    silently — it demands confirmation."""
+    """Confirm-before-binding survives the marker's removal: an unseen directory whose
+    remote maps to one project while its path already belongs to another is refused,
+    never bound silently, and the refusal names the exact confirm command and the
+    candidate id (ADR 0022 §1, #61)."""
 
-    # Seed an existing project whose id a cloned marker will claim.
-    from mimer.store import ensure_store
+    # An existing project owns a sensitive remote — the memory a stray directory must
+    # not attach to silently.
+    secret = init_repo(tmp_path / "secret", remotes={"origin": "git@github.com:acme/secret.git"})
+    candidate = resolve(secret, root=store_root)
+    assert candidate.project_id is not None
 
-    ensure_store(store_root)
-    reg = Registry.load(store_root)
-    reg.create("secret-client", remotes=[], paths=[str((tmp_path / "orig").resolve())])
-    reg.save()
+    # A different directory is first known by its path alone, then acquires that same
+    # remote — so its path and its remote now point at different projects.
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert resolve(workspace, root=store_root).status is ResolutionStatus.CREATED
+    init_repo(workspace, remotes={"origin": "git@github.com:acme/secret.git"})
 
-    clone = tmp_path / "clone"
-    clone.mkdir()
-    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+    conflicted = resolve(workspace, root=store_root)
 
-    result = resolve(clone, root=store_root)
-
-    assert result.status is ResolutionStatus.NEEDS_CONFIRMATION
-    assert result.candidate_id == "secret-client"
-    # Nothing was bound: the clone path is not added to the project.
-    record = Registry.load(store_root).find_by_id("secret-client")
+    assert conflicted.status is ResolutionStatus.NEEDS_CONFIRMATION
+    assert conflicted.candidate_id == candidate.project_id
+    # Nothing was bound: the candidate did not silently acquire the workspace path.
+    record = Registry.load(store_root).find_by_id(candidate.project_id)
     assert record is not None
-    assert str(clone.resolve()) not in record.paths
-
-
-def test_unrecognised_marker_starts_new_project(store_root: Path, tmp_path: Path) -> None:
-    """A marker whose id is unknown starts a fresh project with that id."""
-
-    directory = tmp_path / "fresh"
-    directory.mkdir()
-    (directory / ".mimer").write_text("brand-new-thing\n", encoding="utf-8")
-
-    result = resolve(directory, root=store_root)
-
-    assert result.status is ResolutionStatus.CREATED
-    assert result.project_id == "brand-new-thing"
-
-
-def test_confirm_link_binds_after_confirmation(store_root: Path, tmp_path: Path) -> None:
-    """After explicit confirmation the claimed directory links to the project."""
-
-    from mimer.store import ensure_store
-
-    ensure_store(store_root)
-    reg = Registry.load(store_root)
-    reg.create("shared", remotes=[], paths=[str((tmp_path / "orig").resolve())])
-    reg.save()
-
-    clone = tmp_path / "clone"
-    clone.mkdir()
-    (clone / ".mimer").write_text("shared\n", encoding="utf-8")
-    assert resolve(clone, root=store_root).status is ResolutionStatus.NEEDS_CONFIRMATION
-
-    confirm_link(clone, "shared", root=store_root)
-
-    after = resolve(clone, root=store_root)
-    assert after.status is ResolutionStatus.RECOGNISED
-    assert after.project_id == "shared"
+    assert str(workspace.resolve()) not in record.paths
+    # The refusal is a resolvable state: it names the exact command and candidate id.
+    assert f"mimer-manage confirm {candidate.project_id}" in confirm_hint(conflicted.candidate_id)
 
 
 def test_adding_remote_to_path_keyed_project_reconciles(store_root: Path, tmp_path: Path) -> None:
@@ -285,24 +237,30 @@ def test_confirm_command_links_pending_identity_so_memory_proceeds(
     after which resolution recognises it — so injection and capture proceed (#34)."""
 
     ensure_store(store_root)
-    registry = Registry.load(store_root)
-    registry.create("shared", paths=[str((tmp_path / "orig").resolve())])
-    registry.save()
+
+    # The candidate project owns a remote; a separate directory is path-keyed and
+    # then acquires that remote, so path and remote disagree and binding is refused.
+    candidate_repo = init_repo(
+        tmp_path / "candidate", remotes={"origin": "git@github.com:x/api.git"}
+    )
+    candidate = resolve(candidate_repo, root=store_root)
+    assert candidate.project_id is not None
 
     clone = tmp_path / "clone"
     clone.mkdir()
-    (clone / ".mimer").write_text("shared\n", encoding="utf-8")
+    resolve(clone, root=store_root)
+    init_repo(clone, remotes={"origin": "git@github.com:x/api.git"})
     assert resolve(clone, root=store_root).status is ResolutionStatus.NEEDS_CONFIRMATION
 
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     monkeypatch.chdir(clone)
-    exit_code = main(["confirm", "shared"])
+    exit_code = main(["confirm", candidate.project_id])
 
     assert exit_code == 0
-    assert "shared" in capsys.readouterr().out
+    assert candidate.project_id in capsys.readouterr().out
     after = resolve(clone, root=store_root)
     assert after.status is ResolutionStatus.RECOGNISED
-    assert after.project_id == "shared"
+    assert after.project_id == candidate.project_id
 
 
 def test_confirm_resolves_path_remote_conflict_so_resolution_binds(

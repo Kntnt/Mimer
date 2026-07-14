@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 
 from mimer.project import resolve
-from mimer.registry import Registry
 from mimer.shortterm import short_term_path
 from mimer.store import ensure_store
+from tests.gitutil import init_repo
 from tests.harness import run_hook, session_start_payload, stop_payload
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
@@ -173,13 +173,20 @@ def test_needs_confirmation_injection_names_confirm_command(
     resolvable state (#34)."""
 
     ensure_store(store_root)
-    registry = Registry.load(store_root)
-    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
-    registry.save()
+
+    # A candidate project owns a remote; the clone is path-keyed, then acquires that
+    # same remote, so path and remote disagree and binding is refused — the marker
+    # that used to trigger this refusal is gone (ADR 0022).
+    candidate_repo = init_repo(
+        tmp_path / "candidate", remotes={"origin": "git@github.com:x/secret.git"}
+    )
+    candidate = resolve(candidate_repo, root=store_root)
+    assert candidate.project_id is not None
 
     clone = tmp_path / "clone"
     clone.mkdir()
-    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+    resolve(clone, root=store_root)
+    init_repo(clone, remotes={"origin": "git@github.com:x/secret.git"})
 
     result = run_hook(
         "SessionStart",
@@ -191,4 +198,4 @@ def test_needs_confirmation_injection_names_confirm_command(
     assert result.returncode == 0, result.stderr
     context = _injected_context(result.stdout)
     assert "needs" in context and "confirmation" in context
-    assert "mimer-manage confirm secret-client" in context
+    assert f"mimer-manage confirm {candidate.project_id}" in context

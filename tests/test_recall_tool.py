@@ -21,6 +21,7 @@ from mimer.project import resolve
 from mimer.recall import RecallResult, recall
 from mimer.registry import Registry
 from mimer.store import ensure_store
+from tests.gitutil import init_repo
 from tests.harness import run_hook, session_start_payload
 
 # Every test here loads the embedding model (directly or via a hook subprocess),
@@ -186,19 +187,26 @@ def test_recall_refusal_names_confirm_command_and_candidate(
     than a dead end (#34)."""
 
     ensure_store(store_root)
-    registry = Registry.load(store_root)
-    registry.create("secret-client", paths=[str((tmp_path / "orig").resolve())])
-    registry.save()
+
+    # A candidate project owns a remote; the clone is path-keyed, then acquires that
+    # same remote, so path and remote disagree and binding is refused — the marker
+    # that used to trigger this refusal is gone (ADR 0022).
+    candidate_repo = init_repo(
+        tmp_path / "candidate", remotes={"origin": "git@github.com:x/secret.git"}
+    )
+    candidate = resolve(candidate_repo, root=store_root)
+    assert candidate.project_id is not None
 
     clone = tmp_path / "clone"
     clone.mkdir()
-    (clone / ".mimer").write_text("secret-client\n", encoding="utf-8")
+    resolve(clone, root=store_root)
+    init_repo(clone, remotes={"origin": "git@github.com:x/secret.git"})
 
     result = recall("anything at all", root=store_root, cwd=clone)
 
     assert result.is_empty()
     assert result.scope == "unresolved"
-    assert "mimer-manage confirm secret-client" in result.message
+    assert f"mimer-manage confirm {candidate.project_id}" in result.message
 
 
 def test_recall_cli_is_scoped_and_honestly_empty(store_root: Path, project_dir: Path) -> None:
