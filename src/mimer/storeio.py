@@ -32,9 +32,9 @@ that also takes a **locked clear**: :func:`mimer.distill._clear_announcements`
 re-reads it and rewrites the survivors with :func:`write_atomic` (or ``unlink``
 when none remain) under :func:`project_lock`. Its enqueues stay lockless
 ``O_APPEND`` only because every enqueue runs under the caller's project lock —
-the session digest's :func:`mimer.shortterm.rewrite_sections`, or bootstrap's
-explicit lock — so a title appended concurrently cannot be lost in the window
-between the clear's read and its write (the #40 lost update). A future writer
+the session digest's :func:`mimer.shortterm.rewrite_sections` — so a title
+appended concurrently cannot be lost in the window between the clear's read and
+its write (the #40 lost update). A future writer
 that added a truly lockless enqueue would reopen that lost update, so the
 under-lock invariant is load-bearing, not incidental.
 

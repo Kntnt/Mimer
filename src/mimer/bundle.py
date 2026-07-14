@@ -229,8 +229,8 @@ def list_concepts(root: Path | None = None) -> list[Concept]:
     mechanical readers that must see the bundle as it is on disk — reindex and
     per-Concept indexing, the forget/redact retraction sweep, distillation's
     supersession-target sweep, ``index.md`` regeneration, the pin cap, the rename
-    link sweep, bootstrap's have-Concepts check and store health's counts. Any
-    surface that *shows* Concepts must instead enumerate through
+    link sweep and store health's counts. Any surface that *shows* Concepts must
+    instead enumerate through
     :func:`visible_concepts`, the one presentation read that filters status, scope
     and tombstones consistently (issue #54).
 

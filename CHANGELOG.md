@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - ADRs 0003, 0008, 0015 and 0019 marked superseded by the five-requirements design (by 0021, 0022, 0024 and 0025 respectively).
 - `CONTEXT.md`, `docs/okf-profile.md` and `README.md` aligned to the reworked design.
 
+### Removed
+
+- **Bootstrap — the import of pre-existing Claude Code session history — is gone (ADR 0026, #60).** Mimer starts from zero and fills forward through capture and distillation. The `mimer-bootstrap` command, the `mimer.bootstrap` module, the per-project import state the registry carried (and its merge-carry reconciliation), and the whole-transcript enumeration only bootstrap used are all removed; the packaged command surface and the README now agree. Forward transcript *archiving* — which copies the transcript as opaque provenance without parsing it — is unaffected.
+
 ## [0.2.1] – 2026-07-14
 
 ### Fixed

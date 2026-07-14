@@ -80,28 +80,6 @@ def last_exchange(transcript_path: Path) -> Exchange | None:
     )
 
 
-def all_exchanges(transcript_path: Path) -> list[Exchange]:
-    """Extract every user/assistant exchange from a transcript, in order.
-
-    Used by bootstrap import. Each assistant message with text pairs with the
-    most recent preceding user message.
-    """
-
-    messages = _parse_messages(transcript_path.read_text(encoding="utf-8"))
-    exchanges: list[Exchange] = []
-    pending_user: tuple[str, str] | None = None
-    for role, text, timestamp in messages:
-        if role == "user":
-            pending_user = (text, timestamp)
-        elif role == "assistant" and text:
-            user_text, _ = pending_user if pending_user is not None else ("", timestamp)
-            exchanges.append(
-                Exchange(user_text, text, timestamp, _turn_id(timestamp, user_text, text))
-            )
-            pending_user = None
-    return exchanges
-
-
 def conversation_text(transcript_path: Path) -> str:
     """Return the whole session as readable ``User:``/``Assistant:`` prose.
 

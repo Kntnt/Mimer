@@ -1,6 +1,6 @@
 """The project registry: the store-level record mapping each project id to its
-known remotes and paths, per-project settings and import state. It is the
-mechanism that reconciles moved, renamed or cloned projects (ADR 0008).
+known remotes and paths and per-project settings. It is the mechanism that
+reconciles moved, renamed or cloned projects (ADR 0008).
 
 The registry is a single JSON file at the store root, persisted through storeio's
 atomic write primitive (ADR 0011's write-discipline map) so a crash never leaves a
@@ -55,13 +55,12 @@ def registry_lock(*, root: Path | None = None) -> AbstractContextManager[None]:
 @dataclass
 class ProjectRecord:
     """One project's registry entry: its stable id and every alias that resolves
-    to it, plus per-project settings and import state for later stages."""
+    to it, plus per-project settings."""
 
     id: str
     remotes: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
     settings: dict[str, object] = field(default_factory=dict)
-    import_state: dict[str, object] = field(default_factory=dict)
 
 
 class Registry:
@@ -92,7 +91,6 @@ class Registry:
                 remotes=list(entry.get("remotes", [])),
                 paths=list(entry.get("paths", [])),
                 settings=dict(entry.get("settings", {})),
-                import_state=dict(entry.get("import_state", {})),
             )
             for entry in raw.get("projects", [])
         }
@@ -183,17 +181,6 @@ class Registry:
 
         self._records[project_id].settings["distill_to_global"] = enabled
 
-    def import_state(self, project_id: str) -> dict[str, object]:
-        """Return a project's bootstrap import state (empty if none)."""
-
-        record = self._records.get(project_id)
-        return dict(record.import_state) if record is not None else {}
-
-    def set_import_state(self, project_id: str, state: dict[str, object]) -> None:
-        """Replace a project's bootstrap import state."""
-
-        self._records[project_id].import_state = dict(state)
-
     def create(
         self,
         project_id: str,
@@ -236,19 +223,17 @@ class Registry:
     def merge(self, source_id: str, target_id: str) -> ProjectRecord:
         """Merge an orphaned project into its recognised identity.
 
-        The source's aliases fold into the target, its per-project settings and
-        bootstrap import state reconcile into the target, its memory directory's
-        contents move under the target, and the source entry is removed. This is
-        the link/merge reconciliation action of ADR 0008, made a live action by
-        #34 (``mimer-manage confirm``).
+        The source's aliases fold into the target, its per-project settings
+        reconcile into the target, its memory directory's contents move under the
+        target, and the source entry is removed. This is the link/merge
+        reconciliation action of ADR 0008, made a live action by #34
+        (``mimer-manage confirm``).
 
-        Settings/import-state policy. The target's explicitly-set values win: a
-        deliberate binding on the recognised identity is never overridden by a
-        retired orphan's stale value. Where the target has not set a control, the
+        Settings policy. The target's explicitly-set values win: a deliberate
+        binding on the recognised identity is never overridden by a retired
+        orphan's stale value. Where the target has not set a control, the
         source's value is adopted — so a capture the user paused on the orphan
-        (#35) stays paused rather than silently re-enabling. Bootstrap import
-        state (#15) is carried over only when the target has none, so the
-        orphan's import progress is not reset.
+        (#35) stays paused rather than silently re-enabling.
         """
 
         source = self._records[source_id]
@@ -261,11 +246,6 @@ class Registry:
         # explicitly is kept, one it never set adopts the source's value so a
         # paused capture is not silently re-enabled (#35).
         target.settings = {**source.settings, **target.settings}
-
-        # Carry the orphan's bootstrap import state only when the target has none,
-        # so confirming an identity does not reset import progress (#15).
-        if not target.import_state:
-            target.import_state = dict(source.import_state)
 
         # Move any on-disk memory from the orphan's directory into the target's.
         self._move_project_memory(source_id, target_id)

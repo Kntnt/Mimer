@@ -71,9 +71,9 @@ def test_round_trips_records(tmp_path: Path) -> None:
 
 
 def test_registry_round_trips_populated_records_through_write_atomic(tmp_path: Path) -> None:
-    """A fully populated registry — remotes, paths, per-project settings and import
-    state, carrying the provenance identifiers Mimer cites (a git SHA, a ULID, an
-    ISO date, remote URLs) plus a secret-shaped setting key — survives a save/load
+    """A fully populated registry — remotes, paths and per-project settings,
+    carrying the provenance identifiers Mimer cites (a git SHA, a ULID, an ISO
+    date, remote URLs) plus a secret-shaped setting key — survives a save/load
     cycle field-for-field equal.
 
     ``save`` persists through the shared ``write_atomic`` primitive (#56). This is
@@ -88,21 +88,24 @@ def test_registry_round_trips_populated_records_through_write_atomic(tmp_path: P
 
     ensure_store(tmp_path)
     reg = Registry.load(tmp_path)
-    reg.create(
+    record = reg.create(
         "proj-a",
         remotes=["github.com/acme/widgets", "git@github.com:acme/widgets.git"],
         paths=["/work/widgets", "/Users/dev/widgets"],
     )
     reg.set_capture("proj-a", enabled=False)
     reg.set_widening("proj-a", participate=False)
-    reg.set_import_state(
-        "proj-a",
+
+    # Seed the shape-safe provenance identifiers and a secret-shaped key into
+    # settings, so the round-trip is proven over the exact structural values the
+    # redaction pass must pass through byte-identical.
+    record.settings.update(
         {
             "cursor": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
             "last_ulid": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
             "started": "2026-07-14",
             "api_token": "structural-key-must-survive",
-        },
+        }
     )
     reg.save()
 
@@ -476,50 +479,44 @@ def test_merge_concatenates_colliding_distilled_queues(tmp_path: Path) -> None:
     assert "canonical title" in titles
 
 
-def test_merge_carries_source_settings_and_import_state_when_target_has_none(
+def test_merge_carries_source_settings_when_target_has_none(
     tmp_path: Path,
 ) -> None:
-    """A source's per-project settings and bootstrap import state survive the merge
-    when the target has not set its own: a capture the user paused on the source
-    stays paused, and the source's import progress is not reset (#34)."""
+    """A source's per-project settings survive the merge when the target has not
+    set its own: a capture the user paused on the source stays paused (#34)."""
 
     ensure_store(tmp_path)
     reg = Registry.load(tmp_path)
     reg.create("orphan", remotes=[], paths=["/old/path"])
     reg.create("canonical", remotes=[], paths=["/new/path"])
 
-    # The user paused capture on the orphan and it carries bootstrap progress; the
-    # canonical record has neither, so the merge must adopt the orphan's.
+    # The user paused capture on the orphan; the canonical record has not, so the
+    # merge must adopt the orphan's.
     reg.set_capture("orphan", enabled=False)
-    reg.set_import_state("orphan", {"cursor": "abc123", "done": False})
 
     reg.merge("orphan", "canonical")
 
     assert reg.capture_enabled("canonical") is False
-    assert reg.import_state("canonical") == {"cursor": "abc123", "done": False}
 
 
-def test_merge_prefers_target_settings_and_import_state_on_conflict(tmp_path: Path) -> None:
-    """When both sides set the same control or both carry import state, the target's
-    explicitly-set values win — a deliberate binding is never silently overridden by
-    a retired orphan's stale value (#34)."""
+def test_merge_prefers_target_settings_on_conflict(tmp_path: Path) -> None:
+    """When both sides set the same control, the target's explicitly-set value
+    wins — a deliberate binding is never silently overridden by a retired orphan's
+    stale value (#34)."""
 
     ensure_store(tmp_path)
     reg = Registry.load(tmp_path)
     reg.create("orphan", remotes=[], paths=["/old/path"])
     reg.create("canonical", remotes=[], paths=["/new/path"])
 
-    # Both sides set capture, and both carry import state; the target's values must
-    # survive. The orphan additionally excludes itself from widening, a control the
-    # target never set, so that one is adopted.
+    # Both sides set capture; the target's value must survive. The orphan
+    # additionally excludes itself from widening, a control the target never set,
+    # so that one is adopted.
     reg.set_capture("orphan", enabled=False)
     reg.set_widening("orphan", participate=False)
-    reg.set_import_state("orphan", {"cursor": "orphan"})
     reg.set_capture("canonical", enabled=True)
-    reg.set_import_state("canonical", {"cursor": "canonical"})
 
     reg.merge("orphan", "canonical")
 
     assert reg.capture_enabled("canonical") is True
     assert reg.is_widenable("canonical") is False
-    assert reg.import_state("canonical") == {"cursor": "canonical"}

@@ -106,8 +106,8 @@ def run_install(root: Path | None = None) -> InstallReport:
             ],
         )
 
-    # Build the index up front so capture, digest, git and bootstrap writes are
-    # indexed from the first session; a build failure becomes a report too.
+    # Build the index up front so capture, digest and git writes are indexed
+    # from the first session; a build failure becomes a report too.
     try:
         reindex(root)
     except Exception as exc:  # noqa: BLE001 - any index-build failure should degrade to a report

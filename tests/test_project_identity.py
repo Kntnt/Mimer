@@ -302,13 +302,12 @@ def test_confirm_resolves_path_remote_conflict_so_resolution_binds(
     assert conflict.status is ResolutionStatus.NEEDS_CONFIRMATION
     assert conflict.candidate_id == candidate.project_id
 
-    # The user paused capture and accrued bootstrap progress on the path-keyed
-    # competitor — the record confirm_link folds into the candidate. The candidate
-    # sets neither, so the fold must carry both across: confirming a project
-    # identity must not re-enable a paused capture or reset import progress (#34).
+    # The user paused capture on the path-keyed competitor — the record
+    # confirm_link folds into the candidate. The candidate has not set capture, so
+    # the fold must carry it across: confirming a project identity must not
+    # re-enable a paused capture (#34).
     paused = Registry.load(store_root)
     paused.set_capture(path_keyed.project_id, enabled=False)
-    paused.set_import_state(path_keyed.project_id, {"cursor": "abc123", "done": False})
     paused.save()
 
     confirm_link(app, candidate.project_id, root=store_root)
@@ -317,13 +316,11 @@ def test_confirm_resolves_path_remote_conflict_so_resolution_binds(
     assert after.status is not ResolutionStatus.NEEDS_CONFIRMATION
     assert after.project_id == candidate.project_id
 
-    # The competitor's safety controls survive the live confirm surface: capture
-    # stays paused and its import progress is preserved on the candidate. This
-    # pins confirm_link's merge arg order (source=competitor, target=candidate) —
-    # swap it and the target-wins policy would invert end-to-end (#34).
+    # The competitor's paused capture survives the live confirm surface. This pins
+    # confirm_link's merge arg order (source=competitor, target=candidate) — swap
+    # it and the target-wins policy would invert end-to-end (#34).
     merged = Registry.load(store_root)
     assert merged.capture_enabled(candidate.project_id) is False
-    assert merged.import_state(candidate.project_id) == {"cursor": "abc123", "done": False}
 
 
 def test_confirm_resolves_ambiguous_remotes_so_resolution_binds(

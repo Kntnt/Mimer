@@ -1,13 +1,12 @@
-"""Unit tests for the transcript adapter: extract the last exchange (capture) or
-every exchange (bootstrap import) from a Claude Code transcript, tolerant of
-string or block content.
+"""Unit tests for the transcript adapter: extract the last exchange (capture)
+from a Claude Code transcript, tolerant of string or block content.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.transcript import all_exchanges, last_exchange
+from mimer.transcript import last_exchange
 from tests.transcript_fixture import write_transcript
 
 
@@ -55,25 +54,6 @@ def test_same_text_at_different_moments_gets_distinct_identities(tmp_path: Path)
 
     assert early is not None and late is not None
     assert early.turn_id != late.turn_id
-
-
-def test_all_exchanges_gives_repeated_text_distinct_identities(tmp_path: Path) -> None:
-    """Two same-text turns at different moments in one imported transcript get
-    distinct turn ids, so bootstrap renders each as its own entry instead of
-    collapsing the repeat onto the first turn's identity (#38)."""
-
-    exchanges = all_exchanges(
-        write_transcript(
-            tmp_path / "t.jsonl",
-            [
-                ("continue", "Done.", "2026-07-11T10:00:00Z"),
-                ("continue", "Done.", "2026-07-11T11:00:00Z"),
-            ],
-        )
-    )
-
-    assert len(exchanges) == 2
-    assert exchanges[0].turn_id != exchanges[1].turn_id
 
 
 def test_empty_transcript_returns_none(tmp_path: Path) -> None:

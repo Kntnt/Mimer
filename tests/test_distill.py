@@ -881,8 +881,8 @@ def test_clear_announcements_serialises_against_a_concurrent_lock_holding_enqueu
     store_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """_clear_announcements's project lock is load-bearing, not decoration: a
-    concurrent enqueuer that holds the same lock — as the durable and bootstrap
-    distill paths do — cannot have its freshly queued title clobbered by clear's
+    concurrent enqueuer that holds the same lock — as the durable distill path
+    does — cannot have its freshly queued title clobbered by clear's
     read-modify-write. A real second thread holds the lock and enqueues inside
     clear's read-to-write window; with the lock, clear serialises behind it and the
     title survives. Remove the ``with project_lock`` from _clear_announcements and
@@ -909,9 +909,9 @@ def test_clear_announcements_serialises_against_a_concurrent_lock_holding_enqueu
     monkeypatch.setattr(distill_module, "write_atomic", slow_write_atomic)
 
     # A concurrent writer enqueues a fresh title while holding the project lock,
-    # exactly as a live session's distiller does while a detached bootstrap clears
-    # (or vice versa). Under the lock it must serialise behind clear; without it it
-    # slips into the widened window and clear's rewrite drops it.
+    # exactly as a live session's distiller does while another session's clear
+    # runs (or vice versa). Under the lock it must serialise behind clear; without
+    # it it slips into the widened window and clear's rewrite drops it.
     def concurrent_enqueue() -> None:
         clear_read_done.wait(timeout=5)
         with project_lock("p", root=store_root):

@@ -382,8 +382,8 @@ def test_storeio_map_and_context_document_the_announcement_queues_locked_clear()
     (``_clear_announcements``) is a locked read-modify-write —
     ``write_atomic``/``unlink`` under ``project_lock`` — and its enqueues are
     lockless ``O_APPEND`` *only* because every enqueue already runs under the
-    caller's project lock (``rewrite_sections``' lock, or bootstrap's explicit
-    lock). That invariant is load-bearing: a truly lockless enqueue would lose an
+    caller's project lock (``rewrite_sections``' lock). That invariant is
+    load-bearing: a truly lockless enqueue would lose an
     update in the window between the clear's read and its write (#40). Both
     storeio's write-discipline map and CONTEXT.md's 'Lock discipline' entry must
     state it, so a future writer cannot reintroduce a lockless enqueue believing
