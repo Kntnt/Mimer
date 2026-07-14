@@ -4,6 +4,7 @@ resolution is exercised against real ``git`` output rather than mocks.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -66,3 +67,61 @@ def add_remote(repo: Path, name: str, url: str) -> None:
     """Register an additional remote on an existing repository."""
 
     _git(repo, "remote", "add", name, url)
+
+
+def commit(repo: Path, message: str, *, allow_empty: bool = True) -> str:
+    """Make a commit with ``message`` in ``repo`` and return its full sha.
+
+    ``allow_empty`` lets a test plant a commit with a distinctive subject without
+    staging any change — the subject is the checkable excerpt a git citation quotes.
+    """
+
+    args = ["commit", "-q", "-m", message]
+    if allow_empty:
+        args.insert(1, "--allow-empty")
+    _git(repo, *args)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def head_sha(repo: Path) -> str:
+    """The full sha of the repository's current HEAD commit."""
+
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def commit_subjects(repo: Path) -> list[str]:
+    """Every commit subject in the repository's history, newest first."""
+
+    output = _git(repo, "log", "--format=%s")
+    return output.splitlines() if output else []
+
+
+def commit_shas(repo: Path) -> list[str]:
+    """Every commit sha in the repository's history, newest first."""
+
+    output = _git(repo, "log", "--format=%H")
+    return output.splitlines() if output else []
+
+
+def rewrite_history(repo: Path) -> str:
+    """Simulate a history rewrite: change HEAD's sha while keeping its subject.
+
+    Amends the HEAD commit with a fixed, far-future committer and author date, so
+    the commit object — and therefore its sha — changes while the subject line a
+    git citation quoted is preserved. Returns the new HEAD sha. This models a
+    rebase or amend that invalidates a stored ``git:<sha>`` while leaving the
+    checkable excerpt intact (ADR 0021).
+    """
+
+    env = {
+        **os.environ,
+        "GIT_COMMITTER_DATE": "2030-01-01T00:00:00",
+        "GIT_AUTHOR_DATE": "2030-01-01T00:00:00",
+    }
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "--amend", "--no-edit", "--allow-empty"],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    return _git(repo, "rev-parse", "HEAD")

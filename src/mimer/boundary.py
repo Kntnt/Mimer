@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from mimer import clock, llm
+from mimer.bundle import Source
 from mimer.distill import distill_durable_entries, distill_fact
 from mimer.failure_log import log_failure
 from mimer.framing import fence_transcript, neutralise
@@ -57,6 +58,7 @@ from mimer.storeio import write_atomic
 from mimer.storewalk import daily_log_days
 from mimer.text import parse_bullets
 from mimer.transcript import Exchange, last_exchange
+from mimer.vcs import head_commit
 
 Haiku = Callable[[str], str | None]
 
@@ -168,8 +170,14 @@ def run_boundary_pass(
         # distillation guards; the two channels stay separate so working state is
         # never mistaken for a durable fact (dedup handles a crash-orphaned replay).
         _refresh_short_term(project_id, active, pending, day, root)
+
+        # Cite the work's commit: a durable fact distilled in a git project carries
+        # the HEAD commit as an additive git:<sha> anchor (ADR 0021), resolved once
+        # and reactively. A non-git project or any git error yields no citation, so
+        # the facts are distilled git-free with full cited recall intact.
+        citations = _git_citations(cwd) if facts else None
         for fact in facts:
-            distill_fact(text=fact, project_id=project_id, root=root)
+            distill_fact(text=fact, project_id=project_id, root=root, citations=citations)
 
         # Keep the derived index in step with any daily-log appends (aged-out or
         # rejected blocks) and the new Concepts, when an index exists (ADR 0011).
@@ -182,6 +190,24 @@ def run_boundary_pass(
         # memory prose or PII from the health-surfaced log (#24).
         log_failure(f"session-boundary pass: {type(exc).__name__}", root=root)
         return BoundaryResult("failed")
+
+
+def _git_citations(cwd: Path) -> list[Source] | None:
+    """The current HEAD commit as a one-item git citation list, or None (ADR 0021).
+
+    Reactive and additive: a memory entry distilled from work in a git project
+    carries the commit's ``git:<sha>`` as an extra provenance anchor, quoting the
+    commit subject so the citation stays checkable even after a history rewrite
+    changes the sha. Any git error — including a non-git project — yields None, so
+    distillation proceeds git-free and never crashes. The source and excerpt are
+    redacted at the Concept-creation sink (:mod:`mimer.bundle`), so a secret in a
+    commit subject never survives — this stays behind the redaction pass.
+    """
+
+    commit = head_commit(cwd)
+    if commit is None:
+        return None
+    return [Source(source=f"git:{commit.sha}", excerpt=commit.subject, date=commit.date)]
 
 
 def _build_prompt(raw_record: str) -> str:

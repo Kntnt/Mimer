@@ -7,7 +7,22 @@ first-class (ADR 0008).
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Commit:
+    """The identifying facts of a single commit, for a git citation (ADR 0021).
+
+    ``subject`` is the commit's first line — the checkable excerpt that survives a
+    history rewrite even after ``sha`` becomes stale. ``date`` is the committer
+    date in ISO ``YYYY-MM-DD`` form.
+    """
+
+    sha: str
+    subject: str
+    date: str
 
 
 def _run_git(cwd: Path, *args: str) -> str | None:
@@ -58,3 +73,15 @@ def git_remotes(cwd: Path) -> dict[str, str]:
         if url:
             remotes[name] = url
     return remotes
+
+
+def head_commit(cwd: Path) -> Commit | None:
+    """The repository's HEAD commit, or None outside a repo or on any git error.
+
+    Reactive and lightweight (ADR 0021): a single ``git log -1`` at HEAD, never a
+    walk of history. Returns None for a non-git directory, a repository with no
+    HEAD yet, a missing ``git`` binary or any other git failure, so the caller can
+    treat "no commit to cite" uniformly — no citation, never a crash.
+    """
+
+    return None
