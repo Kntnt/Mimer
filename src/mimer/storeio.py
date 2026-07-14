@@ -13,6 +13,7 @@ the permanent bundle (+ index.md)       locked RMW (store-wide named)  named_loc
 the registry (registry.json)            locked RMW (store-wide named)  named_lock + write_atomic
 daily-log entries                       lockless O_APPEND              append_text
 announcement queue (.distilled-queue)   lockless O_APPEND              append_text
+consent queue (.consent-queue)          lockless O_APPEND              append_text
 tombstones (tombstones.jsonl)           lockless O_APPEND              append_text
 project-merge folds (ADR 0008)          lockless O_APPEND fold         append_fold
 ======================================  =============================  ===========================
@@ -37,6 +38,13 @@ appended concurrently cannot be lost in the window between the clear's read and
 its write (the #40 lost update). A future writer
 that added a truly lockless enqueue would reopen that lost update, so the
 under-lock invariant is load-bearing, not incidental.
+
+The consent queue (``.consent-queue``, the leakage guard's per-project hold —
+:mod:`mimer.leakage`) is the other append-only per-project queue, but it takes
+**no** locked clear: it is never cleared on emit — a held fact's consent request
+is re-posed every session until the user answers it — so it has no read-then-write
+window an update could be lost in, and its enqueue stays a plain lockless
+``O_APPEND`` with duplicates collapsed at read time.
 
 Every write primitive — :func:`write_atomic`, :func:`append_text`,
 :func:`append_fold` — runs the redaction pass (:func:`mimer.redaction.redact`) on

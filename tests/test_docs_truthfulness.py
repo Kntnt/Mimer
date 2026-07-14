@@ -187,6 +187,21 @@ def test_changelog_does_not_strand_features_under_unreleased() -> None:
     assert "Packaging and first run (Stage 8)" not in unreleased
 
 
+def test_changelog_unreleased_records_the_leakage_guard() -> None:
+    """The [Unreleased] section must document #65's shipped leakage-guard build, not
+    only the ADR-0027 design line. #65 landed after the changelog was reconciled over
+    #60-#64, so its user-visible behaviour — a sensitive fact held at project scope
+    with a consent request queued for the next session start — was left unrecorded
+    even though every other build issue in the union is named. No other test enforces
+    [Unreleased] completeness, so this guards the omission (integration-review
+    finding)."""
+
+    unreleased = _changelog_sections().get("Unreleased", "")
+    assert "#65" in unreleased, "CHANGELOG [Unreleased] does not record #65's leakage-guard build"
+    assert "leakage guard" in unreleased, "CHANGELOG [Unreleased] does not name the leakage guard"
+    assert "consent request" in unreleased, "[Unreleased] omits #65's queued consent request"
+
+
 def test_okf_profile_describes_vendored_spec_in_present_tense() -> None:
     """okf-profile.md must state the spec is vendored (it already is under
     docs/okf/), not that it will be when Stage 5a is built."""
@@ -399,6 +414,20 @@ def test_storeio_map_and_context_document_the_announcement_queues_locked_clear()
     assert "locked clear" in lock_discipline
     assert "project_lock" in lock_discipline
     assert "under the caller's project lock" in lock_discipline
+
+
+def test_storeio_write_discipline_map_names_the_consent_queue() -> None:
+    """storeio.py is the single home of the store's write-discipline map (#49). The
+    consent queue (``.consent-queue``, #65) is a new store-writing artefact — a
+    lockless ``O_APPEND`` write through ``append_text`` (``mimer.leakage``) that,
+    unlike the announcement queue, is never cleared and so has no locked clear to
+    protect. It must appear as a row in the map, or the completeness the docstring
+    and this suite call 'the single home of that map' is false (integration-review
+    finding)."""
+
+    source = STOREIO.read_text(encoding="utf-8")
+    assert ".consent-queue" in source, "storeio's map omits the .consent-queue file"
+    assert "consent queue" in source.lower(), "storeio's map does not name the consent queue"
 
 
 def test_index_docstring_explains_why_inserts_trust_their_sources() -> None:
