@@ -1,6 +1,10 @@
-"""Direct unit tests for the recall ranking internals (issue #58): the three
-private helpers ``_fuse``, ``_source_weight`` and ``_recency_factor`` the hybrid
-index reranks with.
+"""Direct unit tests for the recall ranking internals (issues #58, #62): the
+private helpers ``_fuse`` and ``_recency_factor`` the hybrid index reranks with,
+and the reranker ``_cite`` that folds them into a cited, recency-ranked score.
+
+The reranker no longer weights an entry by its heading: the former "session
+digest" / "aged out" source weight is gone (ADR 0023, issue #62), so ``_cite``
+ranks by the fused match and recency alone.
 
 These are *characterisation* tests: they read the current implementation and pin
 its actual properties at an internal seam of the indexer, so a later retuning of
@@ -184,36 +188,6 @@ def test_fuse_is_deterministic_and_scores_a_symmetric_tie_equally(
     assert index._fuse(connection, "alpha") == scores
 
 
-def test_source_weight_orders_digest_above_capture_above_aged_out() -> None:
-    """The reranker trusts a session digest over raw capture and trusts an
-    aged-out block least. This ordering is the vision's still-open "source weights
-    in reranking" decision, pinned here so editing a weight flips the order and
-    forces a conscious revisit rather than drifting silently."""
-
-    digest = index._source_weight("Session digest")
-    capture = index._source_weight("Release cadence")
-    aged_out = index._source_weight("Aged out of short-term (2026-06-06)")
-
-    assert digest > capture > aged_out
-
-
-def test_source_weight_pins_the_three_weights() -> None:
-    """The exact multipliers, hard-coded so perturbing any one fails a test: a
-    session digest 1.2, an aged-out block 0.9, everything else the neutral 1.0."""
-
-    assert index._source_weight("Session digest of 2026-06-06") == 1.2
-    assert index._source_weight("Aged out of short-term (2026-06-06)") == 0.9
-    assert index._source_weight("Release cadence") == 1.0
-
-
-def test_source_weight_matches_the_heading_prefix_case_insensitively() -> None:
-    """The prefix match lower-cases the heading first, so capitalisation in the
-    log heading never changes the weight."""
-
-    assert index._source_weight("SESSION DIGEST") == 1.2
-    assert index._source_weight("AGED OUT of short-term") == 0.9
-
-
 # A fixed "today" so the recency assertions are exact and reproducible.
 _TODAY = date(2026, 7, 13)
 
@@ -262,3 +236,80 @@ def test_recency_factor_tolerates_malformed_and_absent_dates() -> None:
 
     for bad in ("", "not-a-date", "2026-13-40", "2026-02-30"):
         assert index._recency_factor(bad, _TODAY) == 1.0
+
+
+def _chunk_row(heading: str, *, entry_date: str) -> sqlite3.Row:
+    """A real ``sqlite3.Row`` carrying only the columns ``_cite`` reads, so the
+    reranker can be exercised without a store, an ``index.db`` or the embedding
+    model. The body after the heading gives ``_excerpt`` something to quote."""
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    return connection.execute(
+        "SELECT ? AS project_id, ? AS source, ? AS date, ? AS heading, ? AS text",
+        (
+            "proj-a",
+            f"long-term/{entry_date}.md",
+            entry_date,
+            heading,
+            f"{heading}\n\nA short body about the release cadence and the login rework.",
+        ),
+    ).fetchone()
+
+
+def test_rerank_score_ignores_the_heading() -> None:
+    """The reranker ranks by the fused match and recency alone: the former
+    "session digest" (×1.2) and "aged out" (×0.9) heading weights are gone (issue
+    #62, ADR 0023). Three chunks sharing a base score and date — a one-time
+    digest, a plain capture and a one-time aged-out block — now score identically
+    whatever their headings."""
+
+    base = 0.05
+    digest = index._cite(
+        _chunk_row("Session digest of 2026-07-13", entry_date="2026-07-13"), base, query_date=_TODAY
+    )
+    capture = index._cite(
+        _chunk_row("Release cadence", entry_date="2026-07-13"), base, query_date=_TODAY
+    )
+    aged_out = index._cite(
+        _chunk_row("Aged out of short-term (2026-07-13)", entry_date="2026-07-13"),
+        base,
+        query_date=_TODAY,
+    )
+
+    assert digest.score == capture.score == aged_out.score
+
+
+def test_rerank_score_is_the_fused_match_times_recency_only() -> None:
+    """A chunk's rerank score is exactly its fused base score times the recency
+    factor — nothing else multiplies in. A former "session digest" heading, which
+    used to earn a ×1.2 boost, no longer changes the score."""
+
+    base = 0.05
+    scored = index._cite(
+        _chunk_row("Session digest", entry_date="2026-04-04"), base, query_date=_TODAY
+    )
+
+    assert scored.score == pytest.approx(base * index._recency_factor("2026-04-04", _TODAY))
+
+
+def test_no_heading_based_source_weight_remains() -> None:
+    """The heading-based source-weight helper is removed, not merely bypassed, so
+    no source-based weighting can silently return to the reranker (issue #62)."""
+
+    assert not hasattr(index, "_source_weight")
+
+
+def test_cite_returns_the_full_citation_shape() -> None:
+    """Cited recall still carries its source, date, heading and a non-empty quoted
+    excerpt through the reranker — collapsing the source weight must not thin the
+    citation (issue #62, acceptance criterion 3)."""
+
+    citation = index._cite(
+        _chunk_row("Release cadence", entry_date="2026-06-01"), 0.05, query_date=_TODAY
+    )
+
+    assert citation.source == "long-term/2026-06-01.md"
+    assert citation.date == "2026-06-01"
+    assert citation.heading == "Release cadence"
+    assert "release cadence" in citation.excerpt.lower()
