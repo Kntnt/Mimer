@@ -245,7 +245,7 @@ def _chunk_row(heading: str, *, entry_date: str) -> sqlite3.Row:
 
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    return connection.execute(
+    row: sqlite3.Row = connection.execute(
         "SELECT ? AS project_id, ? AS source, ? AS date, ? AS heading, ? AS text",
         (
             "proj-a",
@@ -255,6 +255,7 @@ def _chunk_row(heading: str, *, entry_date: str) -> sqlite3.Row:
             f"{heading}\n\nA short body about the release cadence and the login rework.",
         ),
     ).fetchone()
+    return row
 
 
 def test_rerank_score_ignores_the_heading() -> None:

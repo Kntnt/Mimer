@@ -6,8 +6,8 @@ The index is derived state — rebuildable from the Markdown files at any time v
 block of the daily logs; each carries its project, source, date and heading as
 columns, so scoping, citations and reranking are plain SQL. Transcripts are not
 indexed. Search merges vector and keyword hits (reciprocal-rank fusion), reranks
-by recency, source weight and project, suppresses tombstoned facts, and admits
-ignorance by returning nothing when nothing is relevant.
+by recency, scopes by project, suppresses tombstoned facts, and admits ignorance
+by returning nothing when nothing is relevant.
 
 Chunk text is never redacted at insert, and needs no redaction of its own: every
 insert reads from an artefact already redacted before it reached disk — the daily
@@ -386,9 +386,14 @@ def _fetch(connection: sqlite3.Connection, rowids: list[int]) -> list[sqlite3.Ro
 
 
 def _cite(row: sqlite3.Row, base_score: float, *, query_date: date) -> Citation:
-    """Apply the recency/source rerank and build a citation with an excerpt."""
+    """Apply the recency rerank and build a citation with an excerpt.
 
-    score = base_score * _recency_factor(row["date"], query_date) * _source_weight(row["heading"])
+    Ranking is the fused match times recency alone: with the session digest gone
+    (ADR 0023), the former heading-based source weight collapses to recency, so a
+    chunk's heading no longer influences its rank (issue #62).
+    """
+
+    score = base_score * _recency_factor(row["date"], query_date)
     return Citation(
         project_id=row["project_id"],
         source=row["source"],
@@ -408,17 +413,6 @@ def _recency_factor(entry_date: str, query_date: date) -> float:
     except ValueError:
         return 1.0
     return 1.0 + _RECENCY_WEIGHT * max(0.0, 1.0 - days / 365.0)
-
-
-def _source_weight(heading: str) -> float:
-    """Weight a session digest above raw capture, and aged-out entries below."""
-
-    lowered = heading.lower()
-    if lowered.startswith("session digest"):
-        return 1.2
-    if lowered.startswith("aged out"):
-        return 0.9
-    return 1.0
 
 
 def _excerpt(text: str) -> str:
