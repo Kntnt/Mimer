@@ -35,6 +35,7 @@ STOREIO = ROOT / "src" / "mimer" / "storeio.py"
 INDEX = ROOT / "src" / "mimer" / "index.py"
 BOUNDARY = ROOT / "src" / "mimer" / "boundary.py"
 ADR_0020 = ROOT / "docs" / "adr" / "0020-redaction-at-the-write-seam.md"
+ADR_0027 = ROOT / "docs" / "adr" / "0027-leakage-guard-global-scope.md"
 
 # The one-sentence write-seam contract, worded identically in storeio's docstring,
 # CONTEXT.md's glossary entry and ADR 0020 (#55).
@@ -323,6 +324,41 @@ def test_adr_0020_excludes_secret_shaped_identifiers_from_byte_identical() -> No
     assert "sk-ant-" in text
     assert "redacts by design" in lowered
     assert "bypass" in lowered
+
+
+def test_adr_0027_scopes_its_gate_to_the_promotion_channel_and_notes_the_raw_log() -> None:
+    """ADR 0027's 'verifiable gate' must be scoped to the PROMOTION (Concept)
+    channel, and must document the raw-log caveat — not overclaim a blanket
+    'never appears in widened recall from another project'.
+
+    The leakage guard holds a sensitive fact's *Concept* at project scope, so it
+    never becomes a global Concept in another project's recall. But the
+    confidential utterance the fact was distilled from is already captured,
+    verbatim, into its origin project's daily log at capture time — before
+    distillation runs — and that raw long-term log is reachable by another
+    project's ``--widen`` recall by ADR 0013's design (redaction strips
+    shape-detectable secrets, not confidential prose). The ADR must state the gate
+    is on the promotion channel and document that raw-log caveat explicitly, or
+    the 'never travels' framing overclaims a guarantee the widenable log defeats
+    (integration-review finding)."""
+
+    text = ADR_0027.read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    # The bare, unqualified overclaim must be gone.
+    assert (
+        "a sensitive fact awaiting consent must never appear in widened recall from another project"
+        not in lowered
+    ), "ADR 0027 still makes the blanket 'never appears in widened recall' overclaim"
+
+    # The gate is scoped to the promotion/Concept channel.
+    assert "promotion channel" in lowered, "gate not scoped to the promotion channel"
+    assert "global concept" in lowered, "gate not framed around a global Concept"
+
+    # The raw-log caveat is documented and tied to the widenable log (ADR 0013).
+    assert "raw long-term log" in lowered, "raw-log caveat undocumented"
+    assert "0013" in text, "raw-log caveat does not tie back to ADR 0013's widenable log"
+    assert "capture time" in lowered, "does not note the utterance travels at capture time"
 
 
 # The presentation surfaces that show Concepts — every one must reach the bundle

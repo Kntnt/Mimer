@@ -19,12 +19,14 @@ import pytest
 
 import mimer.distill as distill_module
 from mimer.bundle import list_concepts, read_concept
+from mimer.capture import capture_from_payload
 from mimer.distill import distill_fact
 from mimer.index import reindex, search
 from mimer.leakage import is_sensitive, pending_consent_requests, queue_consent_request
 from mimer.recall import recall
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload
+from tests.transcript_fixture import write_transcript
 
 # The recall, search and hook-subprocess paths load the embedding model, so the
 # session fixture prefetches it once before the suite runs (conftest.py).
@@ -125,35 +127,79 @@ def test_non_sensitive_fact_bound_for_global_is_promoted_and_announced(store_roo
     assert pending_consent_requests("p", store_root) == []
 
 
-def test_held_sensitive_fact_never_surfaces_in_widened_recall_from_another_project(
-    store_root: Path,
-) -> None:
-    """A sensitive fact awaiting consent never surfaces in widened recall from
-    another project and is not global until consent is given (ADR 0027).
+def _capture_payload(cwd: Path, transcript: Path) -> dict[str, object]:
+    """A Stop-hook payload driving capture over a transcript from ``cwd``."""
 
-    Because it is held project-scoped, the scope filter already hides it from any
-    other project's recall — the cardinal cross-project-leakage failure cannot
-    happen. It stays recallable in its own origin, so it is held, not lost."""
+    return {
+        "session_id": "s",
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "cwd": str(cwd),
+        "transcript_path": str(transcript),
+    }
+
+
+def test_held_fact_gates_the_concept_channel_but_the_captured_log_stays_widenable(
+    store_root: Path, project_dir: Path, resolve_project: Callable[[Path], str]
+) -> None:
+    """The leakage guard gates the PROMOTION channel, not the raw log (ADR 0027).
+
+    Exercised through the real production path — a Stop-hook capture into the daily
+    log, then reindex — not a direct distillation. The earlier AC #2 test masked
+    the leak by only distilling a project-scoped Concept and never writing the log
+    chunk capture writes, so it never touched the widenable channel the guard does
+    not cover (integration-review finding).
+
+    Two truths hold together. The held fact's *Concept* stays project-scoped, so no
+    global Concept carrying it reaches another project's widened recall — the
+    promotion channel is gated. But the confidential utterance it was distilled
+    from is captured verbatim into its origin project's daily log at capture time,
+    and that raw log is reachable by another project's ``--widen`` recall by ADR
+    0013's design: the content already travelled via the log before distillation
+    ran, and redaction strips shape-detectable secrets, not confidential prose. The
+    guarantee is on the promotion channel, not a claim the captured wording is
+    unreachable across projects. Driving the guard with ``scope="global"`` here
+    matches the sibling tests; the production promotion trigger lands with #70."""
 
     ensure_store(store_root)
-    result = distill_fact(
-        text="The alpha engagement terms are confidential.",
-        project_id="alpha",
-        scope="global",
-        root=store_root,
+    confidential = "The alpha engagement terms are confidential: fee is 2M with the client."
+
+    # Capture the confidential utterance into alpha's daily log the way production
+    # does — the Stop hook's extractive, redacted append — so the widenable
+    # long-term log chunk actually exists before recall runs.
+    alpha = resolve_project(project_dir)
+    transcript = write_transcript(
+        project_dir / "t.jsonl",
+        [("record the engagement terms", confidential, "2026-07-11T10:00:00Z")],
     )
+    capture_from_payload(_capture_payload(project_dir, transcript), root=store_root)
+
+    # Distil the same fact bound for global: the guard holds it at project scope,
+    # so the Concept — the promotion channel — never travels.
+    held = distill_fact(text=confidential, project_id=alpha, scope="global", root=store_root)
     reindex(store_root)
 
-    assert result.held is True
-    assert result.slug is not None
-    assert read_concept(result.slug, store_root).scope == "project"
+    assert held.held is True
+    assert held.slug is not None
+    assert read_concept(held.slug, store_root).scope == "project"
 
-    # Recallable in its own project, invisible to a widened recall from another.
-    assert search("confidential engagement terms", root=store_root, project_id="alpha")
+    # Recallable in its own origin project (held, not lost).
+    assert search("confidential engagement terms", root=store_root, project_id=alpha)
+
     from_beta = recall(
         "confidential engagement terms", root=store_root, project_id="beta", widen=True
     )
-    assert all("confidential" not in citation.text.lower() for citation in from_beta.citations)
+
+    # Promotion channel gated: the held Concept stayed project-scoped, so no
+    # permanent-memory (Concept) chunk carrying it surfaces in beta's recall.
+    concept_hits = [c for c in from_beta.citations if c.source.startswith("permanent/")]
+    assert all("confidential" not in c.text.lower() for c in concept_hits)
+
+    # Raw-log caveat (ADR 0013): the captured utterance IS reachable via the
+    # widenable daily log — it travelled at capture time, which the guard does not
+    # suppress. This is the honest cross-project behaviour the earlier test masked.
+    log_hits = [c for c in from_beta.citations if c.source.startswith("long-term/")]
+    assert any("confidential" in c.text.lower() for c in log_hits)
 
 
 def test_held_sensitive_fact_never_supersedes_a_global_concept(store_root: Path) -> None:
