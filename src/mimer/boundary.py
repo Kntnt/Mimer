@@ -2,7 +2,7 @@
 Haiku call per session, spawned detached at session end so it never delays
 session close.
 
-The pass distils straight from the *raw long-term record* — the day's captured
+The pass distils straight from the *raw long-term record* — the recent captured
 turns — rather than from the session transcript. From that record one model call
 refreshes short-term memory's auto-maintained sections and names the durable
 facts worth keeping, which are promoted into permanent Concepts through the
@@ -12,9 +12,10 @@ promotion of durable short-term entries — the "remember this" guarantee — ru
 first and independently of the model, so it survives a deferred pass; the
 redacted transcript is archived as provenance either way.
 
-Because the pass reads the accumulating raw record and distillation is idempotent
-per fact (ADR 0015), a session orphaned by a crash has its captured turns
-distilled at the next boundary — never lost, never duplicated — and a detached
+Because the pass reads a recent window of the accumulating raw record and
+distillation is idempotent per fact (ADR 0015), a session orphaned by a crash —
+even one whose turns were captured on an earlier day — has its captured turns
+distilled at the next boundary, never lost, never duplicated, and a detached
 pass killed mid-run simply retries at the next boundary. When headless Claude is
 unavailable the extractive record stands, the pass defers, and the failure log
 says so. The run never raises to the session.
@@ -53,10 +54,24 @@ from mimer.shortterm import (
     rewrite_sections,
 )
 from mimer.storeio import write_atomic
+from mimer.storewalk import daily_log_days
 from mimer.text import parse_bullets
 from mimer.transcript import Exchange, last_exchange
 
 Haiku = Callable[[str], str | None]
+
+# How many of the most recent covered days the pass distils from, ending at the
+# anchor day. Reading a bounded window rather than the anchor day alone is what
+# delivers the crash-recovery guarantee across a day boundary (ADR 0023): a session
+# orphaned by a crash — or one whose turns straddle midnight UTC, so its
+# pre-midnight turns are filed under the previous day — leaves turns in an earlier
+# daily log than the next boundary's anchor, which an anchor-day-only read would
+# never revisit. The window counts *covered* days (days the project was worked, not
+# calendar days), so a single orphaned day is recovered across an arbitrarily long
+# gap while a short run of consecutive orphans is still spanned; it is bounded so
+# the one model call's context stays small. Re-reading an already-distilled day is
+# harmless — distillation is idempotent per fact (ADR 0015), minting no duplicate.
+_RECOVERY_WINDOW_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -80,7 +95,8 @@ def run_boundary_pass(
     short-term entries runs first (model-independent), the transcript is archived
     redacted, and then — when headless Claude is reachable — one model call over
     the day's raw record refreshes short-term's auto-maintained sections and
-    promotes the named durable facts into Concepts. A failure is written to the
+    promotes the named durable facts into Concepts, over the recent record window
+    so a crash-orphaned earlier day is recovered. A failure is written to the
     failure log; nothing is raised to the session.
     """
 
@@ -131,8 +147,8 @@ def run_boundary_pass(
         if transcript_path and Path(transcript_path).exists():
             archive_path = _archive_transcript(project_id, session_id, Path(transcript_path), root)
 
-        # Distil from the raw long-term record, not the transcript (ADR 0023). An
-        # empty record leaves nothing for the model; the durable entries and the
+        # Distil from the recent raw long-term record, not the transcript (ADR 0023).
+        # An empty record leaves nothing for the model; the durable entries and the
         # archive are already handled above.
         raw_record = _read_raw_record(project_id, day, root)
         if not raw_record.strip():
@@ -250,14 +266,33 @@ def _session_day(anchor: Exchange | None) -> date:
 
 
 def _read_raw_record(project_id: str, day: date, root: Path) -> str:
-    """The day's raw long-term record — the captured turns the pass distils from.
+    """The recent raw long-term record the pass distils from: the captured turns of
+    the anchor day and the covered days just before it, concatenated oldest-first.
 
-    Empty when the daily log does not exist yet (a session with no captured turns,
-    or a project whose capture has produced nothing on this day).
+    Reaching back over a bounded window of recent covered days — not the anchor day
+    alone — is what makes the crash-recovery guarantee hold across a day boundary
+    (ADR 0023): a session orphaned by a crash, or one whose turns straddle midnight
+    UTC, leaves turns in an earlier daily log than the next boundary's anchor, which
+    a today-only read would never revisit. Re-reading an already-distilled day is
+    safe: distillation is idempotent per fact (ADR 0015), so a fact seen again mints
+    no duplicate Concept.
+
+    Empty when no covered day on or before the anchor holds captured turns — a
+    session with nothing captured yet, or a project whose capture has produced
+    nothing in the window.
     """
 
-    path = daily_log_path(project_id, day.isoformat(), root)
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+    # The covered days on or before the anchor, tail-bounded to the recovery window;
+    # ISO stems sort chronologically, so the last N stems are the most recent.
+    anchor = day.isoformat()
+    recent = [stem for stem in daily_log_days(project_id, root) if stem <= anchor]
+    window = recent[-_RECOVERY_WINDOW_DAYS:]
+
+    # Concatenate the window oldest-first so the model reads the record in written
+    # order; each stem came from the on-disk enumeration, so its daily log exists.
+    return "".join(
+        daily_log_path(project_id, stem, root).read_text(encoding="utf-8") for stem in window
+    )
 
 
 def _refresh_short_term(
