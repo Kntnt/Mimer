@@ -151,8 +151,14 @@ def remember(
     evicted: list[Entry] = []
     warning: str | None = None
     if total > cap:
+        # Promote durable entries global-scoped and leakage-guarded — the same
+        # channel the session boundary and "distill now" take — so a cap-evicted
+        # fact travels cross-project, or if sensitive is held at project scope with
+        # its consent queued (ADRs 0013, 0027), rather than being stranded as a
+        # project-scoped Concept that can never travel. This path is unattended, so
+        # attended stays default and a held fact's consent defers to session start.
         if has_durable:
-            results = distill_durable_entries(project_id, root=root, today=day)
+            results = distill_durable_entries(project_id, root=root, today=day, scope="global")
             promoted = tuple(result.slug for result in results if result.slug is not None)
 
         remaining = 0
