@@ -316,6 +316,38 @@ def test_health_redacts_legacy_unredacted_log_line(store_root: Path) -> None:
     assert all(secret not in line for line in report.recent_failures)
 
 
+def test_health_cli_reports_last_activity_not_a_digest(
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`mimer-manage health` reports the store's last activity and never speaks of a
+    "digest": the intermediate session digest was removed (ADR 0023, #63), so the
+    health line that once read "Last digest: …" must now name last activity — its own
+    module docstring already promises "last activity", and #69's AC3 requires the
+    command to stop referencing a session digest (integration finding, #68/#69)."""
+
+    ensure_store(store_root)
+    append_entry("p", "2026-07-10", "- a captured line\n", store_root)
+    create_concept(
+        title="A concept",
+        body="Some knowledge.",
+        concept_type="Fact",
+        origin="p",
+        scope="global",
+        timestamp="2026-07-05T00:00:00Z",
+        root=store_root,
+    )
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+
+    exit_code = main(["health"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "digest" not in out.lower()
+    assert "last activity: 2026-07-10" in out.lower()
+
+
 def test_retracted_concept_stops_surfacing(store_root: Path) -> None:
     """A retracted Concept stops surfacing in recall and in the injected profile."""
 
@@ -404,3 +436,31 @@ def test_disable_native_memory_cli_refuses_to_clobber_malformed_settings(
     assert out.startswith("Mimer:")
     assert "Traceback" not in out
     assert settings_file.read_bytes() == before
+
+
+def test_disable_native_memory_cli_rejects_unreadable_settings(
+    project_dir: Path,
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unreadable ``.claude/settings.json`` — here a directory standing where the
+    file should be, the same stray filesystem state ``is_native_memory_enabled``
+    already survives on the SessionStart read path (#68) — is refused with a one-line
+    rejection and a non-zero exit, never a raw traceback. Otherwise a user who follows
+    the resilient session-start warning to ``disable-native-memory`` meets an
+    ``IsADirectoryError`` where the read path swallowed it, the two features disagreeing
+    on the same state (integration finding, #68/#69)."""
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(project_dir)
+    settings_file = project_dir / ".claude" / "settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.mkdir()
+
+    exit_code = main(["disable-native-memory"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Mimer:")
+    assert "Traceback" not in out
