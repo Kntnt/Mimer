@@ -23,7 +23,12 @@ from mimer.capture import capture_from_payload
 from mimer.curate import remember
 from mimer.distill import distill_durable_entries, distill_fact
 from mimer.index import reindex, search
-from mimer.leakage import is_sensitive, pending_consent_requests, queue_consent_request
+from mimer.leakage import (
+    is_sensitive,
+    pending_consent_requests,
+    queue_consent_request,
+    resolve_consent_request,
+)
 from mimer.recall import recall
 from mimer.store import ensure_store
 from tests.harness import run_hook, session_start_payload
@@ -125,6 +130,33 @@ def test_distill_fact_attended_holds_sensitive_without_deferring_consent(store_r
     assert result.held is True
     assert result.slug is not None
     assert read_concept(result.slug, store_root).scope == "project"
+    assert pending_consent_requests("p", store_root) == []
+
+
+def test_resolve_consent_request_clears_only_the_answered_request(store_root: Path) -> None:
+    """Answering one held fact's consent retires exactly its request and leaves any
+    other held fact's request still pending, so the session-start prompt stops
+    re-posing the answered fact but keeps asking about the rest (ADR 0027, #69)."""
+
+    ensure_store(store_root)
+    queue_consent_request("p", "The merger terms", store_root)
+    queue_consent_request("p", "The pricing model", store_root)
+    assert pending_consent_requests("p", store_root) == ["The merger terms", "The pricing model"]
+
+    resolve_consent_request("p", "The merger terms", store_root)
+
+    assert pending_consent_requests("p", store_root) == ["The pricing model"]
+
+
+def test_resolve_consent_request_is_a_noop_when_nothing_was_queued(store_root: Path) -> None:
+    """The attended "distill now" path queues no consent request, so clearing one on
+    a promote from that path — or any never-queued fact — is a silent no-op, never an
+    error (#69)."""
+
+    ensure_store(store_root)
+
+    resolve_consent_request("p", "never queued", store_root)
+
     assert pending_consent_requests("p", store_root) == []
 
 

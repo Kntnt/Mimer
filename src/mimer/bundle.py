@@ -22,6 +22,7 @@ import yaml
 
 from mimer.failure_log import log_failure
 from mimer.framing import neutralise
+from mimer.leakage import resolve_consent_request
 from mimer.paths import safe_identifier, store_root
 from mimer.redaction import redact
 from mimer.registry import project_dir  # noqa: F401  (kept for symmetry of store layout)
@@ -440,6 +441,13 @@ def promote_to_global(slug: str, root: Path | None = None) -> Concept:
     The search index is rebuilt from the files, so the widened scope takes effect in
     recall's scope filter immediately (an index that keyed the old project scope
     would otherwise still hide it from other projects).
+
+    Granting consent also clears the fact's pending consent request: the deferred
+    (unattended) hold queued it under the Concept's origin project, keyed by title,
+    and the session-start snapshot re-poses it every session until it is answered
+    here — without this clear a fact just promoted to global keeps firing a stale
+    "awaiting your consent" prompt forever (ADR 0027, #69). A fact whose consent was
+    never queued — the attended "distill now" path defers nothing — clears to a no-op.
     """
 
     with named_lock("bundle", root=root):
@@ -449,6 +457,11 @@ def promote_to_global(slug: str, root: Path | None = None) -> Concept:
         regenerate_index(root)
 
     _reindex_if_present(root)
+
+    # Retire the now-answered consent prompt outside the bundle lock: the clear takes
+    # the origin project's lock, and the widen above is already durable, so a held
+    # fact's stale prompt stops re-posing the moment its consent is granted.
+    resolve_consent_request(concept.origin, concept.title, root)
     return read_concept(slug, root)
 
 

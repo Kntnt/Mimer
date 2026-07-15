@@ -40,11 +40,17 @@ that added a truly lockless enqueue would reopen that lost update, so the
 under-lock invariant is load-bearing, not incidental.
 
 The consent queue (``.consent-queue``, the leakage guard's per-project hold —
-:mod:`mimer.leakage`) is the other append-only per-project queue, but it takes
-**no** locked clear: it is never cleared on emit — a held fact's consent request
-is re-posed every session until the user answers it — so it has no read-then-write
-window an update could be lost in, and its enqueue stays a plain lockless
-``O_APPEND`` with duplicates collapsed at read time.
+:mod:`mimer.leakage`) is the other append-only per-project queue with a **locked
+clear**, but it clears on *resolution*, not on emit: it is never cleared when
+re-posed, only when the user answers a held fact's request by promoting it to
+global (:func:`mimer.leakage.resolve_consent_request`, #69). Like the announcement
+clear, that clear re-reads under :func:`project_lock` and rewrites the survivors
+with :func:`write_atomic` (or ``unlink`` when none remain); its enqueues stay
+lockless ``O_APPEND`` only because every enqueue runs under the caller's project
+lock (the boundary pass's :func:`mimer.shortterm.rewrite_sections`), so a request
+appended concurrently cannot be lost in the clear's read-then-write window — the
+same under-lock enqueue invariant the announcement queue depends on. Duplicates are
+collapsed at read time.
 
 Every write primitive — :func:`write_atomic`, :func:`append_text`,
 :func:`append_fold` — runs the redaction pass (:func:`mimer.redaction.redact`) on

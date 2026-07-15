@@ -24,7 +24,7 @@ from mimer.curate import remember
 from mimer.failure_log import log_failure
 from mimer.framing import DATA_FRAME_HEADER
 from mimer.index import reindex, search
-from mimer.leakage import pending_consent_requests
+from mimer.leakage import pending_consent_requests, queue_consent_request
 from mimer.longterm import append_entry
 from mimer.manage import _print_concepts, main, profile, recent_concepts, store_health
 from mimer.paths import LOG_FILENAME
@@ -559,6 +559,39 @@ def test_promote_cli_widens_a_held_concept_to_global(
     assert read_concept(concept.slug, store_root).scope == "global"
     assert any(c.slug == concept.slug for c in visible_concepts(store_root, project_id="other"))
     assert "global" in capsys.readouterr().out.lower()
+
+
+def test_promote_cli_clears_the_pending_consent_request(
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Answering "yes" retires the prompt: when the unattended pass has held a
+    sensitive fact and queued its consent request for the next session start,
+    ``mimer-manage promote <slug>`` both widens the Concept to global AND clears that
+    request, so the session-start "awaiting your consent" line stops re-posing for a
+    fact that is already global (ADR 0027, #69)."""
+
+    ensure_store(store_root)
+    concept = create_concept(
+        title="Pricing model",
+        body="The pricing model is confidential to the client.",
+        concept_type="Fact",
+        origin="p",
+        scope="project",
+        root=store_root,
+    )
+    # Simulate the deferred (unattended) hold: the fact is held at project scope and
+    # its consent request queued for the next session start, keyed by title.
+    queue_consent_request("p", concept.title, store_root)
+    assert pending_consent_requests("p", store_root) == [concept.title]
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+
+    exit_code = main(["promote", concept.slug])
+
+    assert exit_code == 0
+    assert read_concept(concept.slug, store_root).scope == "global"
+    assert pending_consent_requests("p", store_root) == []
 
 
 def test_promote_cli_rejects_traversal_slug_with_clean_message(
