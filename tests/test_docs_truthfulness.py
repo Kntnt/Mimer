@@ -17,6 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from mimer import bundle, manage
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,6 +122,46 @@ def test_readme_documents_every_user_facing_command() -> None:
     text = README.read_text(encoding="utf-8")
     missing = {command for command in _user_facing_commands() if command not in text}
     assert missing == set(), f"README omits user-facing commands: {sorted(missing)}"
+
+
+def _readme_manage_subcommands() -> set[str]:
+    """The ``mimer-manage`` subcommands the README advertises.
+
+    Read from the intro sentence's parenthetical of backticked names right after
+    ``mimer-manage`` — a clean, comma-separated list of bare subcommand names,
+    unlike the command-table row, which also backticks arguments and setting
+    values and so is no clean source of subcommand names.
+    """
+
+    text = README.read_text(encoding="utf-8")
+    listing = re.search(r"`mimer-manage`\s*\(([^)]*)\)", text)
+    assert listing is not None, "README no longer lists mimer-manage's subcommands inline"
+    return set(re.findall(r"`([^`]+)`", listing.group(1)))
+
+
+def test_readme_manage_subcommands_all_exist_as_subparsers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every ``mimer-manage`` subcommand the README advertises must be a real
+    argparse subparser, so a user who copies one out of the docs never meets
+    ``error: argument command: invalid choice``. This closes the coverage hole
+    that let the README's — and the SessionStart warning's — ``disable-native-memory``
+    pointer ship green while no such subcommand existed (integration-review
+    finding, #68/#69)."""
+
+    parser = manage.build_parser()
+
+    # A subcommand is missing when argparse rejects it as an invalid choice; a real
+    # subcommand that merely wants a positional (retract, confirm) exits on a
+    # different message and is correctly left unflagged.
+    unknown = []
+    for command in sorted(_readme_manage_subcommands()):
+        try:
+            parser.parse_args([command])
+        except SystemExit:
+            if "invalid choice" in capsys.readouterr().err:
+                unknown.append(command)
+    assert unknown == [], f"README advertises mimer-manage subcommands with no subparser: {unknown}"
 
 
 def test_notice_makes_no_present_tense_cowork_claim() -> None:

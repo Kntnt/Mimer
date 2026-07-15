@@ -5,6 +5,7 @@ retraction (ADRs 0012, 0013).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -355,3 +356,51 @@ def test_retract_cli_rejects_traversal_slug_with_clean_message(
     out = capsys.readouterr().out
     assert out.startswith("Mimer: invalid slug")
     assert "Traceback" not in out
+
+
+def test_disable_native_memory_cli_writes_the_project_switch(
+    project_dir: Path,
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``mimer-manage disable-native-memory`` sets ``autoMemoryEnabled: false`` for
+    the current project and confirms in one line, so the command the SessionStart
+    warning and the README both name actually exists and does what they promise —
+    without it, a user who follows the warning hits ``invalid choice`` (#68/#69)."""
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(project_dir)
+
+    exit_code = main(["disable-native-memory"])
+
+    assert exit_code == 0
+    settings = json.loads((project_dir / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert settings == {"autoMemoryEnabled": False}
+    assert "disabled" in capsys.readouterr().out.lower()
+
+
+def test_disable_native_memory_cli_refuses_to_clobber_malformed_settings(
+    project_dir: Path,
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A malformed existing ``.claude/settings.json`` is refused with a one-line
+    rejection and a non-zero exit — never a raw traceback — and left byte-for-byte
+    intact, so the command never destroys a user's config it cannot parse (#69)."""
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(project_dir)
+    settings_file = project_dir / ".claude" / "settings.json"
+    settings_file.parent.mkdir(parents=True)
+    settings_file.write_text("{ not valid json", encoding="utf-8")
+    before = settings_file.read_bytes()
+
+    exit_code = main(["disable-native-memory"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Mimer:")
+    assert "Traceback" not in out
+    assert settings_file.read_bytes() == before
