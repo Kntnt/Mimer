@@ -547,3 +547,158 @@ def test_index_cite_docstring_matches_the_shipped_boundary_pass_state() -> None:
     assert BOUNDARY.is_file(), "the boundary pass module must ship (#63)"
     index_source = INDEX.read_text(encoding="utf-8").lower()
     assert "heading no longer influences its rank" in index_source
+
+
+# ---------------------------------------------------------------------------
+# Memory-skill and documentation reconciliation (issue #70)
+# ---------------------------------------------------------------------------
+
+
+def _context_entry(lemma: str) -> str:
+    """The full text of CONTEXT.md's ``**lemma**…`` glossary entry, up to the next
+    bold lemma or end of file.
+
+    Unlike :func:`_glossary_entry`, this tolerates a parenthetical qualifier after
+    the bold lemma (``**Sensitive** (of content):``), so entries whose lemma is not
+    immediately followed by a colon are still isolatable.
+    """
+
+    entry = re.search(
+        rf"^\*\*{re.escape(lemma)}\*\*.*?(?=^\*\*|\Z)",
+        CONTEXT.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert entry is not None, f"CONTEXT.md has no glossary entry for {lemma!r}"
+    return entry.group(0)
+
+
+def _vision_section(heading: str) -> str:
+    """The body of vision.md's ``## heading`` section, up to the next ``## `` or EOF."""
+
+    section = re.search(
+        rf"^## {re.escape(heading)}\b.*?(?=^## |\Z)",
+        VISION.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert section is not None, f"vision.md has no section for {heading!r}"
+    return section.group(0)
+
+
+def test_skill_sensitivity_rule_is_tight_and_names_the_leakage_guard() -> None:
+    """The skill's editable judgment rules must carry the leakage guard's
+    sensitivity classification at the tight, ask-rarely threshold (#70): a clear
+    confidentiality/NDA signal makes a fact sensitive, but a plain client identity
+    (a name, an email, a phone number) does NOT — so it may go global unless
+    explicitly flagged. The rule must name the leakage guard as the mechanism."""
+
+    lowered = SKILL.read_text(encoding="utf-8").lower()
+    assert "leakage guard" in lowered, "the skill does not name the leakage guard"
+    assert "confidential" in lowered, "the skill does not state the confidentiality signal"
+    assert "nda" in lowered or "non-disclosure" in lowered, "the skill omits the NDA signal"
+
+    # The tight threshold's load-bearing negative: a plain client identity is not
+    # auto-sensitive, so it may be promoted to global scope.
+    assert re.search(r"client identit\w*.{0,120}\bnot\b.{0,25}sensitiv", lowered, re.DOTALL), (
+        "the skill does not state that a plain client identity is not auto-sensitive"
+    )
+    assert "may go global" in lowered or "can go global" in lowered, (
+        "the skill does not state a non-sensitive client identity may go global"
+    )
+
+
+def test_skill_documents_replacing_native_auto_memory() -> None:
+    """The skill must carry the native-memory warning guidance (ADR 0025, #68): it
+    names ``mimer-manage disable-native-memory``, the ``autoMemoryEnabled`` switch it
+    writes, and the reason Mimer replaces native auto memory rather than racing it."""
+
+    text = SKILL.read_text(encoding="utf-8")
+    assert "disable-native-memory" in text, "the skill omits the disable-native-memory command"
+    assert "autoMemoryEnabled" in text, "the skill does not name the autoMemoryEnabled switch"
+    assert "native auto memory" in text.lower(), "the skill does not mention native auto memory"
+
+
+def test_skill_closes_the_session_start_consent_yes_flow() -> None:
+    """A sensitive fact held and surfaced at SESSION START shows only its title
+    (#68's consent line), not its slug; the skill must tell the agent to resolve the
+    slug via ``mimer-manage recent`` (or the read-only browser) before running
+    ``mimer-manage promote <slug>`` — the consent 'yes' the integration review found
+    undocumented (#68 to #69, LOW)."""
+
+    text = SKILL.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "only their titles" in lowered, "the skill does not note the consent line shows titles"
+    assert "mimer-manage recent" in text, "the skill does not point at recent to resolve the slug"
+    assert "mimer-browse" in text, "the skill does not offer the browser to resolve the slug"
+    assert "mimer-manage promote" in text, "the skill does not name the promote consent 'yes'"
+
+
+def test_skill_has_no_session_digest_wording() -> None:
+    """All 'session digest' language is replaced by the session-boundary pass (#70):
+    digest.py is gone (#63), so the skill must not describe a session digest."""
+
+    assert "session digest" not in SKILL.read_text(encoding="utf-8").lower()
+
+
+def test_context_sensitive_entry_does_not_auto_flag_plain_client_identity() -> None:
+    """CONTEXT.md's *Sensitive* entry must no longer list a plain client identity as
+    automatically sensitive (#70). Only material carrying an explicit confidentiality
+    signal is sensitive; a plain client identity may go global. The hard guarantee —
+    an explicitly-sensitive fact never goes global without consent — stays intact."""
+
+    entry = _context_entry("Sensitive")
+    lowered = entry.lower()
+
+    # The old blanket list that made every client identity sensitive must be gone.
+    assert "client identities, business facts" not in lowered, (
+        "the Sensitive entry still lists plain client identities as automatically sensitive"
+    )
+
+    # The tight axis is an explicit confidentiality signal.
+    assert "confidential" in lowered, "the Sensitive entry drops the confidentiality axis"
+
+    # A plain client identity is not, on its own, sensitive.
+    assert re.search(r"client identit\w*.{0,120}\bnot\b.{0,25}sensitiv", lowered, re.DOTALL), (
+        "the Sensitive entry does not say a plain client identity is not auto-sensitive"
+    )
+
+    # The hard guarantee survives verbatim.
+    assert "never promoted to global scope without explicit user consent" in lowered, (
+        "the Sensitive entry weakened the hard consent guarantee"
+    )
+
+
+def test_adr_0027_sensitivity_is_tight_not_blanket_client_identity() -> None:
+    """ADR 0027 must classify sensitivity on the tight, explicit-confidentiality axis
+    (#70), not brand every client identity, business fact and term sensitive. A plain
+    client identity is not, on its own, sensitive. The consent guarantee and the
+    promotion-channel scoping (an earlier integration-review fix) both survive."""
+
+    lowered = ADR_0027.read_text(encoding="utf-8").lower()
+
+    # The old blanket sensitive list must be gone.
+    assert "client identities, business facts, terms, anything behind an nda" not in lowered, (
+        "ADR 0027 still brands every client identity automatically sensitive"
+    )
+
+    # Sensitivity is the explicit-confidentiality axis, and a plain client identity is not it.
+    assert "confidential" in lowered, "ADR 0027 drops the confidentiality axis"
+    assert re.search(r"client identit\w*.{0,140}\bnot\b.{0,30}sensitiv", lowered, re.DOTALL), (
+        "ADR 0027 does not state a plain client identity is not auto-sensitive"
+    )
+
+    # The hard guarantee and the promotion-channel scoping stay intact.
+    assert "explicit consent" in lowered, "ADR 0027 weakened the explicit-consent guarantee"
+    assert "promotion channel" in lowered, "ADR 0027 lost its promotion-channel scoping"
+
+
+def test_vision_open_decisions_records_the_deferred_client_scope_layer() -> None:
+    """vision.md's *Open decisions* must record the deferred client scope layer (#70):
+    a middle scope between project and global, deferred because it is gated on
+    frictionless client-identity grouping — not on the scope layer itself."""
+
+    section = _vision_section("Open decisions").lower()
+    assert "client scope layer" in section, "Open decisions omits the deferred client scope layer"
+    assert "between project and global" in section, "the client layer's position is not stated"
+    assert "frictionless client-identity grouping" in section, (
+        "Open decisions does not record the client layer's real crux"
+    )
