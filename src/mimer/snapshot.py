@@ -67,6 +67,7 @@ def build_snapshot(
     health: str = "",
     paused: str = "",
     capture_off: str = "",
+    native_warning: str = "",
 ) -> str:
     """Render the full injection payload for a project's short-term memory.
 
@@ -88,6 +89,9 @@ def build_snapshot(
         capture_off: A one-line notice when this project's per-project capture is
             switched off, so a standing per-project suppression is announced every
             session rather than silent, for parity with the pause notice (#35).
+        native_warning: A one-line warning when Claude Code's native auto memory is
+            on for this project — a warning, not a mild notice, because a fact
+            forgotten in Mimer can otherwise be re-injected by it (ADR 0025, #68).
     """
 
     count = count_dated_items(short_term_text)
@@ -113,6 +117,8 @@ def build_snapshot(
         lines.append(capture_off)
     if health:
         lines.append(health)
+    if native_warning:
+        lines.append(native_warning)
     lines.append(announcement)
     if manifest:
         lines.append(manifest)

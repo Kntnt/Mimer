@@ -22,6 +22,7 @@ from mimer.failure_log import fresh_failures
 from mimer.hooks.runner import run_hook
 from mimer.leakage import pending_consent_requests
 from mimer.manifest import long_term_manifest
+from mimer.native_memory import is_native_memory_enabled
 from mimer.paths import store_root
 from mimer.pause import is_paused
 from mimer.project import confirm_hint, resolve
@@ -69,8 +70,30 @@ def handle(payload: Mapping[str, Any]) -> None:
             health=_health_notice(root),
             paused=_pause_notice(root),
             capture_off=_capture_notice(resolution.project_id, root),
+            native_warning=_native_memory_notice(cwd),
         )
         _emit(snapshot)
+
+
+def _native_memory_notice(cwd: Path) -> str:
+    """A one-line warning while Claude Code's native auto memory is on here (ADR 0025).
+
+    Keyed off the session's own working directory — where ``.claude/settings.json``
+    lives — so an absent file or an absent key (both the default-on state) still
+    warn. It is a warning, not a mild notice: Mimer replaces native memory rather
+    than racing it, because a fact forgotten or redacted in Mimer can be silently
+    re-injected by the native one. Mimer never flips the switch itself; the warning
+    only points at the command that does, on the user's own request (#68).
+    """
+
+    if not is_native_memory_enabled(cwd):
+        return ""
+    return (
+        "⚠ Mimer: Claude Code's native auto memory is ON for this project — a fact you "
+        "forget or redact in Mimer can be silently re-injected by it. Run "
+        '"mimer-manage disable-native-memory" to switch it off here; Mimer never flips it '
+        "for you."
+    )
 
 
 def _pause_notice(root: Path) -> str:
