@@ -14,6 +14,7 @@ spawn and graceful-degrade paths are driven through the real SessionEnd hook.
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from datetime import date
@@ -21,10 +22,16 @@ from pathlib import Path
 
 import pytest
 
-from mimer.boundary import run_boundary_pass
+import mimer.distill as distill_module
+import mimer.leakage as leakage_module
+from mimer.boundary import _promote_model_facts, run_boundary_pass
 from mimer.bundle import list_concepts, read_concept
 from mimer.curate import remember
-from mimer.leakage import pending_consent_requests
+from mimer.leakage import (
+    pending_consent_requests,
+    queue_consent_request,
+    resolve_consent_request,
+)
 from mimer.longterm import append_entry, daily_log_path, long_term_dir, transcripts_dir
 from mimer.pause import set_paused
 from mimer.registry import Registry
@@ -593,6 +600,92 @@ def test_global_scope_unattended_pass_defers_consent(
     )
 
     assert pending_consent_requests(pid, store_root), "unattended promotion must defer consent"
+
+
+def test_model_distilled_consent_request_survives_a_concurrent_resolve(
+    monkeypatch: pytest.MonkeyPatch, store_root: Path
+) -> None:
+    """A sensitive fact's consent request enqueued by the model-fact loop is not lost
+    when another session answers a *different* held fact's consent at the same moment
+    (#69 vs #68/#63).
+
+    The consent queue's enqueue is a lockless O_APPEND, safe against
+    resolve_consent_request's locked read-modify-write clear only because every
+    enqueue runs under the caller's project lock, so the two serialise. The model-fact
+    loop runs after the short-term refresh has released its lock, so it must take the
+    project lock itself: without it, the loop's append lands inside the clear's
+    read-then-write window and the survivors write silently drops it, and the held
+    fact's consent question is never re-posed (the #40 lost update, reopened for the
+    consent queue).
+
+    The clear is driven into its window deterministically: its survivors write is
+    hooked to start the model-fact enqueue and wait until either the append has
+    landed (the unlocked path) or the lock it now holds has blocked that append."""
+
+    ensure_store(store_root)
+    project_id = "p"
+
+    # Two held facts already await consent: F0 survives this clear; F1 is the one
+    # the concurrent session answers by promoting it to global.
+    queue_consent_request(project_id, "The pricing model", store_root)
+    queue_consent_request(project_id, "The merger terms", store_root)
+
+    # The model-fact loop is about to distil this sensitive fact bound for global,
+    # holding it at project scope and queuing its consent request.
+    sensitive_fact = "The client's revenue figures are strictly confidential"
+
+    thread_error: list[BaseException] = []
+
+    def run_model_loop() -> None:
+        try:
+            _promote_model_facts(
+                [sensitive_fact],
+                project_id=project_id,
+                root=store_root,
+                scope="global",
+                attended=False,
+                citations=None,
+                anchor_record="",
+            )
+        except BaseException as exc:  # noqa: BLE001 - surface any thread failure to the test
+            thread_error.append(exc)
+
+    # Signal the instant the model-fact enqueue has actually landed, so the hooked
+    # clear proceeds the moment the append exists (the unlocked path) rather than on
+    # a guessed delay; under the lock this stays unset for the whole window.
+    enqueued = threading.Event()
+    real_queue = distill_module.queue_consent_request
+
+    def spy_queue(project_id: str, request: str, root: Path | None = None) -> None:
+        real_queue(project_id, request, root)
+        enqueued.set()
+
+    monkeypatch.setattr(distill_module, "queue_consent_request", spy_queue)
+
+    # Interpose the model-fact enqueue into the clear's read-then-write window: start
+    # it, wait until it lands (unlocked) or blocks on the project lock this thread
+    # holds (locked), then write the survivors.
+    real_write_atomic = leakage_module.write_atomic
+    enqueue_thread: list[threading.Thread] = []
+
+    def hooked_write_atomic(path: Path, content: str) -> None:
+        thread = threading.Thread(target=run_model_loop)
+        enqueue_thread.append(thread)
+        thread.start()
+        enqueued.wait(timeout=1.0)
+        real_write_atomic(path, content)
+
+    monkeypatch.setattr(leakage_module, "write_atomic", hooked_write_atomic)
+
+    resolve_consent_request(project_id, "The merger terms", store_root)
+
+    # Under the lock the enqueue lands only after the clear releases it, so wait for
+    # the loop to finish before reading the queue back.
+    enqueue_thread[0].join(timeout=10.0)
+    assert not thread_error, thread_error
+
+    pending = pending_consent_requests(project_id, store_root)
+    assert any("revenue figures" in request.lower() for request in pending), pending
 
 
 def test_session_end_hook_runs_the_boundary_pass_detached(
