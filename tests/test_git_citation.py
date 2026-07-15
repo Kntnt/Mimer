@@ -335,6 +335,55 @@ def test_recovered_earlier_day_fact_is_not_cited_with_the_current_session_commit
     assert _git_citations(recovered) == []
 
 
+def test_todays_own_fact_is_cited_while_a_recovered_orphan_is_not_in_one_pass(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """The union #63 leaves open, missed by every per-issue gate: a single multi-day
+    boundary pass that distils both the session's own fact and a crash-orphaned
+    earlier-day fact must cite the *former* with the session's commit while
+    withholding it from the *latter*.
+
+    After a project's first captured day an earlier daily log always persists inside
+    the 7-day recovery window, so the pass reads a multi-day window on essentially
+    every session — not only during crash recovery. A per-pass gate keyed on the
+    window spanning more than the anchor day therefore suppresses the git citation on
+    *both* facts, silently gutting #66 AC1 for any actively-used project. The citation
+    must be attributed per fact — grounded in the anchor day's own record — so the
+    session's own fact keeps its commit while the recovered orphan stays uncited
+    (#66 vs #63)."""
+
+    ensure_store(store_root)
+    repo = init_repo(tmp_path / "repo", commit=True)
+    sha = commit(repo, "Add the sqlite-vec vector index", date=TODAY.isoformat())
+    pid = resolve_project(repo)
+
+    # A crash-orphaned earlier day whose boundary never ran sits in the window
+    # alongside today's own captured turn — the everyday multi-day shape.
+    yesterday = TODAY - timedelta(days=1)
+    _seed_raw_record(pid, store_root, yesterday, "ORPHAN the staging db runs postgres 16")
+    _seed_raw_record(pid, store_root, TODAY, "we chose sqlite-vec for the vector store")
+    transcript = write_transcript(repo / "t.jsonl", [("q", "a", "2026-07-11T15:00:00Z")])
+
+    def stub(prompt: str) -> str:
+        # The one merged call over the window surfaces both durable facts at once —
+        # the orphan only once its record reaches the prompt.
+        orphan = "- the staging db runs postgres 16" if "ORPHAN" in prompt else "- none"
+        return (
+            f"## Active threads\n- none\n\n## Pending decisions\n- none\n\n"
+            f"## Durable facts\n- The project stores its vectors in sqlite-vec\n{orphan}\n"
+        )
+
+    run_boundary_pass(_payload(repo, transcript), root=store_root, haiku=stub, today=TODAY)
+
+    # The session's own fact carries the session's commit...
+    own = next(c for c in list_concepts(store_root) if "sqlite-vec" in c.body)
+    assert (f"git:{sha}", "Add the sqlite-vec vector index") in _git_citations(own)
+
+    # ...while the crash-recovered orphan, folded into the same pass, does not.
+    orphan = next(c for c in list_concepts(store_root) if "postgres 16" in c.body)
+    assert _git_citations(orphan) == []
+
+
 # --- The git excerpt stays behind the redaction pass -----------------------
 
 
