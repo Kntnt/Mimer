@@ -121,6 +121,43 @@ def test_arrow_keys_move_the_selection_within_bounds() -> None:
     assert session.selection is hits[2]
 
 
+def test_the_list_view_renders_each_hit_and_marks_the_selection() -> None:
+    """The hit list shows every hit with its date, source and heading, and a caret
+    marks the highlighted one — which the arrow keys move (acceptance criterion 2)."""
+
+    hits = [
+        _hit("alpha", source="long-term/2026-06-01.md", date="2026-06-01", heading="Alpha"),
+        _hit("bravo", source="long-term/2026-06-02.md", date="2026-06-02", heading="Bravo"),
+    ]
+    session = BrowseSession("what did we decide?", hits)
+
+    listed = session.render()
+    joined = "\n".join(listed)
+    assert "2026-06-01" in joined and "long-term/2026-06-01.md" in joined and "Alpha" in joined
+    assert "2026-06-02" in joined and "long-term/2026-06-02.md" in joined and "Bravo" in joined
+
+    carets = [row for row in listed if row.lstrip().startswith("▶")]
+    assert len(carets) == 1 and "Alpha" in carets[0]
+    session.handle_key(curses.KEY_DOWN)
+    moved = [row for row in session.render() if row.lstrip().startswith("▶")]
+    assert len(moved) == 1 and "Bravo" in moved[0]
+
+
+def test_resizing_to_a_taller_viewport_reclamps_the_scroll() -> None:
+    """A window resize re-clamps the reading scroll into the new viewport, so an
+    offset set on a short terminal never dangles past the bottom of a taller one."""
+
+    body = "Heading\n" + "\n".join(f"line-{i:02d}" for i in range(50))
+    session = BrowseSession("q", [_hit("x", text=body)], height=8, width=80)
+    session.handle_key(_ENTER)
+    for _ in range(200):
+        session.handle_key(curses.KEY_DOWN)
+
+    session.resize(30, 80)
+
+    assert "line-49" in "\n".join(session.render())
+
+
 def test_enter_opens_the_selected_hit_showing_its_source_and_date() -> None:
     """Enter opens the highlighted hit, and the reading view renders it with its
     source and date (acceptance criterion 2)."""
@@ -179,9 +216,13 @@ def test_reading_view_paginates_long_text_vertically() -> None:
     for _ in range(200):
         session.handle_key(curses.KEY_DOWN)
     bottom = "\n".join(session.render())
+    for _ in range(200):
+        session.handle_key(curses.KEY_UP)
+    back_to_top = "\n".join(session.render())
 
     assert "line-00" in top and "line-49" not in top
     assert "line-49" in bottom and "line-00" not in bottom
+    assert "line-00" in back_to_top and "line-49" not in back_to_top
 
 
 def test_main_reports_nothing_found_without_launching_curses(
@@ -194,7 +235,7 @@ def test_main_reports_nothing_found_without_launching_curses(
 
     monkeypatch.setenv("MIMER_HOME", str(store_root))
     monkeypatch.setattr(
-        browse.curses, "wrapper", lambda *a, **k: pytest.fail("curses must not launch when empty")
+        curses, "wrapper", lambda *a, **k: pytest.fail("curses must not launch when empty")
     )
 
     code = browse.main(["nothing", "is", "indexed"])
@@ -260,13 +301,29 @@ def test_browse_search_returns_the_hits_recall_returns(store_root: Path) -> None
 @pytest.mark.embedding
 def test_browse_search_is_honestly_empty_for_an_unanswerable_query(store_root: Path) -> None:
     """A query unrelated to anything stored returns nothing rather than a poor
-    guess — recall's honest emptiness is preserved through the browser."""
+    guess — recall's honest emptiness is preserved through the browser.
+
+    Uses the same multi-fact corpus and query the recall suite pins as
+    unanswerable, so the assertion rests on the shared relevance floor rather than
+    on a single chunk's coincidental similarity to the query.
+    """
 
     _register(store_root, "alpha")
-    _seed(store_root, "alpha", "the deployment uses blue-green swaps")
+    path = daily_log_path("alpha", "2026-06-01", store_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "## Release cadence\n\nThe team agreed to deploy new releases on Fridays after standup.\n"
+        "## Billing\n\nThe invoice for the monthly cloud bill is due next Tuesday.\n"
+        "## Auth rework\n\nWe refactored the login system to use JWT access tokens.\n",
+        encoding="utf-8",
+    )
     reindex(store_root)
 
-    assert browse_search("photosynthesis in tropical orchids", root=store_root) == []
+    empty = browse_search(
+        "photosynthesis in tropical orchids during monsoon season", root=store_root
+    )
+
+    assert empty == []
 
 
 @pytest.mark.embedding

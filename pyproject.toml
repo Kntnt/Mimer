@@ -28,6 +28,7 @@ mimer-memory = "mimer.curate:main"
 mimer-reindex = "mimer.index:reindex_main"
 mimer-recall = "mimer.recall:main"
 mimer-manage = "mimer.manage:main"
+mimer-browse = "mimer.browse:main"
 mimer-install = "mimer.install:install_main"
 mimer-uninstall = "mimer.install:uninstall_main"
 

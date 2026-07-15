@@ -289,6 +289,7 @@ def search(
     project_id: str | None = None,
     projects: Sequence[str] | None = None,
     limit: int = 10,
+    unfiltered: bool = False,
 ) -> list[Citation]:
     """Hybrid, cited, tombstone-filtered search over long-term and permanent memory.
 
@@ -298,6 +299,14 @@ def search(
     reached, and defaults to the home project alone; passing it never widens
     Concept visibility. With neither, logs from every project are searched and
     only global Concepts show. Returns an empty list when nothing is relevant.
+
+    ``unfiltered`` lifts the scope filter entirely: every project's logs and
+    every Concept surface regardless of scope. It is the read-only CLI browser's
+    audit surface (ADR 0028) — scope protects clients from each other in the
+    agent's recall, not the user from their own memory, and the browser is where
+    the user sees with their own eyes what has become global. Only the scope gate
+    is lifted: tombstone suppression still applies, so a forgotten fact stays
+    forgotten here as everywhere (ADR 0012).
     """
 
     root = root or store_root()
@@ -318,7 +327,7 @@ def search(
     results = [
         _cite(row, candidates[row["id"]], query_date=clock.today())
         for row in rows
-        if _in_scope(row, allowed, home=project_id)
+        if (unfiltered or _in_scope(row, allowed, home=project_id))
         and not is_suppressed(row["text"], project_id=row["project_id"], tombstones=tombstones)
     ]
     results.sort(key=lambda citation: citation.score, reverse=True)
