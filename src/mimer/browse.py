@@ -33,10 +33,6 @@ from mimer.paths import store_root
 # window of the store in one pass (still bounded by the index's candidate set).
 _DEFAULT_LIMIT = 20
 
-# The honest empty result: reported on stdout so the command is safe to run
-# non-interactively, with nothing to page through.
-_EMPTY_MESSAGE = 'Mimer: nothing relevant found for "{query}".'
-
 # Key groups the session responds to. Arrow keys carry their vi aliases; Enter
 # arrives as either curses' key or a raw newline/return depending on the
 # terminal; the back keys close an open hit without ending the browser.
@@ -289,8 +285,11 @@ def browse(query: str, *, root: Path | None = None) -> int:
     """
 
     hits = browse_search(query, root=root)
+
+    # The honest empty result, reported on stdout so the command is safe to run
+    # non-interactively — there is nothing to page through.
     if not hits:
-        print(_EMPTY_MESSAGE.format(query=query))
+        print(f'Mimer: nothing relevant found for "{query}".')
         return 0
 
     session = BrowseSession(query, hits)

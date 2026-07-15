@@ -203,6 +203,63 @@ def test_q_returns_from_a_hit_to_the_list() -> None:
     assert session.mode == "list"
 
 
+def test_vi_aliases_move_the_selection_like_the_arrow_keys() -> None:
+    """j and k move the list highlight exactly as the down and up arrows do — the
+    vi aliases the session documents, clamped at the ends (acceptance criterion 2)."""
+
+    hits = [_hit("a"), _hit("b"), _hit("c")]
+    session = BrowseSession("q", hits)
+
+    assert session.handle_key(ord("k")) is True
+    assert session.selection is hits[0]
+    session.handle_key(ord("j"))
+    assert session.selection is hits[1]
+    session.handle_key(ord("j"))
+    session.handle_key(ord("j"))
+    assert session.selection is hits[2]
+    session.handle_key(ord("k"))
+    assert session.selection is hits[1]
+
+
+def test_vi_aliases_scroll_the_open_hit() -> None:
+    """j and k scroll an open hit's text like the down and up arrows, so the vi keys
+    page through a hit longer than the viewport too (acceptance criterion 2)."""
+
+    body = "Heading\n" + "\n".join(f"line-{i:02d}" for i in range(50))
+    session = BrowseSession("q", [_hit("x", text=body)], height=8, width=80)
+    session.handle_key(_ENTER)
+
+    for _ in range(200):
+        session.handle_key(ord("j"))
+    bottom = "\n".join(session.render())
+    for _ in range(200):
+        session.handle_key(ord("k"))
+    back_to_top = "\n".join(session.render())
+
+    assert "line-49" in bottom and "line-00" not in bottom
+    assert "line-00" in back_to_top and "line-49" not in back_to_top
+
+
+@pytest.mark.parametrize(
+    "back_key",
+    [curses.KEY_LEFT, curses.KEY_BACKSPACE, 127, 27],
+    ids=["left-arrow", "backspace", "del", "esc"],
+)
+def test_back_keys_close_an_open_hit_to_the_list(back_key: int) -> None:
+    """Left arrow, Backspace, DEL and ESC each close an open hit back to the list
+    without ending the browser, so every documented back key returns the reader to
+    the hit list rather than quitting (acceptance criterion 2)."""
+
+    session = BrowseSession("q", [_hit("a"), _hit("b")])
+    session.handle_key(_ENTER)
+    assert session.mode == "reading"
+
+    keep_running = session.handle_key(back_key)
+
+    assert keep_running is True
+    assert session.mode == "list"
+
+
 def test_reading_view_paginates_long_text_vertically() -> None:
     """A hit longer than the viewport is paginated: scrolling down reveals lines
     that were off-screen and scrolls the first ones away (the 'paginated text'
@@ -281,9 +338,13 @@ def test_browse_search_reads_across_every_scope_unlike_recall(store_root: Path) 
 
 @pytest.mark.embedding
 def test_browse_search_returns_the_hits_recall_returns(store_root: Path) -> None:
-    """Where recall finds a hit, the browser finds it too: the browser is recall's
-    hits widened by lifting the scope filter, never a different search — so every
-    scoped hit is a subset of the unfiltered browse hits (acceptance criterion 1)."""
+    """Where recall finds a hit, the browser finds it too: the browser reuses
+    recall's index with only the scope filter lifted, so a hit recall surfaces in
+    this single-project corpus reappears among the browse hits (acceptance
+    criterion 1). This pins the shared-search-core intent on a concrete hit — not
+    a universal subset guarantee: browse's wider top-N (limit 20 vs recall's 10)
+    could in principle let higher-scoring foreign hits crowd out a lower-scoring
+    recall hit."""
 
     _register(store_root, "alpha")
     _seed(store_root, "alpha", "deployment uses blue-green swaps in project alpha")
