@@ -13,6 +13,7 @@ spawn and graceful-degrade paths are driven through the real SessionEnd hook.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 import time
@@ -25,6 +26,7 @@ import pytest
 import mimer.distill as distill_module
 import mimer.leakage as leakage_module
 from mimer.boundary import _promote_model_facts, run_boundary_pass
+from mimer.boundary import main as boundary_main
 from mimer.bundle import list_concepts, read_concept
 from mimer.curate import remember
 from mimer.leakage import (
@@ -601,6 +603,89 @@ def test_global_scope_unattended_pass_defers_consent(
     )
 
     assert pending_consent_requests(pid, store_root), "unattended promotion must defer consent"
+
+
+def _spool_payload(project_dir: Path, tmp_path: Path) -> Path:
+    """Spool a SessionEnd payload to a file, as the SessionEnd hook does for its
+    detached ``python -m mimer.boundary <spool>`` process. The transcript is absent,
+    so the pass runs only the deterministic durable-entry channel — the path that
+    survives an unreachable model."""
+
+    spool = tmp_path / "payload.json"
+    spool.write_text(
+        json.dumps(_payload(project_dir, project_dir / "missing.jsonl")), encoding="utf-8"
+    )
+    return spool
+
+
+def test_automatic_detached_pass_promotes_a_client_neutral_fact_to_global(
+    monkeypatch: pytest.MonkeyPatch,
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """The detached entry point the SessionEnd hook spawns — ``mimer.boundary.main``
+    over a spooled payload — must run the automatic pass at *global* scope, so a
+    client-neutral durable fact auto-promotes to a global Concept that follows the
+    user between projects (ADR 0013). ``main`` passes no scope of its own, so this
+    drives the assembled unattended product through its real entry point: the earlier
+    per-issue tests all handed ``run_boundary_pass`` an explicit ``scope="global"``
+    and so never observed ``main`` defaulting the pass to project scope, leaving
+    cross-project promotion inert (#63 x #65 x #68 x #69 integration)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember("Always use uv", project_id=pid, root=store_root, today=TODAY)
+
+    # Isolate the detached entry point exactly as the hook harness does: MIMER_HOME
+    # points main's own store_root() at the test store, and a nonexistent claude
+    # binary stands the model down so only the deterministic durable-entry channel
+    # runs. Neither env touches the scope the pass runs at, which is what is tested.
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.setenv("MIMER_CLAUDE_BIN", "/nonexistent/claude-binary")
+
+    assert boundary_main([str(_spool_payload(project_dir, tmp_path))]) == 0
+
+    promoted = next(c for c in list_concepts(store_root) if "Always use uv" in c.body)
+    assert promoted.scope == "global"
+
+
+def test_automatic_detached_pass_defers_consent_for_a_sensitive_fact(
+    monkeypatch: pytest.MonkeyPatch,
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    project_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """Because the automatic pass runs global-scoped, a sensitive durable fact is held
+    at project scope and its consent request queued for the next session start — the
+    exact ADR 0027 flow #68's session-start consent line surfaces. Driven through the
+    real detached entry point so the queue is fed the way production feeds it, not by a
+    hand-injected request (#63 x #65 x #68 x #69 integration)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember(
+        "The client pricing model is strictly confidential",
+        project_id=pid,
+        root=store_root,
+        today=TODAY,
+    )
+
+    # Same env isolation as above: MIMER_HOME points main at the test store, a
+    # nonexistent claude binary stands the model down, and the scope decision is left
+    # entirely to main.
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.setenv("MIMER_CLAUDE_BIN", "/nonexistent/claude-binary")
+
+    assert boundary_main([str(_spool_payload(project_dir, tmp_path))]) == 0
+
+    assert pending_consent_requests(pid, store_root), (
+        "the unattended pass must hold the sensitive fact and queue its consent"
+    )
+    held = next(c for c in list_concepts(store_root) if "confidential" in c.body.lower())
+    assert held.scope == "project"
 
 
 def test_model_distilled_consent_request_survives_a_concurrent_resolve(
