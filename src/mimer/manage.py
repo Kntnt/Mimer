@@ -17,12 +17,14 @@ from pathlib import Path
 
 from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept, visible_concepts
 from mimer.framing import frame, neutralise
+from mimer.native_memory import disable_native_memory
 from mimer.paths import LOG_FILENAME, store_root
 from mimer.pause import clear_paused, is_paused, set_paused
 from mimer.project import confirm_link, resolve
 from mimer.redaction import redact
 from mimer.registry import Registry, registry_lock
 from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
+from mimer.vcs import git_toplevel
 
 _RECENT_FAILURES = 5
 
@@ -246,6 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     confirm.add_argument("candidate_id")
     subparsers.add_parser("pause", help="pause capture for this session")
     subparsers.add_parser("resume", help="resume capture")
+    subparsers.add_parser(
+        "disable-native-memory", help="set autoMemoryEnabled: false for this project"
+    )
     settings = subparsers.add_parser("settings", help="show or change per-project settings")
     settings.add_argument("name", nargs="?", choices=SETTING_NAMES, help="the setting to change")
     settings.add_argument("value", nargs="?", choices=("on", "off"), help="on or off")
@@ -293,8 +298,47 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "resume":
         clear_paused(root)
         print("Mimer: capture resumed.")
+    elif args.command == "disable-native-memory":
+        return _run_disable_native_memory()
     else:
         return _run_settings(args.name, args.value, root)
+    return 0
+
+
+def _run_disable_native_memory(cwd: Path | None = None) -> int:
+    """Set ``autoMemoryEnabled: false`` for this directory's project (ADR 0025).
+
+    This is the command the SessionStart warning and the README point the user at:
+    it writes the project-scoped switch at the project root the warning reads — the
+    git top level, or the directory itself outside a repo — so a disable run from a
+    subdirectory silences next session's warning rather than writing a stray
+    subdirectory settings file the warning never consults. A malformed or non-object
+    existing ``.claude/settings.json`` is refused, not clobbered: ``disable_native_memory``
+    raises and leaves the file intact, and this reports a clean one-line rejection
+    with a non-zero exit rather than leaking a JSON traceback for the user's own
+    config (mirrors ``retract`` and ``confirm``).
+    """
+
+    # Resolve the project root the switch belongs to — the repository top level the
+    # SessionStart warning keys on, not the raw session cwd — so the write lands
+    # where Claude Code and the warning both read .claude/settings.json.
+    cwd = cwd or Path.cwd()
+    toplevel = git_toplevel(cwd)
+    project_root = Path(toplevel) if toplevel is not None else cwd
+
+    # Refuse rather than destroy a settings.json we cannot parse: the write raises on
+    # non-empty unparseable or non-object content and leaves the file byte-for-byte
+    # intact, so surface that as a one-line rejection instead of a traceback.
+    try:
+        disable_native_memory(project_root)
+    except ValueError as exc:
+        print(f"Mimer: could not disable native auto memory — {exc}")
+        return 1
+
+    print(
+        f'Mimer: native auto memory disabled for "{project_root}" — '
+        "autoMemoryEnabled is now false; the session-start warning stops here."
+    )
     return 0
 
 
