@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mimer.matcher import is_same_fact, is_same_subject, normalised
+from mimer.matcher import is_grounded_in, is_same_fact, is_same_subject, normalised
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -281,3 +281,38 @@ def test_normalised_collapses_case_and_whitespace() -> None:
     """``normalised`` lowercases and collapses runs of whitespace to a single space (issue #52)."""
 
     assert normalised("The  Staging   Password is HUNTER2") == "the staging password is hunter2"
+
+
+# --- is_grounded_in: was this fact distilled from that record? (issue #66 vs #63) ---
+
+
+def test_distilled_paraphrase_is_grounded_in_the_record_it_was_drawn_from() -> None:
+    """A distilled fact grounds in its own captured turn even when the model inflects
+    the word forms — the count floor, not a ratio, is what tolerates the paraphrase."""
+
+    fact = "The project stores its vectors in sqlite-vec"
+    record = "### 10:00 — turn abcd\n- Assistant: we chose sqlite-vec for the vector store\n"
+    assert is_grounded_in(fact, record)
+
+
+def test_fact_about_another_subject_is_not_grounded_in_an_unrelated_record() -> None:
+    """A fact recovered from an earlier day shares no content with today's turns, so it
+    is not grounded — the boundary pass then leaves it uncited (#66 vs #63)."""
+
+    fact = "the staging db runs postgres 16"
+    record = "### 10:00 — turn abcd\n- Assistant: today we wired the recall reranker\n"
+    assert not is_grounded_in(fact, record)
+
+
+def test_a_lone_shared_content_word_does_not_ground_a_fact() -> None:
+    """A single coincidental common word is below the floor, so an unrelated fact is not
+    attributed to a record it merely brushes against on one word."""
+
+    assert not is_grounded_in("the deploy script uses docker", "the docker registry was slow")
+
+
+def test_nothing_is_grounded_in_an_empty_record() -> None:
+    """An empty anchor-day record — a session that captured nothing today — grounds no
+    fact, so a recovered fact never inherits this session's commit."""
+
+    assert not is_grounded_in("the project stores its vectors in sqlite-vec", "")

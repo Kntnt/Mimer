@@ -2,7 +2,7 @@
 same fact or about the same subject (issues #18, #52).
 
 Fact identity has a single home so every site that asks about it answers
-consistently. Two fuzzy questions live here, over one shared tokenizer and one
+consistently. Three fuzzy questions live here, over one shared tokenizer and one
 stopword set:
 
 * :func:`is_same_fact` — "are these the same fact?" — for the tombstone check,
@@ -11,6 +11,10 @@ stopword set:
   re-distilled, which only holds if every one of those sites answers identically.
 * :func:`is_same_subject` — "are these about the same subject?" — for
   distillation's dedup and supersession targeting (ADR 0015, issue #29).
+* :func:`is_grounded_in` — "was this fact distilled from that record?" — for the
+  session-boundary pass, which attributes a git citation to a fact only when the
+  anchor day's own record grounds it, so a fact recovered from an earlier day is
+  never anchored to this session's commit (issue #66 vs #63).
 
 The two modes deliberately disagree on a **value substitution** — two comparable
 facts differing by exactly one content word (``port 8080`` → ``port 9090``,
@@ -98,6 +102,13 @@ _SUBJECT_OVERLAP_THRESHOLD = 0.5
 # half the smaller set and one silently supersedes the other, dropping a genuinely
 # unrelated fact from recall (issue #29).
 _MIN_SUBJECT_OVERLAP = 2
+
+# A distilled fact is grounded in a record when it shares at least this many content
+# words with it. Grounding is one-directional and ratio-free (see :func:`is_grounded_in`),
+# so this absolute floor is its only guard against a single coincidental common word
+# attributing an unrelated fact to a record. A distinct constant from
+# _MIN_SUBJECT_OVERLAP though both are currently 2: the two are independently tunable.
+_MIN_GROUNDING_OVERLAP = 2
 
 # Content words: maximal runs of Unicode letters and digits (underscore excluded),
 # case-folded. Non-ASCII letters are kept deliberately (see the module docstring).
@@ -316,3 +327,38 @@ def is_same_subject(a: str, b: str) -> bool:
     if shared < _MIN_SUBJECT_OVERLAP:
         return False
     return shared / min(len(tokens_a), len(tokens_b)) >= _SUBJECT_OVERLAP_THRESHOLD
+
+
+def is_grounded_in(fact: str, record: str) -> bool:
+    """Whether a distilled ``fact`` was plausibly drawn from ``record`` — the record's
+    captured turns are a source the fact could have been distilled from.
+
+    The session-boundary pass uses this to attribute a git citation *per fact* rather
+    than per pass. Its recovery window re-reads earlier covered days on essentially
+    every session — yesterday's daily log persists inside the 7-day window, not only
+    during crash recovery (#63) — so a per-pass gate that cited only when the window
+    was the anchor day alone withheld the git anchor on every actively-used project.
+    Grounding the fact in the anchor day's own record instead lets the session's own
+    fact keep its commit while a fact folded in from a crash-orphaned earlier day,
+    which shares no content with today's turns, is left uncited (issue #66 vs #63).
+
+    Grounding is deliberately looser than :func:`is_same_subject` and one-directional:
+    the record is a whole day of many turns while the fact is a short model paraphrase,
+    so a ratio over either token set is the wrong shape, and the model's inflected word
+    forms (``store`` → ``stores``) that the exact-form tokenizer would miss make a high
+    ratio unreachable anyway. The absolute floor of :data:`_MIN_GROUNDING_OVERLAP`
+    shared content words is the sole guard against a lone coincidental common word
+    attributing an unrelated fact to the record. The looseness is safe because the git
+    anchor is additive and verifiability never depends on it (ADR 0021): a borderline
+    miss or hit costs at most one checkable, stale-tolerant citation.
+
+    Args:
+        fact: A distilled durable fact (a model paraphrase of the record).
+        record: The raw captured-turn record to ground the fact against.
+
+    Returns:
+        ``True`` when the fact and the record share at least
+        :data:`_MIN_GROUNDING_OVERLAP` content words.
+    """
+
+    return len(_content_tokens(fact) & _content_tokens(record)) >= _MIN_GROUNDING_OVERLAP

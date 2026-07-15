@@ -41,6 +41,7 @@ from mimer.failure_log import log_failure
 from mimer.framing import fence_transcript, neutralise
 from mimer.index import index_if_present
 from mimer.longterm import append_entry, daily_log_path, transcripts_dir
+from mimer.matcher import is_grounded_in
 from mimer.paths import safe_identifier, store_root
 from mimer.pause import is_paused
 from mimer.project import resolve
@@ -177,20 +178,31 @@ def run_boundary_pass(
         # resolved once and reactively. A non-git project, any git error, or a HEAD
         # the session never touched yields no citation, so the facts are distilled
         # git-free with full cited recall intact.
-        #
-        # Only cite when the pass distilled the anchor day alone. When the recovery
-        # window reached back to an earlier covered day — a crash-orphaned day the
-        # pass is recovering (ADR 0023) — the one merged model call cannot attribute
-        # each fact to its day, so applying this session's HEAD to every fact
-        # would anchor an older, recovered fact to a newer commit with no relation:
-        # the #66 wrong-provenance hole reopened from the reverse side. The git
-        # anchor is additive and verifiability never depends on it (ADR 0021), so it
-        # is withheld on such an ambiguous multi-day pass — err-safe exactly as the
-        # date guard in _git_citations is.
-        anchor_only = window == [day.isoformat()]
-        citations = _git_citations(cwd, day) if facts and anchor_only else None
+        citations = _git_citations(cwd, day) if facts else None
+
+        # Attribute the commit per fact, not per pass. The recovery window re-reads
+        # earlier covered days on essentially every session — yesterday's log persists
+        # inside the 7-day window, not only during crash recovery (#63) — so a per-pass
+        # "anchor day alone" gate would suppress the anchor on every actively-used
+        # project. The one merged model call cannot label each fact with its day, so
+        # ground each against the anchor day's own record: the session's own fact keeps
+        # its commit, while a fact folded in from a crash-orphaned earlier day — which
+        # shares no content with today's turns — is left uncited, so an older recovered
+        # fact is never anchored to this session's unrelated commit (#66 vs #63). The
+        # anchor is additive and verifiability never depends on it (ADR 0021).
+        anchor_record = (
+            _read_raw_record(project_id, [day.isoformat()], root)
+            if citations is not None and day.isoformat() in window
+            else ""
+        )
         for fact in facts:
-            distill_fact(text=fact, project_id=project_id, root=root, citations=citations)
+            grounded = citations is not None and is_grounded_in(fact, anchor_record)
+            distill_fact(
+                text=fact,
+                project_id=project_id,
+                root=root,
+                citations=citations if grounded else None,
+            )
 
         # Keep the derived index in step with any daily-log appends (aged-out or
         # rejected blocks) and the new Concepts, when an index exists (ADR 0011).
@@ -329,9 +341,11 @@ def _recovery_window(project_id: str, day: date, root: Path) -> list[str]:
     safe: distillation is idempotent per fact (ADR 0015), so a fact seen again mints
     no duplicate Concept.
 
-    A window equal to ``[day.isoformat()]`` means the pass distilled the anchor day
-    alone — the one shape under which a resolved git commit can be causally
-    attributed to every distilled fact (see :func:`run_boundary_pass`).
+    The window spans more than the anchor day on essentially every session, not only
+    during crash recovery — yesterday's daily log persists inside the window on any
+    actively-used project — so the git-citation attribution in :func:`run_boundary_pass`
+    grounds each fact in the anchor day's own record rather than keying on the window's
+    shape.
     """
 
     # The covered days on or before the anchor, tail-bounded to the recovery window;
