@@ -49,8 +49,11 @@ pytestmark = pytest.mark.embedding
     ],
 )
 def test_default_classifier_flags_explicit_confidentiality_signals(text: str) -> None:
-    """The default classifier flags a clear confidentiality or secret signal —
-    the tight default the editable rules will later drive (ADR 0018, #70)."""
+    """The default classifier flags a clear confidentiality, NDA or non-disclosure
+    signal — the tight default the editable rules will later drive (ADR 0018, #70).
+
+    It matches only that family: a bare "keep this secret" carries no such signal
+    and is admitted (see :func:`test_default_classifier_admits_non_sensitive_facts`)."""
 
     assert is_sensitive(text)
 
@@ -62,6 +65,8 @@ def test_default_classifier_flags_explicit_confidentiality_signals(text: str) ->
         "Review the sprint agenda tomorrow.",
         "Filling in the form is mandatory.",
         "The client is Acme Corp; contact is hi@acme.example.",
+        "Please keep this secret.",
+        "Don't share this with anyone.",
     ],
 )
 def test_default_classifier_admits_non_sensitive_facts(text: str) -> None:
@@ -69,7 +74,10 @@ def test_default_classifier_admits_non_sensitive_facts(text: str) -> None:
 
     The axis is "is this confidential?", not "is this about a client?": a bare
     client name or email is not auto-sensitive, and the ``nda`` signal is matched
-    on a word boundary so ``agenda`` and ``mandatory`` never trip it."""
+    on a word boundary so ``agenda`` and ``mandatory`` never trip it. A softer
+    "keep this secret" or "don't share this" is admitted too — the guard's tight
+    default does not cover them, which is exactly why the reconciled docs must not
+    name them as hold signals (#70)."""
 
     assert not is_sensitive(text)
 

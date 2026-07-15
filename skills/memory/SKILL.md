@@ -94,9 +94,8 @@ and a consent request is queued, never promoted to global on judgment alone (ADR
 set-and-forget:
 
 - **Sensitive** — the fact carries an explicit confidentiality signal: the user
-  called it confidential, secret or "don't share this", or it is covered by an
-  NDA or a non-disclosure term. Hold it at project scope and let the consent flow
-  ask before it travels.
+  called it confidential, or it is covered by an NDA or a non-disclosure term.
+  Hold it at project scope and let the consent flow ask before it travels.
 - **Not sensitive** — a plain client identity on its own: a name, an email, a
   phone number. A plain client identity is **not** sensitive, so it **may go
   global** like any other client-neutral fact. Withhold it only when the user has

@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from mimer import bundle, manage
+from mimer.leakage import is_sensitive
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -42,6 +43,40 @@ ADR_0027 = ROOT / "docs" / "adr" / "0027-leakage-guard-global-scope.md"
 # The one-sentence write-seam contract, worded identically in storeio's docstring,
 # CONTEXT.md's glossary entry and ADR 0020 (#55).
 WRITE_SEAM_CONTRACT = "no text reaches the store's files unredacted"
+
+# A representative one-sentence utterance for each confidentiality phrasing a user
+# might reach for, keyed by the signal word a doc would name it by. The shipped
+# classifier (:func:`mimer.leakage.is_sensitive`) is the sole arbiter of which
+# actually hold a fact back at project scope, so a reconciled doc must name exactly
+# the signals it honours — no softer "secret"/"don't share this" that the guard
+# silently promotes anyway (#70).
+_SENSITIVITY_SIGNAL_PHRASINGS = {
+    "confidential": "This pricing arrangement is confidential.",
+    "nda": "The parties are bound by an NDA.",
+    "non-disclosure": "The work is under a non-disclosure term.",
+    "secret": "Please keep this secret.",
+    "don't share this": "Don't share this with anyone.",
+}
+
+# The signals the shipped guard flags, and the ones it silently ignores, derived
+# from is_sensitive itself so the doc guards below track the code, never a frozen list.
+_HONOURED_SIGNALS = {p for p, u in _SENSITIVITY_SIGNAL_PHRASINGS.items() if is_sensitive(u)}
+_UNHONOURED_SIGNALS = set(_SENSITIVITY_SIGNAL_PHRASINGS) - _HONOURED_SIGNALS
+
+
+def _assert_signal_passage_matches_guard(passage: str, where: str) -> None:
+    """A doc's sensitivity-signal passage must name every signal the shipped guard
+    honours and none it silently ignores, so its "held back at project scope"
+    promise matches :func:`mimer.leakage.is_sensitive` (#70)."""
+
+    lowered = passage.lower().replace("’", "'")
+    for signal in _HONOURED_SIGNALS:
+        assert signal in lowered, f"{where} omits the honoured '{signal}' signal"
+    for signal in _UNHONOURED_SIGNALS:
+        assert signal not in lowered, (
+            f"{where} names '{signal}' as a hold signal, but is_sensitive ignores it, "
+            "so a fact whose only signal is that would leak to global scope"
+        )
 
 
 def _user_facing_commands() -> set[str]:
@@ -584,17 +619,46 @@ def _vision_section(heading: str) -> str:
     return section.group(0)
 
 
+def test_shipped_guard_honours_exactly_the_documented_confidentiality_signals() -> None:
+    """The leakage guard's shipped classifier flags an explicit confidentiality, NDA
+    or non-disclosure signal — and nothing softer (#70). A bare "keep this secret" or
+    "don't share this" is NOT flagged, so no reconciled doc may name it as a hold
+    signal; this pins the per-doc guards below to real behaviour, not to a hard-coded
+    list that could drift from is_sensitive."""
+
+    expected_honoured = {"confidential", "nda", "non-disclosure"}
+    expected_unhonoured = {"secret", "don't share this"}
+    assert expected_honoured == _HONOURED_SIGNALS, (
+        "the guard's honoured signals drifted from what the docs are allowed to name"
+    )
+    assert expected_unhonoured == _UNHONOURED_SIGNALS, (
+        "a phrasing the docs must not name as a hold signal changed its guard verdict"
+    )
+
+
 def test_skill_sensitivity_rule_is_tight_and_names_the_leakage_guard() -> None:
     """The skill's editable judgment rules must carry the leakage guard's
     sensitivity classification at the tight, ask-rarely threshold (#70): a clear
     confidentiality/NDA signal makes a fact sensitive, but a plain client identity
     (a name, an email, a phone number) does NOT — so it may go global unless
-    explicitly flagged. The rule must name the leakage guard as the mechanism."""
+    explicitly flagged. The rule must name the leakage guard as the mechanism, and
+    every signal it lists must be one the shipped guard actually holds back."""
 
-    lowered = SKILL.read_text(encoding="utf-8").lower()
+    text = SKILL.read_text(encoding="utf-8")
+    lowered = text.lower()
     assert "leakage guard" in lowered, "the skill does not name the leakage guard"
     assert "confidential" in lowered, "the skill does not state the confidentiality signal"
     assert "nda" in lowered or "non-disclosure" in lowered, "the skill omits the NDA signal"
+
+    # Bind the signal enumeration to the shipped guard: the "Sensitive" bullet must
+    # name every signal is_sensitive honours and no softer one it silently promotes.
+    bullet = re.search(
+        r"^- \*\*Sensitive\*\*.*?(?=^- \*\*Not sensitive\*\*)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert bullet is not None, "the skill has no '- **Sensitive**' signal bullet"
+    _assert_signal_passage_matches_guard(bullet.group(0), "the skill's Sensitive bullet")
 
     # The tight threshold's load-bearing negative: a plain client identity is not
     # auto-sensitive, so it may be promoted to global scope.
@@ -653,8 +717,12 @@ def test_context_sensitive_entry_does_not_auto_flag_plain_client_identity() -> N
         "the Sensitive entry still lists plain client identities as automatically sensitive"
     )
 
-    # The tight axis is an explicit confidentiality signal.
+    # The tight axis is an explicit confidentiality signal. Bind the enumeration to
+    # the shipped guard over the definition body only — the `_Avoid_` line names
+    # "secret" as redaction's reserved term, which is not a signal claim.
     assert "confidential" in lowered, "the Sensitive entry drops the confidentiality axis"
+    definition = entry.split("_Avoid_")[0]
+    _assert_signal_passage_matches_guard(definition, "the Sensitive entry")
 
     # A plain client identity is not, on its own, sensitive.
     assert re.search(r"client identit\w*.{0,120}\bnot\b.{0,25}sensitiv", lowered, re.DOTALL), (
@@ -673,12 +741,20 @@ def test_adr_0027_sensitivity_is_tight_not_blanket_client_identity() -> None:
     client identity is not, on its own, sensitive. The consent guarantee and the
     promotion-channel scoping (an earlier integration-review fix) both survive."""
 
-    lowered = ADR_0027.read_text(encoding="utf-8").lower()
+    text = ADR_0027.read_text(encoding="utf-8")
+    lowered = text.lower()
 
     # The old blanket sensitive list must be gone.
     assert "client identities, business facts, terms, anything behind an nda" not in lowered, (
         "ADR 0027 still brands every client identity automatically sensitive"
     )
+
+    # Bind the signal enumeration to the shipped guard over the classification clause
+    # only — a later consequence bullet names "shape-detectable secrets" about
+    # redaction, which is not a sensitivity-signal claim.
+    clause = re.search(r"classify as \*\*sensitive\*\*.*?is never promoted", text, re.DOTALL)
+    assert clause is not None, "ADR 0027 has no sensitive-classification clause"
+    _assert_signal_passage_matches_guard(clause.group(0), "ADR 0027's classification clause")
 
     # Sensitivity is the explicit-confidentiality axis, and a plain client identity is not it.
     assert "confidential" in lowered, "ADR 0027 drops the confidentiality axis"
