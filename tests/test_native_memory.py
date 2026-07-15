@@ -85,6 +85,21 @@ def test_non_object_settings_reports_enabled(project_dir: Path) -> None:
     assert path.read_bytes() == before
 
 
+def test_unreadable_settings_reports_enabled(project_dir: Path) -> None:
+    """A ``.claude/settings.json`` that cannot be read — here a directory standing
+    where the file should be, the kind of stray filesystem state a bad ``mkdir`` or
+    a post-``sudo`` ownership change leaves behind — reports enabled rather than
+    raising. The read cannot confirm the switch is off, and this best-effort adornment
+    must never let an ``OSError`` escape into the SessionStart hot path, where it
+    would take down the whole snapshot (#68)."""
+
+    settings = settings_path(project_dir)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.mkdir()
+
+    assert is_native_memory_enabled(project_dir) is True
+
+
 # --- Reading never mutates ---------------------------------------------------
 
 

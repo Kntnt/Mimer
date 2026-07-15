@@ -21,6 +21,7 @@ from mimer.distill import _queue_announcement
 from mimer.leakage import queue_consent_request
 from mimer.native_memory import SETTINGS_KEY, settings_path
 from mimer.store import ensure_store
+from tests.gitutil import init_repo
 from tests.harness import run_hook, session_start_payload
 
 # The SessionStart hook subprocess loads the embedding model through the snapshot
@@ -131,6 +132,67 @@ def test_session_start_never_flips_the_switch(
     )
 
     assert not settings_path(project_dir).exists()
+
+
+def test_session_start_survives_unreadable_native_settings(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """An unreadable ``.claude/settings.json`` — here a directory standing where the
+    file should be — must not take down the whole snapshot: the best-effort native
+    read defaults to on (warn) rather than raising, so short-term memory injection
+    and the pending consent question still reach the session despite the odd
+    filesystem state (#68). A warning adornment can never suppress the snapshot."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    queue_consent_request(pid, "The client's revenue figures are confidential", store_root)
+    settings = settings_path(project_dir)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.mkdir()
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(project_dir)),
+        store_root=store_root,
+        cwd=project_dir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    context = _injected_context(result.stdout)
+    assert "native auto memory is ON" in context
+    assert "revenue figures" in context.lower()
+
+
+def test_session_start_reads_switch_from_project_root_not_subdirectory(
+    store_root: Path, resolve_project: Callable[[Path], str], tmp_path: Path
+) -> None:
+    """With native auto memory switched off at the repository root, a session
+    launched from a subdirectory stays silent. The switch is read from the project
+    root — where ``.claude/settings.json`` lives — not the raw session cwd, so a
+    subdirectory that has no settings file of its own never falsely warns ON (#68)."""
+
+    ensure_store(store_root)
+    repo = init_repo(
+        tmp_path / "repo",
+        remotes={"origin": "git@github.com:acme/app.git"},
+        commit=True,
+    )
+    _write_native_setting(repo, enabled=False)
+    subdir = repo / "packages" / "web"
+    subdir.mkdir(parents=True)
+    resolve_project(subdir)
+
+    result = run_hook(
+        "SessionStart",
+        session_start_payload(cwd=str(subdir)),
+        store_root=store_root,
+        cwd=subdir,
+    )
+
+    assert result.returncode == 0, result.stderr
+    context = _injected_context(result.stdout)
+    assert "native auto memory" not in context.lower()
+    assert "disable-native-memory" not in context
 
 
 def test_session_start_native_warning_coexists_with_consent_and_distilled(

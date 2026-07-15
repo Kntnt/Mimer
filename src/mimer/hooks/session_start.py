@@ -29,6 +29,7 @@ from mimer.project import confirm_hint, resolve
 from mimer.registry import Registry
 from mimer.shortterm import ensure_short_term, read_short_term
 from mimer.snapshot import DATA_FRAME_HEADER, build_snapshot
+from mimer.vcs import git_toplevel
 
 
 def handle(payload: Mapping[str, Any]) -> None:
@@ -78,15 +79,26 @@ def handle(payload: Mapping[str, Any]) -> None:
 def _native_memory_notice(cwd: Path) -> str:
     """A one-line warning while Claude Code's native auto memory is on here (ADR 0025).
 
-    Keyed off the session's own working directory — where ``.claude/settings.json``
-    lives — so an absent file or an absent key (both the default-on state) still
-    warn. It is a warning, not a mild notice: Mimer replaces native memory rather
-    than racing it, because a fact forgotten or redacted in Mimer can be silently
-    re-injected by the native one. Mimer never flips the switch itself; the warning
-    only points at the command that does, on the user's own request (#68).
+    Keyed off the project root — the repository top level, where the project-scoped
+    ``.claude/settings.json`` lives — resolved from the session's ``cwd`` so a
+    session launched from a subdirectory reads the project's real switch rather than
+    a subdirectory that has no settings file and would falsely warn ON. An absent
+    file or an absent key (both the default-on state) still warn. It is a warning,
+    not a mild notice: Mimer replaces native memory rather than racing it, because a
+    fact forgotten or redacted in Mimer can be silently re-injected by the native
+    one. Mimer never flips the switch itself; the warning only points at the command
+    that does, on the user's own request (#68).
     """
 
-    if not is_native_memory_enabled(cwd):
+    # Resolve the project root the identity system keys on — the git top level, or
+    # the directory itself outside a repo — so the switch is read from where the
+    # project-scoped .claude/settings.json actually lives, not the raw session cwd.
+    toplevel = git_toplevel(cwd)
+    project_root = Path(toplevel) if toplevel is not None else cwd
+
+    # With the switch confirmed off there is nothing to warn about; on, or the
+    # default-on absent state, warns and names the command that disables it.
+    if not is_native_memory_enabled(project_root):
         return ""
     return (
         "⚠ Mimer: Claude Code's native auto memory is ON for this project — a fact you "

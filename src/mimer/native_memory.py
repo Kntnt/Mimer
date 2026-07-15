@@ -46,11 +46,14 @@ def is_native_memory_enabled(project_dir: Path) -> bool:
     explicit ``false`` reports off.
     """
 
-    # A file we cannot parse tells us nothing about the switch, so we cannot
-    # confirm it is off — report on and let the caller warn.
+    # A file we cannot parse — or cannot even read (a directory in its place, a
+    # permission or ownership quirk) — tells us nothing about the switch, so we
+    # cannot confirm it is off: report on and let the caller warn. OSError is caught
+    # too because this is a best-effort adornment on the SessionStart hot path; an
+    # escaping read error must never take down the whole snapshot (#68).
     try:
         settings = _load_settings(settings_path(project_dir))
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, OSError):
         return True
 
     return settings.get(SETTINGS_KEY, True) is not False
