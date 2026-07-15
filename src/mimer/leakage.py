@@ -71,8 +71,10 @@ def queue_consent_request(project_id: str, request: str, root: Path | None = Non
 
     A lockless ``O_APPEND`` write, like every other queue enqueue (ADR 0011). It
     stays lockless despite :func:`resolve_consent_request`'s locked clear only
-    because every enqueue runs under the caller's project lock — the boundary pass's
-    :func:`mimer.shortterm.rewrite_sections` — so a request appended concurrently
+    because every enqueue runs under the caller's project lock: the boundary pass
+    holds it across both its distillation channels — the durable-entry path inside
+    :func:`mimer.shortterm.rewrite_sections` and the model-fact loop in
+    :func:`mimer.boundary._promote_model_facts` — so a request appended concurrently
     cannot be lost in that clear's read-then-write window, exactly as the
     announcement queue's under-lock enqueue invariant holds (#40, #69). Any
     duplicate is collapsed at read time by :func:`pending_consent_requests`.
@@ -119,10 +121,12 @@ def resolve_consent_request(project_id: str, request: str, root: Path | None = N
 
     The re-read and rewrite run under the project lock so this read-modify-write
     cannot clobber a concurrent distiller's consent enqueue: that enqueue appends
-    while holding the same project lock (the boundary pass's
-    :func:`mimer.shortterm.rewrite_sections`), so it and this clear serialise — the
-    survivors written atomically, the file removed when none remain — exactly as the
-    announcement queue's locked clear does (ADR 0011, #40).
+    while holding the same project lock — the boundary pass holds it across both its
+    distillation channels, :func:`mimer.shortterm.rewrite_sections` for durable
+    entries and :func:`mimer.boundary._promote_model_facts` for the model-fact loop —
+    so it and this clear serialise, the survivors written atomically and the file
+    removed when none remain, exactly as the announcement queue's locked clear does
+    (ADR 0011, #40).
     """
 
     path = consent_queue_path(project_id, root)

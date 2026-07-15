@@ -33,11 +33,13 @@ that also takes a **locked clear**: :func:`mimer.distill._clear_announcements`
 re-reads it and rewrites the survivors with :func:`write_atomic` (or ``unlink``
 when none remain) under :func:`project_lock`. Its enqueues stay lockless
 ``O_APPEND`` only because every enqueue runs under the caller's project lock —
-the boundary pass's :func:`mimer.shortterm.rewrite_sections` — so a title
+the boundary pass holds it across both its distillation channels, the
+durable-entry path inside :func:`mimer.shortterm.rewrite_sections` and the
+model-fact loop in :func:`mimer.boundary._promote_model_facts` — so a title
 appended concurrently cannot be lost in the window between the clear's read and
-its write (the #40 lost update). A future writer
-that added a truly lockless enqueue would reopen that lost update, so the
-under-lock invariant is load-bearing, not incidental.
+its write (the #40 lost update). A future writer that added a truly lockless
+enqueue outside that lock would reopen that lost update, so the under-lock
+invariant is load-bearing, not incidental.
 
 The consent queue (``.consent-queue``, the leakage guard's per-project hold —
 :mod:`mimer.leakage`) is the other append-only per-project queue with a **locked
@@ -47,7 +49,9 @@ global (:func:`mimer.leakage.resolve_consent_request`, #69). Like the announceme
 clear, that clear re-reads under :func:`project_lock` and rewrites the survivors
 with :func:`write_atomic` (or ``unlink`` when none remain); its enqueues stay
 lockless ``O_APPEND`` only because every enqueue runs under the caller's project
-lock (the boundary pass's :func:`mimer.shortterm.rewrite_sections`), so a request
+lock (the boundary pass holds it across both distillation channels —
+:func:`mimer.shortterm.rewrite_sections` for durable entries and
+:func:`mimer.boundary._promote_model_facts` for the model-fact loop), so a request
 appended concurrently cannot be lost in the clear's read-then-write window — the
 same under-lock enqueue invariant the announcement queue depends on. Duplicates are
 collapsed at read time.

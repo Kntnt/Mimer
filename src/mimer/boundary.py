@@ -55,7 +55,7 @@ from mimer.shortterm import (
     evict_transient,
     rewrite_sections,
 )
-from mimer.storeio import write_atomic
+from mimer.storeio import project_lock, write_atomic
 from mimer.storewalk import daily_log_days
 from mimer.text import parse_bullets
 from mimer.transcript import Exchange, last_exchange
@@ -262,21 +262,33 @@ def _promote_model_facts(
     never depends on it (ADR 0021). A sensitive fact bound for global is held at
     project scope and its slug returned, so an attended run can resolve consent in
     the moment (ADR 0027).
+
+    The whole loop runs under the project lock. Unlike the durable-entry channel —
+    which distils from inside :func:`mimer.shortterm.rewrite_sections` and so already
+    holds the lock — this loop runs after :func:`_refresh_short_term` has released
+    it, yet each held fact's consent enqueue (and every announcement enqueue) is a
+    lockless ``O_APPEND`` that is safe only under the caller's project lock: it is
+    the under-lock invariant that lets :func:`mimer.leakage.resolve_consent_request`
+    and :func:`mimer.distill._clear_announcements` clear their queues without losing a
+    concurrently appended line (ADR 0011, #40, #69). Taking the lock here serialises
+    this loop's appends with those locked clears, closing the lost-update the model
+    path would otherwise reopen for the consent queue.
     """
 
     held: list[str] = []
-    for fact in facts:
-        grounded = citations is not None and is_grounded_in(fact, anchor_record)
-        result = distill_fact(
-            text=fact,
-            project_id=project_id,
-            root=root,
-            scope=scope,
-            citations=citations if grounded else None,
-            defer_consent=not attended,
-        )
-        if result.held and result.slug is not None:
-            held.append(result.slug)
+    with project_lock(project_id, root=root):
+        for fact in facts:
+            grounded = citations is not None and is_grounded_in(fact, anchor_record)
+            result = distill_fact(
+                text=fact,
+                project_id=project_id,
+                root=root,
+                scope=scope,
+                citations=citations if grounded else None,
+                defer_consent=not attended,
+            )
+            if result.held and result.slug is not None:
+                held.append(result.slug)
     return held
 
 

@@ -37,6 +37,7 @@ from mimer.pause import set_paused
 from mimer.registry import Registry
 from mimer.shortterm import SHORT_TERM_CAP, parse_short_term, read_short_term
 from mimer.store import ensure_store
+from mimer.storeio import write_atomic
 from tests.gitutil import init_repo
 from tests.harness import run_hook
 from tests.transcript_fixture import write_transcript
@@ -654,10 +655,9 @@ def test_model_distilled_consent_request_survives_a_concurrent_resolve(
     # clear proceeds the moment the append exists (the unlocked path) rather than on
     # a guessed delay; under the lock this stays unset for the whole window.
     enqueued = threading.Event()
-    real_queue = distill_module.queue_consent_request
 
     def spy_queue(project_id: str, request: str, root: Path | None = None) -> None:
-        real_queue(project_id, request, root)
+        queue_consent_request(project_id, request, root)
         enqueued.set()
 
     monkeypatch.setattr(distill_module, "queue_consent_request", spy_queue)
@@ -665,7 +665,6 @@ def test_model_distilled_consent_request_survives_a_concurrent_resolve(
     # Interpose the model-fact enqueue into the clear's read-then-write window: start
     # it, wait until it lands (unlocked) or blocks on the project lock this thread
     # holds (locked), then write the survivors.
-    real_write_atomic = leakage_module.write_atomic
     enqueue_thread: list[threading.Thread] = []
 
     def hooked_write_atomic(path: Path, content: str) -> None:
@@ -673,7 +672,7 @@ def test_model_distilled_consent_request_survives_a_concurrent_resolve(
         enqueue_thread.append(thread)
         thread.start()
         enqueued.wait(timeout=1.0)
-        real_write_atomic(path, content)
+        write_atomic(path, content)
 
     monkeypatch.setattr(leakage_module, "write_atomic", hooked_write_atomic)
 
