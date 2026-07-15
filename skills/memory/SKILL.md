@@ -84,6 +84,32 @@ If the user says a fact is "always" true about them or asks you to "always
 remember" it, tell them that is a profile/pinned write, which arrives with
 permanent memory — do not fake it here.
 
+### Sensitivity — what may go global
+
+Durable knowledge promotes to **global** scope by default, so it follows the user
+into their other projects. The **leakage guard** is the one check on that
+promotion: a fact it classifies as **sensitive** is held back at project scope
+and a consent request is queued, never promoted to global on judgment alone (ADR
+0027). Keep that classification deliberately **tight** — ask rarely,
+set-and-forget:
+
+- **Sensitive** — the fact carries an explicit confidentiality signal: the user
+  called it confidential, secret or "don't share this", or it is covered by an
+  NDA or a non-disclosure term. Hold it at project scope and let the consent flow
+  ask before it travels.
+- **Not sensitive** — a plain client identity on its own: a name, an email, a
+  phone number. A plain client identity is **not** sensitive, so it **may go
+  global** like any other client-neutral fact. Withhold it only when the user has
+  explicitly flagged that client, or this particular fact, as confidential.
+
+The axis is *is this confidential?*, not *is this about a client?* — a client's
+name or address travels unless it was explicitly marked confidential. Obvious
+secrets (keys, tokens, passwords) never reach this rule: the redaction pass
+strips them before storage, and a pasted credential is for `redact`, never
+memory. A whole project's knowledge can also be kept from ever leaving it with
+its **distill-to-global** switch (below); the leakage guard is the finer,
+per-fact net for the explicitly-confidential case.
+
 ### "forget about X" — delete or defer?
 
 "forget about X" is ambiguous, and the difference matters:
@@ -208,6 +234,24 @@ and act on the answer:
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage promote <slug>
 ```
 
+### Consenting to a fact held at session start
+
+The automatic boundary pass and the cap-overflow safety valve cannot resolve
+consent in the moment — nobody is present — so they queue it for the **next
+session start** instead. That session-start consent line lists the held facts by
+**only their titles**, not their slugs, but the "yes" still needs a slug. Resolve
+it before promoting: list the recently learned Concepts and read off the slug of
+the one the user names,
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage recent
+```
+
+or find it in the read-only browser (`mimer-browse`), then run the same
+`mimer-manage promote <slug>` "yes" shown above. A "no" needs no command: the
+fact stays project-scoped — the safe state — and the question simply re-poses at
+the next session start until it is answered.
+
 ## Confirming this directory's project identity
 
 Sometimes Mimer refuses to load or record and says **"this directory's project identity needs confirmation"** — you will see it in the SessionStart line, on a `remember`/`forget`, or on a recall. This is deliberate: a git remote would attach this directory to an *existing* project's memory, or the path and remote point at different projects, and Mimer will never bind a directory to memory it is not sure about. The refusal names the exact command and candidate id to run, for example `mimer-manage confirm secret-client`.
@@ -228,7 +272,7 @@ driven through `mimer-manage`; relay its one-line echo verbatim.
 ### Pausing capture for a sensitive session
 
 When the user says **"pause capture"** (or "don't record this", "stop recording
-for now") before a sensitive session, pause it: nothing is captured or digested
+for now") before a sensitive session, pause it: nothing is captured or distilled
 until they explicitly resume.
 
 ```bash
@@ -245,6 +289,30 @@ every SessionStart and shown by `mimer-manage health`, so a forgotten one is a
 visible notice, never a silent capture blackout. A deliberate "remember this"
 still writes while paused — pause governs automatic recording, not the user's own
 curated writes.
+
+### Replacing Claude Code's native auto memory
+
+Claude Code ships its own native auto memory, on by default. Mimer **replaces**
+it rather than running beside it: two memories remembering divergently is the
+mild problem; the real one is that a fact the user tells Mimer to forget or redact
+can still live on in the native store and be silently re-injected later,
+defeating Mimer's forgetting (ADR 0025). So while native auto memory is on, Mimer
+warns at the start of every session and points at the fix — you will see that
+warning in the SessionStart line.
+
+When the user asks to act on it — "turn off native memory", "disable it", "do
+what the warning says" — run the convenience command. It writes
+`"autoMemoryEnabled": false` into this project's `.claude/settings.json` and
+nothing else:
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage disable-native-memory
+```
+
+The switch is **project-scoped**: it touches neither the user's other projects
+nor Claude's separate chat and Cowork memory. Mimer never flips it silently —
+writing a user's config unbidden is invasive — so relay the warning and let the
+user decide; running the command is the "yes".
 
 ### Per-project settings (ADR 0013)
 
