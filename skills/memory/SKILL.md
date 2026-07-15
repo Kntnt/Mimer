@@ -77,7 +77,8 @@ below) and a fact you had forgotten and now re-remember (its tombstone stands).
 You pass no flag and file nothing by hand; the salience rule above is the only
 gate, so write only what is genuinely worth keeping and it is promoted for you.
 The transient working state (what is active, what is still undecided) is
-refreshed automatically by the session digest, not by this skill.
+refreshed automatically by the session-boundary distillation pass, not by this
+skill.
 
 If the user says a fact is "always" true about them or asks you to "always
 remember" it, tell them that is a profile/pinned write, which arrives with
@@ -167,7 +168,7 @@ relay what it returns:
 - **"What did you learn recently?"** → `mimer-manage recent` lists the most
   recently distilled Concepts.
 - **Store health / "how is memory doing?"** → `mimer-manage health` reports
-  sizes, counts, the last digest and distillation, and any recent failures.
+  sizes, counts, the last activity and distillation, and any recent failures.
 - **A correction** — "that's wrong", "forget that concept", "retract X" →
   `mimer-manage retract <slug>` removes the Concept and tombstones it, so it
   stops surfacing in recall and injection and is never re-distilled.
@@ -177,6 +178,34 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage profile
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage recent
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage health
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage retract <slug>
+```
+
+## Distilling on demand — "distill now"
+
+Distillation runs automatically at the session boundary, detached. When the user
+asks to publish this session's durable knowledge **now** — "distill now",
+"publish what we've learned", "make this available to my other sessions" —
+before the boundary, so a long or a parallel session need not wait, drive the
+on-demand verb:
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage distill-now
+```
+
+It promotes this session's durable knowledge into permanent memory immediately.
+Because the user is present, it resolves any sensitive-scope consent **in the
+moment** rather than deferring it to the next session start: a fact carrying a
+clear confidentiality signal is held at project scope and reported as awaiting
+your consent to go global, each named with its slug. Relay that, ask the user,
+and act on the answer:
+
+- **Yes, publish it** → `mimer-manage promote <slug>` widens the held Concept to
+  global scope, so it reaches your other projects.
+- **No, keep it here** → do nothing; it stays project-scoped, the safe state,
+  and is never silently promoted.
+
+```bash
+uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage promote <slug>
 ```
 
 ## Confirming this directory's project identity
@@ -207,8 +236,8 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage pause
 uv run --project "${CLAUDE_PLUGIN_ROOT}" mimer-manage resume
 ```
 
-The pause covers the whole throwaway case: automatic capture, the session
-digest, git folding and distillation all stand down while it is in effect. It is
+The pause covers the whole throwaway case: automatic capture and the
+session-boundary distillation pass both stand down while it is in effect. It is
 store-wide and deliberately sticky: a session ending does not lift it (that would
 let an unrelated concurrent session clear a pause it never asked for), so it
 stays until an explicit **"resume capture"**. A standing pause is announced on

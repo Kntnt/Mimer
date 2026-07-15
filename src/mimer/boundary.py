@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -79,10 +79,18 @@ _RECOVERY_WINDOW_DAYS = 7
 
 @dataclass(frozen=True)
 class BoundaryResult:
-    """The outcome of a session-boundary pass attempt."""
+    """The outcome of a session-boundary pass attempt.
+
+    ``held`` lists the slugs of the sensitive facts this pass held at project scope
+    through the leakage guard (ADR 0027). Under an attended "distill now" run these
+    were not queued for a next-session consent ask, so the caller surfaces them for
+    in-the-moment resolution; on the unattended pass their consent is queued instead
+    and ``held`` is simply an informational record of what was held.
+    """
 
     status: str
     archive_path: Path | None = None
+    held: list[str] = field(default_factory=list)
 
 
 def run_boundary_pass(
@@ -91,6 +99,8 @@ def run_boundary_pass(
     root: Path | None = None,
     haiku: Haiku | None = None,
     today: date | None = None,
+    scope: str = "project",
+    attended: bool = False,
 ) -> BoundaryResult:
     """Run the session-boundary pass for a SessionEnd payload. Never raises.
 
@@ -101,6 +111,16 @@ def run_boundary_pass(
     promotes the named durable facts into Concepts, over the recent record window
     so a crash-orphaned earlier day is recovered. A failure is written to the
     failure log; nothing is raised to the session.
+
+    ``scope`` and ``attended`` distinguish the manual "distill now" verb from the
+    automatic pass (ADRs 0023, 0027). The automatic pass keeps the defaults —
+    project scope, unattended — so a sensitive fact held for global promotion has
+    its consent queued for the next session start. "distill now" runs it with
+    ``scope="global"`` and ``attended=True``: durable knowledge is published on
+    demand and a held sensitive fact is returned in ``held`` for in-the-moment
+    resolution rather than queued for a session that may never come. Either way the
+    project's distill-to-global switch still governs whether global scope is honoured
+    (ADR 0013).
     """
 
     root = root or store_root()
@@ -140,8 +160,12 @@ def run_boundary_pass(
         # The deterministic "remember this" guarantee: promote durable short-term
         # entries into Concepts. This runs first and independently of the model, so
         # an explicit remember still becomes a Concept even when the pass defers
-        # (ADR 0023).
-        distill_durable_entries(project_id, root=root, today=day)
+        # (ADR 0023). Collect any held sensitive slug so an attended run can surface
+        # it for in-the-moment consent even when the model path later defers.
+        durable_results = distill_durable_entries(
+            project_id, root=root, today=day, scope=scope, attended=attended
+        )
+        held = [r.slug for r in durable_results if r.held and r.slug is not None]
 
         # Archive the redacted transcript as provenance (ADR 0020). Kept out of the
         # model path so it happens whether or not Haiku is reachable, and skipped
@@ -156,14 +180,14 @@ def run_boundary_pass(
         window = _recovery_window(project_id, day, root)
         raw_record = _read_raw_record(project_id, window, root)
         if not raw_record.strip():
-            return BoundaryResult("nothing", archive_path)
+            return BoundaryResult("nothing", archive_path, held=held)
 
         # The one model call, on the redacted raw record. A None reply means
         # headless Claude is unavailable — defer, leaving the extractive record.
         reply = call_haiku(_build_prompt(redact(raw_record)))
         if reply is None:
             log_failure("session-boundary pass deferred: headless Claude unavailable", root=root)
-            return BoundaryResult("deferred", archive_path)
+            return BoundaryResult("deferred", archive_path, held=held)
 
         active, pending, facts = _parse_reply(reply)
 
@@ -197,17 +221,21 @@ def run_boundary_pass(
         )
         for fact in facts:
             grounded = citations is not None and is_grounded_in(fact, anchor_record)
-            distill_fact(
+            result = distill_fact(
                 text=fact,
                 project_id=project_id,
                 root=root,
+                scope=scope,
                 citations=citations if grounded else None,
+                defer_consent=not attended,
             )
+            if result.held and result.slug is not None:
+                held.append(result.slug)
 
         # Keep the derived index in step with any daily-log appends (aged-out or
         # rejected blocks) and the new Concepts, when an index exists (ADR 0011).
         index_if_present(project_id, day.isoformat(), root)
-        return BoundaryResult("completed", archive_path)
+        return BoundaryResult("completed", archive_path, held=held)
 
     except Exception as exc:  # noqa: BLE001 - the pass must never crash the session
         # Log the exception type, never its repr: the repr can quote the raw record

@@ -122,7 +122,7 @@ Mimer is a Claude Code plugin. It needs [uv](https://docs.astral.sh/uv/) (which 
    This creates the `~/.mimer/` store (owner-only), verifies the interpreter can load SQLite extensions — failing loudly with an actionable message if it cannot — and pre-fetches the local embedding model so no session ever stalls on a download.
 3. **Start working.** Open a session in any project; Mimer injects the snapshot at the start and records as you go. If the failure log has recent entries, the snapshot carries a one-line health notice so problems are visible, never silent.
 
-Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`, `confirm`, `pause`/`resume`, `settings`, `disable-native-memory`), and read the whole store without a session with the read-only browser `mimer-browse`.
+Inspect and correct what Mimer knows with `mimer-manage` (`profile`, `recent`, `health`, `retract`, `confirm`, `pause`/`resume`, `settings`, `disable-native-memory`, `distill-now`, `promote`), and read the whole store without a session with the read-only browser `mimer-browse`.
 
 ### Turn off Claude Code's native auto memory
 
@@ -146,7 +146,7 @@ Most of the time you drive Mimer by talking to the agent, not by typing commands
 | `mimer-memory` | The curated-write engine behind "remember", "note that", "forget about" and "redact"; forget is the soft tier (remove and tombstone), redact the hard tier (also erase the fact from the raw logs and transcripts, then reindex). The memory skill calls it and echoes back the one-line result. |
 | `mimer-recall` | Semantic, cited search over memory — project-scoped by default, `--widen` to reach other projects; the skill calls it for questions about past work. |
 | `mimer-browse` | Read-only browser over the whole store: search with the same index recall uses, page the hit list, and read a hit with its source and date. It never writes, and it does not filter by scope — so it is also where you audit, with your own eyes, what has become global. |
-| `mimer-manage` | Inspect, correct and control memory: `profile`, `recent`, `health`, `retract <slug>`, `confirm <candidate-id>` (link this directory to a project when its identity needs confirmation), `pause`/`resume` (stop and restart automatic capture, store-wide and sticky until resumed), `settings` (show or toggle a project's `capture`, `distill-to-global` and `widening` switches), and `disable-native-memory` (set `autoMemoryEnabled: false` for this project). |
+| `mimer-manage` | Inspect, correct and control memory: `profile`, `recent`, `health`, `retract <slug>`, `confirm <candidate-id>` (link this directory to a project when its identity needs confirmation), `pause`/`resume` (stop and restart automatic capture, store-wide and sticky until resumed), `settings` (show or toggle a project's `capture`, `distill-to-global` and `widening` switches), `disable-native-memory` (set `autoMemoryEnabled: false` for this project), `distill-now` (distil this session's durable knowledge on demand, resolving any sensitive-scope consent in the moment), and `promote <slug>` (widen a held Concept to global scope — the consent "yes"). |
 | `mimer-reindex` | Rebuild the derived search index from memory; the index is reproducible, so running this is safe whenever it drifts. |
 | `mimer-uninstall` | Leaves your `~/.mimer/` store in place and writes a pointer note explaining how to resume or fully remove it. |
 

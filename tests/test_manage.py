@@ -12,7 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from mimer.bundle import Source, create_concept, list_concepts, read_concept, retract_concept, visible_concepts
+from mimer.bundle import (
+    Source,
+    create_concept,
+    list_concepts,
+    read_concept,
+    retract_concept,
+    visible_concepts,
+)
 from mimer.curate import remember
 from mimer.failure_log import log_failure
 from mimer.framing import DATA_FRAME_HEADER

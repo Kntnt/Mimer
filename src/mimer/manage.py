@@ -15,7 +15,15 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-from mimer.bundle import Concept, list_concepts, profile_concepts, retract_concept, visible_concepts
+from mimer.bundle import (
+    Concept,
+    list_concepts,
+    profile_concepts,
+    promote_to_global,
+    read_concept,
+    retract_concept,
+    visible_concepts,
+)
 from mimer.framing import frame, neutralise
 from mimer.native_memory import disable_native_memory
 from mimer.paths import LOG_FILENAME, store_root
@@ -254,6 +262,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "disable-native-memory", help="set autoMemoryEnabled: false for this project"
     )
+    subparsers.add_parser("distill-now", help="distil this session's durable knowledge on demand")
+    promote = subparsers.add_parser(
+        "promote", help="promote a held Concept to global scope by slug"
+    )
+    promote.add_argument("slug")
     settings = subparsers.add_parser("settings", help="show or change per-project settings")
     settings.add_argument("name", nargs="?", choices=SETTING_NAMES, help="the setting to change")
     settings.add_argument("value", nargs="?", choices=("on", "off"), help="on or off")
@@ -303,6 +316,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Mimer: capture resumed.")
     elif args.command == "disable-native-memory":
         return _run_disable_native_memory()
+    elif args.command == "distill-now":
+        return _run_distill_now(root)
+    elif args.command == "promote":
+        return _run_promote(args.slug, root)
     else:
         return _run_settings(args.name, args.value, root)
     return 0
@@ -350,6 +367,91 @@ def _run_disable_native_memory(cwd: Path | None = None) -> int:
         f'Mimer: native auto memory disabled for "{project_root}" — '
         "autoMemoryEnabled is now false; the session-start warning stops here."
     )
+    return 0
+
+
+# The one-line outcome per boundary-pass status for the on-demand verb. The
+# durable "remember this" promotion always runs first, model-independent (ADR 0023),
+# so every non-error line says durable knowledge was distilled even when the model
+# call itself found nothing new or deferred; the guard states name their own reason.
+_DISTILL_NOW_OUTCOMES = {
+    "completed": (
+        "Mimer: distilled this session's durable knowledge on demand — short-term "
+        "memory refreshed and durable facts promoted."
+    ),
+    "deferred": (
+        "Mimer: distilled this session's durable entries on demand; the model pass "
+        "deferred (headless Claude unavailable)."
+    ),
+    "nothing": (
+        "Mimer: distilled this session's durable entries on demand; no additional "
+        "raw-record facts to distil."
+    ),
+    "paused": "Mimer: capture is paused store-wide — nothing was distilled.",
+    "capture-disabled": "Mimer: capture is off for this project — nothing was distilled.",
+    "skipped-identity": (
+        "Mimer: this directory's project identity needs confirmation — nothing was distilled."
+    ),
+    "failed": "Mimer: the on-demand distillation failed; see the failure log.",
+}
+
+
+def _run_distill_now(root: Path, cwd: Path | None = None) -> int:
+    """Run the session-boundary distillation on demand (ADRs 0023, 0027).
+
+    The manual counterpart to the automatic session-end pass: it publishes this
+    session's durable knowledge to permanent memory immediately — so a long or
+    parallel session need not wait for the boundary — and, because the user is
+    present, resolves any sensitive-scope consent in the moment. It runs the pass
+    with ``scope="global"`` (honouring the project's distill-to-global switch) and
+    ``attended=True``, so a sensitive fact the leakage guard holds at project scope
+    is surfaced here for an immediate promote-or-hold decision rather than queued for
+    a next session start that may never come. The imported-here boundary entry point
+    keeps the heavier index/model dependency graph off every other manage command.
+    """
+
+    from mimer.boundary import run_boundary_pass
+
+    # Run the same pass the session boundary runs, but attended and global-bound, so
+    # durable knowledge is published now and any held sensitive fact is returned for
+    # in-the-moment resolution rather than deferred (ADR 0027).
+    cwd = cwd or Path.cwd()
+    result = run_boundary_pass({"cwd": str(cwd)}, root=root, scope="global", attended=True)
+    print(_DISTILL_NOW_OUTCOMES.get(result.status, _DISTILL_NOW_OUTCOMES["failed"]))
+
+    # Surface the held sensitive facts as the in-the-moment consent ask: you are
+    # present, so decide now. The Concept titles are untrusted memory, so they are
+    # neutralised and framed as inert data (ADR 0014); each slug is a path-safe
+    # identifier and names the promote command that carries out a "yes".
+    if result.held:
+        concepts = [read_concept(slug, root) for slug in result.held]
+        print(
+            f"Mimer: {len(concepts)} sensitive fact(s) held at project scope, awaiting "
+            "your consent to go global. You are present — decide now: run "
+            '"mimer-manage promote <slug>" to publish one, or leave it project-scoped.'
+        )
+        listing = "\n".join(f"[{concept.slug}] {concept.title}" for concept in concepts)
+        print(frame(neutralise(listing)))
+
+    return 0
+
+
+def _run_promote(slug: str, root: Path) -> int:
+    """Promote a held Concept to global scope: the consent "yes" (ADR 0027).
+
+    An unknown slug is rejected deep in ``read_concept`` (``OSError``) and a
+    traversal-shaped one in ``safe_identifier`` (``ValueError``); both become a
+    one-line rejection with a non-zero exit rather than a leaked traceback for user
+    input, mirroring ``retract`` and ``confirm`` (#25).
+    """
+
+    try:
+        concept = promote_to_global(slug, root)
+    except (ValueError, OSError) as exc:
+        print(f"Mimer: {exc}")
+        return 1
+
+    print(f'Mimer: promoted "{concept.title}" to global scope — it now reaches other projects.')
     return 0
 
 

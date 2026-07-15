@@ -592,7 +592,7 @@ def test_global_scope_unattended_pass_defers_consent(
         scope="global",
     )
 
-    assert pending_consent_requests(pid, store_root), "unattended global promotion must defer consent"
+    assert pending_consent_requests(pid, store_root), "unattended promotion must defer consent"
 
 
 def test_session_end_hook_runs_the_boundary_pass_detached(

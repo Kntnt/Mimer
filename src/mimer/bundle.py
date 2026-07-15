@@ -427,6 +427,31 @@ def retract_concept(slug: str, root: Path | None = None) -> Concept:
     return concept
 
 
+def promote_to_global(slug: str, root: Path | None = None) -> Concept:
+    """Widen a held, project-scoped Concept to global scope: the consent "yes".
+
+    The inverse of the leakage guard's hold (ADR 0027). The guard keeps a sensitive
+    fact project-scoped until the user consents to it going global; this is the
+    sanctioned mutation that carries out that consent, so the Concept thereafter
+    reaches other projects' recall. It is a deliberate, user-driven scope change,
+    never automatic — the "distill now" verb (ADR 0023) offers it in the moment, and
+    the memory skill drives it on the user's explicit yes.
+
+    The search index is rebuilt from the files, so the widened scope takes effect in
+    recall's scope filter immediately (an index that keyed the old project scope
+    would otherwise still hide it from other projects).
+    """
+
+    with named_lock("bundle", root=root):
+        concept = read_concept(slug, root)
+        concept.scope = "global"
+        _write(concept, root)
+        regenerate_index(root)
+
+    _reindex_if_present(root)
+    return read_concept(slug, root)
+
+
 def mark_superseded(slug: str, superseded_by: str, root: Path | None = None) -> None:
     """Mark a Concept superseded by another; recall then drops it (ADR 0015).
 

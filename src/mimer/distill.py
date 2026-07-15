@@ -116,6 +116,7 @@ def distill_fact(
     root: Path | None = None,
     scope: str = "project",
     citations: list[Source] | None = None,
+    defer_consent: bool = True,
 ) -> DistillResult:
     """Distil one fact into permanent memory: create, extend, supersede or reject.
 
@@ -127,12 +128,18 @@ def distill_fact(
     direct-creation path.
 
     The leakage guard (ADR 0027) sits on promotion to global: a fact the judgment
-    rules classify as sensitive is held at project scope and a consent request is
-    queued for the next session start, rather than promoted — so the safe state is
-    the waiting state and the held Concept, project-scoped like any other, never
-    travels to another project. The gate is on this promotion channel only; the raw
-    long-term log the fact was captured into is a separate widenable channel
-    (ADR 0013, ADR 0027).
+    rules classify as sensitive is held at project scope, rather than promoted — so
+    the safe state is the waiting state and the held Concept, project-scoped like
+    any other, never travels to another project. The gate is on this promotion
+    channel only; the raw long-term log the fact was captured into is a separate
+    widenable channel (ADR 0013, ADR 0027).
+
+    ``defer_consent`` decides where a held fact's consent is resolved. Left on
+    (the unattended session-boundary pass), the consent request is queued for the
+    next session start, because no one is present to answer it. Turned off (the
+    manual "distill now" verb, ADR 0023), it is not queued: the user is present, so
+    the caller surfaces the held fact — flagged by ``held`` — and resolves it in the
+    moment rather than deferring it to a session that may never come.
     """
 
     root = root or store_root()
@@ -183,9 +190,11 @@ def distill_fact(
         root=root,
     )
 
-    # A held fact is now stored project-scoped; queue its consent request so the
-    # user is asked, at the next session start, before it may ever go global.
-    if held:
+    # A held fact is now stored project-scoped. Queue its consent request for the
+    # next session start only when deferring: the unattended pass has no one to ask,
+    # so the question waits. Under "distill now" the user is present, so the caller
+    # resolves the held fact (flagged below) in the moment and nothing is queued.
+    if held and defer_consent:
         queue_consent_request(project_id, concept.title, root)
 
     status = "superseded" if predecessor is not None else "created"
@@ -194,7 +203,12 @@ def distill_fact(
 
 
 def distill_durable_entries(
-    project_id: str, root: Path | None = None, *, scope: str = "project", today: date | None = None
+    project_id: str,
+    root: Path | None = None,
+    *,
+    scope: str = "project",
+    today: date | None = None,
+    attended: bool = False,
 ) -> list[DistillResult]:
     """Promote durable short-term entries, evicting each only once its Concept is
     verified on disk; a failed promotion leaves the entry and is logged.
@@ -204,6 +218,11 @@ def distill_durable_entries(
     aged out verbatim to today's daily log rather than stranded in short-term to
     be re-rejected on every session end (the cap never evicts a durable entry
     either). Only a transient failure keeps the entry, for a later retry.
+
+    ``attended`` propagates the "distill now" user-present signal to the leakage
+    guard: when set, a held sensitive entry queues no next-session consent request,
+    leaving its resolution to the present caller (ADRs 0023, 0027). The returned
+    results carry each held entry's flag and slug, so that caller can surface it.
     """
 
     root = root or store_root()
@@ -222,7 +241,7 @@ def distill_durable_entries(
                 if not entry.durable:
                     kept.append(entry)
                     continue
-                result = _promote(entry.text, project_id, scope, root)
+                result = _promote(entry.text, project_id, scope, root, defer_consent=not attended)
                 results.append(result)
                 # Promoted entries are gone (their Concept is on disk); permanently
                 # rejected ones are aged out below; a transient failure is retried.
@@ -259,11 +278,20 @@ def _rejected_block(rejected: list[Entry], today: date) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _promote(text: str, project_id: str, scope: str, root: Path) -> DistillResult:
-    """Distil one durable entry, absorbing any failure so eviction is safe."""
+def _promote(
+    text: str, project_id: str, scope: str, root: Path, *, defer_consent: bool = True
+) -> DistillResult:
+    """Distil one durable entry, absorbing any failure so eviction is safe.
+
+    ``defer_consent`` is threaded straight to :func:`distill_fact`, so a "distill
+    now" run (user present) holds a sensitive entry without queuing a next-session
+    consent request (ADR 0027).
+    """
 
     try:
-        return distill_fact(text=text, project_id=project_id, scope=scope, root=root)
+        return distill_fact(
+            text=text, project_id=project_id, scope=scope, root=root, defer_consent=defer_consent
+        )
     except Exception as exc:  # noqa: BLE001 - a failed promotion must not lose the entry
         # Log the failure by a stable fact identifier and the exception type, never
         # the content: the log is surfaced by `mimer-manage health`, and an exception
