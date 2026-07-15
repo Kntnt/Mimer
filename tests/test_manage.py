@@ -6,15 +6,18 @@ retraction (ADRs 0012, 0013).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from mimer.bundle import Source, create_concept, retract_concept
+from mimer.bundle import Source, create_concept, list_concepts, read_concept, retract_concept, visible_concepts
+from mimer.curate import remember
 from mimer.failure_log import log_failure
 from mimer.framing import DATA_FRAME_HEADER
 from mimer.index import reindex, search
+from mimer.leakage import pending_consent_requests
 from mimer.longterm import append_entry
 from mimer.manage import _print_concepts, main, profile, recent_concepts, store_health
 from mimer.paths import LOG_FILENAME
@@ -461,6 +464,110 @@ def test_disable_native_memory_cli_rejects_unreadable_settings(
     exit_code = main(["disable-native-memory"])
 
     assert exit_code == 1
+    out = capsys.readouterr().out
+    assert out.startswith("Mimer:")
+    assert "Traceback" not in out
+
+
+def test_distill_now_cli_promotes_durable_knowledge_immediately(
+    project_dir: Path,
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``mimer-manage distill-now`` runs the session-boundary distillation on demand,
+    so a durable "remember this" entry becomes a permanent Concept immediately —
+    without waiting for the session boundary, so a long or parallel session can
+    publish its findings to other sessions (ADR 0023, #69)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember("The deployment target is production-west", project_id=pid, root=store_root)
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setattr("mimer.llm.run_haiku", lambda *args, **kwargs: None)
+
+    exit_code = main(["distill-now"])
+
+    assert exit_code == 0
+    assert any("production-west" in concept.body for concept in list_concepts(store_root))
+    assert "distill" in capsys.readouterr().out.lower()
+
+
+def test_distill_now_cli_resolves_sensitive_consent_in_the_moment_not_deferred(
+    project_dir: Path,
+    store_root: Path,
+    resolve_project: Callable[[Path], str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one failure "distill now" must avoid: a sensitive fact's consent is
+    resolved IN THE MOMENT — surfaced now, while the user is present — never queued
+    for the next session start. The held Concept stays project-scoped and the
+    consent queue is left empty, so nothing is silently deferred (ADRs 0023, 0027,
+    #69)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember("The merger terms are strictly confidential", project_id=pid, root=store_root)
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setattr("mimer.llm.run_haiku", lambda *args, **kwargs: None)
+
+    exit_code = main(["distill-now"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "consent" in out.lower()
+    assert "merger" in out.lower()
+    assert pending_consent_requests(pid, store_root) == []
+    held = [concept for concept in list_concepts(store_root) if "merger" in concept.body.lower()]
+    assert held and all(concept.scope == "project" for concept in held)
+
+
+def test_promote_cli_widens_a_held_concept_to_global(
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``mimer-manage promote <slug>`` is the consent "yes": it widens a held,
+    project-scoped Concept to global scope so it reaches other projects — the
+    in-the-moment resolution of a sensitive-scope consent (ADR 0027, #69)."""
+
+    ensure_store(store_root)
+    concept = create_concept(
+        title="Pricing model",
+        body="The pricing model is confidential to the client.",
+        concept_type="Fact",
+        origin="p",
+        scope="project",
+        root=store_root,
+    )
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+
+    exit_code = main(["promote", concept.slug])
+
+    assert exit_code == 0
+    assert read_concept(concept.slug, store_root).scope == "global"
+    assert any(c.slug == concept.slug for c in visible_concepts(store_root, project_id="other"))
+    assert "global" in capsys.readouterr().out.lower()
+
+
+def test_promote_cli_rejects_traversal_slug_with_clean_message(
+    store_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A traversal-shaped slug is answered with a one-line rejection and a non-zero
+    exit, never a raw traceback — mirroring ``retract`` and ``confirm`` (#25, #69)."""
+
+    monkeypatch.setenv("MIMER_HOME", str(store_root))
+    ensure_store(store_root)
+
+    exit_code = main(["promote", "../evil"])
+
+    assert exit_code != 0
     out = capsys.readouterr().out
     assert out.startswith("Mimer:")
     assert "Traceback" not in out

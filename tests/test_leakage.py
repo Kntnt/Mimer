@@ -20,7 +20,8 @@ import pytest
 import mimer.distill as distill_module
 from mimer.bundle import list_concepts, read_concept
 from mimer.capture import capture_from_payload
-from mimer.distill import distill_fact
+from mimer.curate import remember
+from mimer.distill import distill_durable_entries, distill_fact
 from mimer.index import reindex, search
 from mimer.leakage import is_sensitive, pending_consent_requests, queue_consent_request
 from mimer.recall import recall
@@ -101,6 +102,49 @@ def test_held_fact_queues_a_consent_request(store_root: Path) -> None:
 
     requests = pending_consent_requests("p", store_root)
     assert any("merger" in request.lower() for request in requests)
+
+
+def test_distill_fact_attended_holds_sensitive_without_deferring_consent(store_root: Path) -> None:
+    """With the user present ("distill now"), consent is resolved in the moment: with
+    deferral off, distill_fact still holds a sensitive fact at project scope but
+    queues NO consent request for the next session start (ADRs 0023, 0027, #69).
+
+    This is the seam that keeps "distill now" from the one failure it must avoid —
+    silently deferring a sensitive consent to the next session instead of resolving
+    it while the user is there to answer."""
+
+    ensure_store(store_root)
+    result = distill_fact(
+        text="The merger discussion is strictly confidential.",
+        project_id="p",
+        scope="global",
+        root=store_root,
+        defer_consent=False,
+    )
+
+    assert result.held is True
+    assert result.slug is not None
+    assert read_concept(result.slug, store_root).scope == "project"
+    assert pending_consent_requests("p", store_root) == []
+
+
+def test_distill_durable_entries_attended_holds_without_deferring_consent(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """A durable "remember this" entry that is sensitive, distilled on demand with
+    the user present, is held at project scope but NOT queued for a next-session
+    consent ask — the in-the-moment resolution "distill now" relies on (#69)."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    remember("The client's pricing model is confidential.", project_id=pid, root=store_root)
+
+    results = distill_durable_entries(pid, root=store_root, scope="global", attended=True)
+
+    held = [result for result in results if result.held]
+    assert held and held[0].slug is not None
+    assert read_concept(held[0].slug, store_root).scope == "project"
+    assert pending_consent_requests(pid, store_root) == []
 
 
 def test_non_sensitive_fact_bound_for_global_is_promoted_and_announced(store_root: Path) -> None:
