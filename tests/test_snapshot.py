@@ -48,6 +48,44 @@ def test_build_snapshot_frames_announces_and_labels() -> None:
     assert "(21 days ago)" in snapshot
 
 
+def test_build_snapshot_renders_the_native_memory_warning() -> None:
+    """A native-memory warning is surfaced in the snapshot preamble, inside the
+    data frame like every other notice (ADR 0025, #68)."""
+
+    warning = (
+        "⚠ Mimer: Claude Code's native auto memory is ON for this project — run "
+        '"mimer-manage disable-native-memory" to switch it off.'
+    )
+
+    snapshot = build_snapshot(
+        "proj", "## Notes\n", today=TODAY, source="startup", native_warning=warning
+    )
+
+    assert DATA_FRAME_HEADER in snapshot
+    assert warning in snapshot
+
+
+def test_build_snapshot_native_warning_coexists_with_distilled_and_consent() -> None:
+    """The native-memory warning fires alongside the distilled-Concept announcement
+    and the pending consent question — none of the three displaces another (#68 AC3)."""
+
+    warning = "⚠ native auto memory is ON — mimer-manage disable-native-memory"
+
+    snapshot = build_snapshot(
+        "proj",
+        "## Notes\n",
+        today=TODAY,
+        source="startup",
+        native_warning=warning,
+        distilled=["The team prefers DI"],
+        consent=["The pricing is confidential"],
+    )
+
+    assert warning in snapshot
+    assert "The team prefers DI" in snapshot
+    assert "The pricing is confidential" in snapshot
+
+
 def test_build_snapshot_empty_is_well_formed() -> None:
     """An empty short-term memory yields a well-formed 'nothing yet' snapshot."""
 
