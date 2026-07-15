@@ -16,8 +16,11 @@ import pytest
 
 from mimer.bundle import list_concepts
 from mimer.curate import remember
+from mimer.leakage import pending_consent_requests
 from mimer.longterm import daily_log_path
+from mimer.registry import Registry
 from mimer.shortterm import parse_short_term, read_short_term
+from mimer.store import ensure_store
 
 
 def _total(store_root: Path, pid: str) -> int:
@@ -100,6 +103,99 @@ def test_over_cap_durables_are_promoted_to_permanent(
     assert result.warning is None
     assert not result.aged_out
     assert len(result.promoted) == 4
+
+
+def test_cap_overflow_promotes_non_sensitive_durable_to_global_scope(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """A cap-overflow that promotes a non-sensitive durable "remember this" entry
+    lands a GLOBAL-scoped Concept, so the fact travels across the practitioner's
+    projects — the same global-gated path the session boundary and "distill now"
+    take (ADRs 0013, 0017, 0027). The cap-overflow safety valve must not disagree
+    with its sibling promotion paths by minting a project-scoped Concept that could
+    never travel cross-project."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+
+    # The project's distill-to-global switch must be on for global scope to be
+    # honoured (ADR 0013). It is the default; set here so the test's intent is
+    # explicit and independent of that default.
+    registry = Registry.load(store_root)
+    registry.set_distill_to_global(pid, enabled=True)
+    registry.save()
+
+    # Two durable entries at cap=1: the second write pushes short-term over the cap
+    # and drives the promotion of both.
+    remember(
+        "the client prefers British English spelling",
+        project_id=pid,
+        root=store_root,
+        cap=1,
+        durable=True,
+        today=date(2026, 7, 1),
+    )
+    result = remember(
+        "deployments run on Tuesday afternoons",
+        project_id=pid,
+        root=store_root,
+        cap=1,
+        durable=True,
+        today=date(2026, 7, 2),
+    )
+
+    # The over-cap write promoted the durable entries, and every resulting Concept
+    # is global-scoped — not the project scope the unscoped call would have minted.
+    assert result.promoted
+    concepts = list_concepts(store_root)
+    assert concepts
+    assert all(concept.scope == "global" for concept in concepts)
+
+
+def test_cap_overflow_holds_sensitive_durable_at_project_scope_with_consent_queued(
+    store_root: Path, resolve_project: Callable[[Path], str], project_dir: Path
+) -> None:
+    """A cap-overflow that promotes a SENSITIVE durable entry holds it at project
+    scope and queues a consent request for the next session start — it never leaks
+    to global (ADR 0027). The cap-overflow path is unattended (it fires during
+    capture, no user present), so a sensitive cap-evicted fact routes through the
+    SAME global-gated leakage guard the automatic boundary pass uses: held, not
+    leaked, with the consent deferred to session start."""
+
+    ensure_store(store_root)
+    pid = resolve_project(project_dir)
+    registry = Registry.load(store_root)
+    registry.set_distill_to_global(pid, enabled=True)
+    registry.save()
+
+    # A benign filler plus a clearly-confidential fact at cap=1: the second write
+    # goes over the cap and drives promotion of both.
+    remember(
+        "the API rate limit is one hundred requests per minute",
+        project_id=pid,
+        root=store_root,
+        cap=1,
+        durable=True,
+        today=date(2026, 7, 1),
+    )
+    remember(
+        "This pricing arrangement is confidential.",
+        project_id=pid,
+        root=store_root,
+        cap=1,
+        durable=True,
+        today=date(2026, 7, 2),
+    )
+
+    # The sensitive fact is held at project scope, never promoted to global...
+    concepts = list_concepts(store_root)
+    confidential = next(concept for concept in concepts if "confidential" in concept.body.lower())
+    assert confidential.scope == "project"
+
+    # ...and its consent request is queued for the next session start, the
+    # unattended-path deferral the automatic boundary pass also performs.
+    requests = pending_consent_requests(pid, store_root)
+    assert any("confidential" in request.lower() for request in requests)
 
 
 def test_over_cap_write_promotes_durables_before_evicting(
