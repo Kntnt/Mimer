@@ -11,6 +11,7 @@ and control layer the memory skill drives.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -220,10 +221,15 @@ def _recent_failures(root: Path) -> list[str]:
     return [redact(line) for line in lines[-_RECENT_FAILURES:]]
 
 
-def main(argv: list[str] | None = None) -> int:
-    """``mimer-manage`` entry point: inspect and correct permanent memory."""
+def build_parser() -> argparse.ArgumentParser:
+    """Construct ``mimer-manage``'s argument parser, with one subparser per command.
 
-    import argparse
+    Exposed as its own seam, not built inline in :func:`main`, so the exact set of
+    subcommands the CLI accepts is introspectable: the doc-truthfulness sweep asserts
+    the README advertises only subcommands that really exist here, closing the hole
+    that let a docs pointer to a non-existent subcommand ship green (integration
+    finding, #68/#69).
+    """
 
     parser = argparse.ArgumentParser(
         prog="mimer-manage", description="Inspect, correct and control Mimer's memory."
@@ -243,7 +249,13 @@ def main(argv: list[str] | None = None) -> int:
     settings = subparsers.add_parser("settings", help="show or change per-project settings")
     settings.add_argument("name", nargs="?", choices=SETTING_NAMES, help="the setting to change")
     settings.add_argument("value", nargs="?", choices=("on", "off"), help="on or off")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``mimer-manage`` entry point: inspect and correct permanent memory."""
+
+    args = build_parser().parse_args(argv)
 
     root = store_root()
     if args.command == "profile":
