@@ -219,18 +219,17 @@ def run_boundary_pass(
             if citations is not None and day.isoformat() in window
             else ""
         )
-        for fact in facts:
-            grounded = citations is not None and is_grounded_in(fact, anchor_record)
-            result = distill_fact(
-                text=fact,
+        held.extend(
+            _promote_model_facts(
+                facts,
                 project_id=project_id,
                 root=root,
                 scope=scope,
-                citations=citations if grounded else None,
-                defer_consent=not attended,
+                attended=attended,
+                citations=citations,
+                anchor_record=anchor_record,
             )
-            if result.held and result.slug is not None:
-                held.append(result.slug)
+        )
 
         # Keep the derived index in step with any daily-log appends (aged-out or
         # rejected blocks) and the new Concepts, when an index exists (ADR 0011).
@@ -243,6 +242,42 @@ def run_boundary_pass(
         # memory prose or PII from the health-surfaced log (#24).
         log_failure(f"session-boundary pass: {type(exc).__name__}", root=root)
         return BoundaryResult("failed")
+
+
+def _promote_model_facts(
+    facts: list[str],
+    *,
+    project_id: str,
+    root: Path,
+    scope: str,
+    attended: bool,
+    citations: list[Source] | None,
+    anchor_record: str,
+) -> list[str]:
+    """Promote the model's durable facts into Concepts, returning the held slugs.
+
+    Each fact is grounded against the anchor day's own record so only the session's
+    own fact carries the pass's commit citation, never a fact folded in from a
+    crash-orphaned earlier day (#66 vs #63); the git anchor is additive and recall
+    never depends on it (ADR 0021). A sensitive fact bound for global is held at
+    project scope and its slug returned, so an attended run can resolve consent in
+    the moment (ADR 0027).
+    """
+
+    held: list[str] = []
+    for fact in facts:
+        grounded = citations is not None and is_grounded_in(fact, anchor_record)
+        result = distill_fact(
+            text=fact,
+            project_id=project_id,
+            root=root,
+            scope=scope,
+            citations=citations if grounded else None,
+            defer_consent=not attended,
+        )
+        if result.held and result.slug is not None:
+            held.append(result.slug)
+    return held
 
 
 def _git_citations(cwd: Path, day: date) -> list[Source] | None:
