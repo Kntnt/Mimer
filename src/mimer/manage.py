@@ -40,7 +40,7 @@ class HealthReport:
     project_count: int
     long_term_days: int
     store_bytes: int
-    last_digest: str | None
+    last_activity: str | None
     last_distillation: str | None
     recent_failures: list[str]
     paused: bool
@@ -200,7 +200,10 @@ def store_health(root: Path | None = None) -> HealthReport:
         project_count=len(known_project_ids(root)),
         long_term_days=len(days),
         store_bytes=_store_bytes(root),
-        last_digest=max(days, default=None),
+        # The most recent day any project's long-term log was written: the store's
+        # last activity. Never a "session digest" — that intermediate block was
+        # removed (ADR 0023, #63); health reports last activity, not a digest (#69).
+        last_activity=max(days, default=None),
         last_distillation=max((c.timestamp for c in concepts), default=None),
         recent_failures=_recent_failures(root),
         paused=is_paused(root),
@@ -312,11 +315,16 @@ def _run_disable_native_memory(cwd: Path | None = None) -> int:
     it writes the project-scoped switch at the project root the warning reads — the
     git top level, or the directory itself outside a repo — so a disable run from a
     subdirectory silences next session's warning rather than writing a stray
-    subdirectory settings file the warning never consults. A malformed or non-object
-    existing ``.claude/settings.json`` is refused, not clobbered: ``disable_native_memory``
-    raises and leaves the file intact, and this reports a clean one-line rejection
-    with a non-zero exit rather than leaking a JSON traceback for the user's own
-    config (mirrors ``retract`` and ``confirm``).
+    subdirectory settings file the warning never consults. A ``.claude/settings.json``
+    that cannot be read or parsed — malformed or non-object content (``ValueError``),
+    or an unreadable file such as a directory standing in its place or a permission
+    quirk (``OSError``) — is refused, not clobbered: ``disable_native_memory`` reads
+    before it writes and raises, leaving the file intact, and this reports a clean
+    one-line rejection with a non-zero exit rather than leaking a traceback for the
+    user's own config (mirrors ``retract`` and ``confirm``). The ``OSError`` case is
+    caught here because the SessionStart warning's read path already survives that same
+    stray state (``is_native_memory_enabled``, #68); the command the warning points to
+    must not then die on it (integration finding, #68/#69).
     """
 
     # Resolve the project root the switch belongs to — the repository top level the
@@ -326,12 +334,15 @@ def _run_disable_native_memory(cwd: Path | None = None) -> int:
     toplevel = git_toplevel(cwd)
     project_root = Path(toplevel) if toplevel is not None else cwd
 
-    # Refuse rather than destroy a settings.json we cannot parse: the write raises on
-    # non-empty unparseable or non-object content and leaves the file byte-for-byte
-    # intact, so surface that as a one-line rejection instead of a traceback.
+    # Refuse rather than destroy a settings.json we cannot use: disable_native_memory
+    # reads before it writes, so unparseable or non-object content (ValueError) and an
+    # unreadable file — a directory in its place, a permission quirk (OSError) — both
+    # raise before any write and leave the file byte-for-byte intact. Surface either as
+    # a one-line rejection, never a traceback; OSError matches the SessionStart read
+    # path that already survives the same stray state (#68).
     try:
         disable_native_memory(project_root)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print(f"Mimer: could not disable native auto memory — {exc}")
         return 1
 
@@ -404,7 +415,7 @@ def _print_health(report: HealthReport) -> None:
     print(
         f"Mimer store: {report.concept_count} concept(s), {report.project_count} project(s), "
         f"{report.long_term_days} daily log(s), {report.store_bytes} bytes. "
-        f"Last digest: {report.last_digest or 'none'}; "
+        f"Last activity: {report.last_activity or 'none'}; "
         f"last distillation: {report.last_distillation or 'none'}."
     )
 
