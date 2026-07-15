@@ -113,14 +113,17 @@ def run_boundary_pass(
     failure log; nothing is raised to the session.
 
     ``scope`` and ``attended`` distinguish the manual "distill now" verb from the
-    automatic pass (ADRs 0023, 0027). The automatic pass keeps the defaults —
-    project scope, unattended — so a sensitive fact held for global promotion has
-    its consent queued for the next session start. "distill now" runs it with
-    ``scope="global"`` and ``attended=True``: durable knowledge is published on
-    demand and a held sensitive fact is returned in ``held`` for in-the-moment
-    resolution rather than queued for a session that may never come. Either way the
-    project's distill-to-global switch still governs whether global scope is honoured
-    (ADR 0013).
+    automatic pass (ADRs 0023, 0027). Both production callers run ``scope="global"``
+    — the whole point of distillation is to carry client-neutral knowledge across
+    projects (ADR 0013) — and differ only in ``attended``. The automatic pass
+    (:func:`main`) runs unattended: a client-neutral fact auto-promotes to global and
+    a sensitive one is held at project scope with its consent queued for the next
+    session start, since no one is present to answer. "distill now" runs
+    ``attended=True``: a held sensitive fact is returned in ``held`` for in-the-moment
+    resolution rather than queued for a session that may never come. The default scope
+    stays ``project`` so a caller that names no scope never promotes silently; the two
+    real callers opt into global explicitly. Either way the project's distill-to-global
+    switch still governs whether global scope is honoured (ADR 0013).
     """
 
     root = root or store_root()
@@ -492,7 +495,12 @@ def main(argv: list[str] | None = None) -> int:
 
     The SessionEnd hook spawns this as a separate, session-detached process so the
     boundary pass never delays session close (ADR 0023), the way the Stop hook
-    already spawns capture.
+    already spawns capture. This is the *automatic* pass, so it runs global-scoped and
+    unattended (ADRs 0013, 0027): client-neutral facts auto-promote across projects and
+    a sensitive one is held at project scope with its consent queued for the next
+    session start — the flow the session-start consent line surfaces (#68). Without the
+    global scope here nothing ever promotes cross-project and the consent queue stays
+    empty, since :func:`mimer.distill.distill_fact` only holds when the scope is global.
     """
 
     args = argv if argv is not None else sys.argv[1:]
@@ -505,9 +513,14 @@ def main(argv: list[str] | None = None) -> int:
         # pass uses. This process is detached with stderr routed to DEVNULL, so a
         # corrupt or unreadable spool raising here would vanish with no trace —
         # breaking the module's "every failure is logged" contract (#40).
-        # run_boundary_pass has its own broad handler and never raises.
         payload = json.loads(spool.read_text(encoding="utf-8"))
-        run_boundary_pass(payload)
+
+        # Run the automatic pass global-scoped and unattended: the one production path
+        # that auto-promotes a client-neutral fact across projects (ADR 0013) and holds
+        # a sensitive one at project scope with its consent queued for the next session
+        # start (ADR 0027). The distill-to-global switch still gates it per project.
+        # run_boundary_pass has its own broad handler and never raises.
+        run_boundary_pass(payload, scope="global")
     except Exception as exc:  # noqa: BLE001 - a detached pass must never fail silently
         log_failure(
             f"session-boundary pass: spool read failed: {type(exc).__name__}", root=store_root()
