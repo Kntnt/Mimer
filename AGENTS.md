@@ -10,7 +10,7 @@ in the moment.
 
 ## References
 - `docs/vision.md` — read before planning or implementing Mimer's memory system (architecture + staged build plan)
-- `CONTEXT.md` — the domain glossary; the canonical term for each concept — read before naming things
+- `GLOSSARY.md` — the domain glossary; the canonical term for each concept — read before naming things
 - `docs/adr/` — architecture decision records (why the design is as it is) — read before revisiting a settled decision
 - `docs/okf-profile.md` — the pinned OKF version, the constructs Mimer relies on and its frontmatter extensions — read before touching permanent-memory formats
 - `agents.d/coding-standard/general.md` — read before writing or changing any code

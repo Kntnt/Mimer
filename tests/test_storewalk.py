@@ -14,7 +14,7 @@ from mimer.storewalk import daily_log_days, disk_project_ids, known_project_ids
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The Store walk glossary entry acceptance criterion pins into CONTEXT.md,
+# The Store walk glossary entry acceptance criterion pins into GLOSSARY.md,
 # verbatim and in the plain sibling style of the other Mechanics entries.
 CONTEXT_ENTRY = (
     "**Store walk**:\n"
@@ -125,9 +125,9 @@ def test_daily_log_days_ignores_non_daily_log_files(tmp_path: Path) -> None:
 
 
 def test_context_md_carries_the_store_walk_entry() -> None:
-    """CONTEXT.md carries the Store walk glossary entry verbatim (issue #47)."""
+    """GLOSSARY.md carries the Store walk glossary entry verbatim (issue #47)."""
 
-    assert CONTEXT_ENTRY in (ROOT / "CONTEXT.md").read_text(encoding="utf-8")
+    assert CONTEXT_ENTRY in (ROOT / "GLOSSARY.md").read_text(encoding="utf-8")
 
 
 def test_only_the_store_walk_lists_the_projects_tree() -> None:

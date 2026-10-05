@@ -33,7 +33,7 @@ SKILL = ROOT / "skills" / "memory" / "SKILL.md"
 PYPROJECT = ROOT / "pyproject.toml"
 PLUGIN_MANIFEST = ROOT / ".claude-plugin" / "plugin.json"
 INIT = ROOT / "src" / "mimer" / "__init__.py"
-CONTEXT = ROOT / "CONTEXT.md"
+GLOSSARY = ROOT / "GLOSSARY.md"
 STOREIO = ROOT / "src" / "mimer" / "storeio.py"
 INDEX = ROOT / "src" / "mimer" / "index.py"
 BOUNDARY = ROOT / "src" / "mimer" / "boundary.py"
@@ -41,7 +41,7 @@ ADR_0020 = ROOT / "docs" / "adr" / "0020-redaction-at-the-write-seam.md"
 ADR_0027 = ROOT / "docs" / "adr" / "0027-leakage-guard-global-scope.md"
 
 # The one-sentence write-seam contract, worded identically in storeio's docstring,
-# CONTEXT.md's glossary entry and ADR 0020 (#55).
+# GLOSSARY.md's glossary entry and ADR 0020 (#55).
 WRITE_SEAM_CONTRACT = "no text reaches the store's files unredacted"
 
 # A representative one-sentence utterance for each confidentiality phrasing a user
@@ -330,24 +330,24 @@ def test_skill_documents_the_claude_plugin_root_dependency() -> None:
 
 
 def _glossary_entry(glossary_term: str) -> str:
-    """The full text of CONTEXT.md's ``**glossary_term**:`` entry, from its bold
+    """The full text of GLOSSARY.md's ``**glossary_term**:`` entry, from its bold
     lemma up to the next entry (or end of file)."""
 
     entry = re.search(
         rf"^\*\*{re.escape(glossary_term)}\*\*:.*?(?=^\*\*|\Z)",
-        CONTEXT.read_text(encoding="utf-8"),
+        GLOSSARY.read_text(encoding="utf-8"),
         re.MULTILINE | re.DOTALL,
     )
-    assert entry is not None, f"CONTEXT.md has no glossary entry for {glossary_term!r}"
+    assert entry is not None, f"GLOSSARY.md has no glossary entry for {glossary_term!r}"
     return entry.group(0)
 
 
 def _avoid_terms_for(glossary_term: str) -> list[str]:
-    """The lowercased names CONTEXT.md's glossary entry for *glossary_term* lists
+    """The lowercased names GLOSSARY.md's glossary entry for *glossary_term* lists
     under its _Avoid_ line — the names that concept must never be called."""
 
     avoid = re.search(r"^_Avoid_:\s*(.+?)\s*$", _glossary_entry(glossary_term), re.MULTILINE)
-    assert avoid is not None, f"CONTEXT.md's {glossary_term!r} entry has no _Avoid_ line"
+    assert avoid is not None, f"GLOSSARY.md's {glossary_term!r} entry has no _Avoid_ line"
     return [term.strip().rstrip(".").strip().lower() for term in avoid.group(1).split(",")]
 
 
@@ -363,10 +363,10 @@ def test_storeio_docstring_carries_the_write_seam_contract() -> None:
 
 
 def test_context_defines_the_redaction_pass() -> None:
-    """CONTEXT.md must carry the 'Redaction pass' glossary entry: the write-seam
+    """GLOSSARY.md must carry the 'Redaction pass' glossary entry: the write-seam
     contract, and exactly the three _Avoid_ terms the ticket quotes (#55)."""
 
-    text = CONTEXT.read_text(encoding="utf-8")
+    text = GLOSSARY.read_text(encoding="utf-8")
     assert WRITE_SEAM_CONTRACT in text
     assert set(_avoid_terms_for("Redaction pass")) == {"scrubbing", "sanitisation", "masking"}
 
@@ -474,10 +474,10 @@ def test_no_presentation_surface_calls_the_raw_enumeration() -> None:
 
 
 def test_context_carries_the_visible_glossary_entry() -> None:
-    """CONTEXT.md carries the Visible entry under Mechanics, the canonical term for
+    """GLOSSARY.md carries the Visible entry under Mechanics, the canonical term for
     the presentation predicate every surface uses (issue #54)."""
 
-    text = CONTEXT.read_text(encoding="utf-8")
+    text = GLOSSARY.read_text(encoding="utf-8")
     assert "**Visible** (of a Concept):" in text
     assert "The presentation predicate" in text
 
@@ -496,7 +496,7 @@ def test_vision_stage5c_gate_names_the_injected_profile() -> None:
 def test_storeio_write_discipline_map_names_the_announcement_queue_canonically() -> None:
     """storeio.py is the single home of the store's write-discipline map (#49), so
     it must name the announcement queue by its canonical glossary term (#57) and
-    never a name CONTEXT.md's 'Announcement queue' entry forbids under _Avoid_
+    never a name GLOSSARY.md's 'Announcement queue' entry forbids under _Avoid_
     (notably 'distilled queue'). The on-disk filename '.distilled-queue' is a
     hyphenated identifier, not the forbidden phrase, so it stays."""
 
@@ -514,7 +514,7 @@ def test_storeio_map_and_context_document_the_announcement_queues_locked_clear()
     caller's project lock (``rewrite_sections``' lock). That invariant is
     load-bearing: a truly lockless enqueue would lose an
     update in the window between the clear's read and its write (#40). Both
-    storeio's write-discipline map and CONTEXT.md's 'Lock discipline' entry must
+    storeio's write-discipline map and GLOSSARY.md's 'Lock discipline' entry must
     state it, so a future writer cannot reintroduce a lockless enqueue believing
     the queue is append-only (integration-review finding)."""
 
@@ -590,7 +590,7 @@ def test_index_cite_docstring_matches_the_shipped_boundary_pass_state() -> None:
 
 
 def _context_entry(lemma: str) -> str:
-    """The full text of CONTEXT.md's ``**lemma**…`` glossary entry, up to the next
+    """The full text of GLOSSARY.md's ``**lemma**…`` glossary entry, up to the next
     bold lemma or end of file.
 
     Unlike :func:`_glossary_entry`, this tolerates a parenthetical qualifier after
@@ -600,10 +600,10 @@ def _context_entry(lemma: str) -> str:
 
     entry = re.search(
         rf"^\*\*{re.escape(lemma)}\*\*.*?(?=^\*\*|\Z)",
-        CONTEXT.read_text(encoding="utf-8"),
+        GLOSSARY.read_text(encoding="utf-8"),
         re.MULTILINE | re.DOTALL,
     )
-    assert entry is not None, f"CONTEXT.md has no glossary entry for {lemma!r}"
+    assert entry is not None, f"GLOSSARY.md has no glossary entry for {lemma!r}"
     return entry.group(0)
 
 
@@ -704,7 +704,7 @@ def test_skill_has_no_session_digest_wording() -> None:
 
 
 def test_context_sensitive_entry_does_not_auto_flag_plain_client_identity() -> None:
-    """CONTEXT.md's *Sensitive* entry must no longer list a plain client identity as
+    """GLOSSARY.md's *Sensitive* entry must no longer list a plain client identity as
     automatically sensitive (#70). Only material carrying an explicit confidentiality
     signal is sensitive; a plain client identity may go global. The hard guarantee —
     an explicitly-sensitive fact never goes global without consent — stays intact."""

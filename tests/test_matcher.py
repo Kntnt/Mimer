@@ -24,7 +24,7 @@ from mimer.matcher import is_grounded_in, is_same_fact, is_same_subject, normali
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The Matcher glossary entry pins into CONTEXT.md verbatim, in the plain sibling
+# The Matcher glossary entry pins into GLOSSARY.md verbatim, in the plain sibling
 # style of the other Mechanics entries (issue #53).
 CONTEXT_ENTRY = (
     "**Matcher**:\n"
@@ -39,9 +39,9 @@ CONTEXT_ENTRY = (
 
 
 def test_context_carries_the_matcher_glossary_entry() -> None:
-    """CONTEXT.md carries the Matcher glossary entry verbatim (issue #53)."""
+    """GLOSSARY.md carries the Matcher glossary entry verbatim (issue #53)."""
 
-    assert CONTEXT_ENTRY in (ROOT / "CONTEXT.md").read_text(encoding="utf-8")
+    assert CONTEXT_ENTRY in (ROOT / "GLOSSARY.md").read_text(encoding="utf-8")
 
 
 def test_identical_text_is_the_same_fact() -> None:

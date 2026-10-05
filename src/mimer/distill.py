@@ -35,7 +35,7 @@ from mimer.text import truncate
 from mimer.tombstones import is_tombstoned
 
 # The on-disk announcement-queue file. The name predates the "Announcement
-# queue" term (CONTEXT.md) and stays as-is: renaming it would need a store
+# queue" term (GLOSSARY.md) and stays as-is: renaming it would need a store
 # migration for zero gain.
 ANNOUNCEMENT_QUEUE_FILENAME = ".distilled-queue"
 

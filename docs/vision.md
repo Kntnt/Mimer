@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the authoritative technical description of what Mimer is, who it is for, and why it exists. It stands on its own: a session that begins with no prior context can read it, together with the domain glossary in `CONTEXT.md`, the decision records in `docs/adr/` and the OKF profile in `docs/okf-profile.md`, and carry the work forward without further briefing. The reader-facing overview lives in the README; this is the engineering counterpart.
+This document is the authoritative technical description of what Mimer is, who it is for, and why it exists. It stands on its own: a session that begins with no prior context can read it, together with the domain glossary in `GLOSSARY.md`, the decision records in `docs/adr/` and the OKF profile in `docs/okf-profile.md`, and carry the work forward without further briefing. The reader-facing overview lives in the README; this is the engineering counterpart.
 
 Mimer is a memory system for Claude Code, delivered as a plugin: a set of hooks, one skill and a few scripts, running locally from plain files on your machine — no server, no subscription, no new runtime, no API key. It is built for one kind of person: the **solo practitioner who works across many projects — their own and several clients'.** That situation shapes every decision below, because it turns memory from a convenience into a liability the moment one client's facts can surface while you work for another.
 
